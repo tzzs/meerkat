@@ -130,6 +130,11 @@ impl EngineProbe {
             adapter.temperature_c = device.temperature_c.map(|v| v as f64);
             adapter.fan_percent = device.fan_percent.map(|v| v as f64);
             adapter.power_watts = device.power_watts.map(|v| v as f64);
+            // DXGI reports zero used video memory on NVIDIA drivers, which is an absence
+            // rather than a measurement; NVML has the real figure.
+            if adapter.dedicated_used_bytes.unwrap_or(0) == 0 {
+                adapter.dedicated_used_bytes = device.memory_used_bytes;
+            }
         }
     }
 

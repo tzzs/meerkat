@@ -65,6 +65,7 @@ export function SoundTab() {
     <div className="stack">
       <Card title={t("sound.output")} right={<Pill>{outputs.length}</Pill>}>
         <div className="mix-list">
+          <MixHead />
           {outputs.map((endpoint) => (
             <EndpointRow key={endpoint.id} endpoint={endpoint} hold={hold} />
           ))}
@@ -75,6 +76,7 @@ export function SoundTab() {
 
       <Card title={t("sound.apps")} right={<Pill>{audio.render.length}</Pill>}>
         <div className="mix-list">
+          <MixHead />
           {audio.render.map((session) => (
             <SessionRow key={`${session.id}-${session.pid}`} session={session} hold={hold} />
           ))}
@@ -84,6 +86,7 @@ export function SoundTab() {
 
       <Card title={t("sound.input")} right={<Pill>{audio.capture.length}</Pill>}>
         <div className="mix-list">
+          <MixHead />
           {inputs.map((endpoint) => (
             <EndpointRow key={endpoint.id} endpoint={endpoint} hold={hold} />
           ))}
@@ -98,9 +101,28 @@ export function SoundTab() {
   );
 }
 
+/**
+ * A level meter, deliberately not shaped like the volume slider next to it: no track,
+ * no thumb, thinner, and the column is labelled. An unlabelled grey pill read as a
+ * broken slider.
+ */
+function MixHead() {
+  const { t } = useStore();
+  return (
+    <div className="mix-row mix-head" aria-hidden="true">
+      <span />
+      <span className="mix-label" />
+      <span className="peak-cap">{t("sound.level")}</span>
+      <span>{t("sound.volume")}</span>
+      <span />
+      <span className="mix-value">%</span>
+    </div>
+  );
+}
+
 function PeakBar({ peak }: { peak: number }) {
   return (
-    <span className="peak">
+    <span className="peak" aria-hidden="true">
       <span
         className="peak-fill"
         style={{

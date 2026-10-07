@@ -18,6 +18,9 @@ pub struct NvmlDevice {
     pub temperature_c: Option<f32>,
     pub fan_percent: Option<f32>,
     pub power_watts: Option<f32>,
+    /// Dedicated video memory in use. DXGI's own counter stays at zero on NVIDIA
+    /// drivers, so this is the only real figure for it.
+    pub memory_used_bytes: Option<u64>,
 }
 
 type NvmlReturn = u32;
@@ -37,6 +40,18 @@ type DeviceNameFn = unsafe extern "system" fn(DeviceHandle, *mut c_char, u32) ->
 type TemperatureFn = unsafe extern "system" fn(DeviceHandle, u32, *mut u32) -> NvmlReturn;
 type FanSpeedFn = unsafe extern "system" fn(DeviceHandle, *mut u32) -> NvmlReturn;
 type PowerUsageFn = unsafe extern "system" fn(DeviceHandle, *mut u32) -> NvmlReturn;
+type MemoryFn = unsafe extern "system" fn(DeviceHandle, *mut NvmlMemory) -> NvmlReturn;
+
+/// `nvmlMemory_t` (v1): total, free and used bytes of device memory.
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct NvmlMemory {
+    total: u64,
+    free: u64,
+    used: u64,
+}
+
+const _: () = assert!(size_of::<NvmlMemory>() == 24);
 /// NVML's own init and shutdown are process-wide, so a second poller must not tear the
 /// library down while the first one is still reading through it.
 static NVML_LOCK: Mutex<()> = Mutex::new(());
@@ -65,6 +80,7 @@ struct Api {
     temperature: Option<TemperatureFn>,
     fan_speed: Option<FanSpeedFn>,
     power_usage: Option<PowerUsageFn>,
+    memory: Option<MemoryFn>,
 }
 
 impl Api {
@@ -89,6 +105,7 @@ impl Api {
             temperature: lookup(module, &[b"nvmlDeviceGetTemperature\0"]),
             fan_speed: lookup(module, &[b"nvmlDeviceGetFanSpeed\0"]),
             power_usage: lookup(module, &[b"nvmlDeviceGetPowerUsage\0"]),
+            memory: lookup(module, &[b"nvmlDeviceGetMemoryInfo\0"]),
         })
     }
 
@@ -118,9 +135,19 @@ impl Api {
                 temperature_c: self.read_temperature(handle),
                 fan_percent: self.read_fan_speed(handle),
                 power_watts: self.read_power_usage(handle),
+                memory_used_bytes: self.read_memory_used(handle),
             });
         }
         out
+    }
+
+    unsafe fn read_memory_used(&self, device: DeviceHandle) -> Option<u64> {
+        let get = self.memory?;
+        let mut memory = NvmlMemory::default();
+        if get(device, &mut memory) != NVML_SUCCESS || memory.total == 0 {
+            return None;
+        }
+        Some(memory.used)
     }
 
     unsafe fn read_name(&self, device: DeviceHandle) -> String {

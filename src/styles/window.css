@@ -915,16 +915,40 @@
   opacity: 0.6;
 }
 
+.mix-head {
+  padding: 0 4px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+}
+.mix-head:hover {
+  background: none;
+}
+.mix-head > span {
+  overflow: hidden;
+  white-space: nowrap;
+}
+.peak-cap {
+  text-align: right;
+}
+
+/* A level meter: no track, no thumb, thinner than the slider and right-aligned, so it
+   cannot be mistaken for a second volume control. */
 .peak {
   display: block;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--surface-3);
+  height: 3px;
+  align-self: center;
   overflow: hidden;
 }
 .peak-fill {
   display: block;
   height: 100%;
+  margin-left: auto;
+  border-radius: 2px;
   background: var(--accent);
   transition: width 90ms linear;
 }
