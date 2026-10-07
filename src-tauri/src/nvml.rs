@@ -18,7 +18,6 @@ pub struct NvmlDevice {
     pub temperature_c: Option<f32>,
     pub fan_percent: Option<f32>,
     pub power_watts: Option<f32>,
-    pub bus_id: Option<String>,
 }
 
 type NvmlReturn = u32;
@@ -38,24 +37,6 @@ type DeviceNameFn = unsafe extern "system" fn(DeviceHandle, *mut c_char, u32) ->
 type TemperatureFn = unsafe extern "system" fn(DeviceHandle, u32, *mut u32) -> NvmlReturn;
 type FanSpeedFn = unsafe extern "system" fn(DeviceHandle, *mut u32) -> NvmlReturn;
 type PowerUsageFn = unsafe extern "system" fn(DeviceHandle, *mut u32) -> NvmlReturn;
-type PciInfoFn = unsafe extern "system" fn(DeviceHandle, *mut NvmlPciInfo) -> NvmlReturn;
-
-/// `nvmlPciInfo_t` in the v2/v3 header. Only the two id strings are read: a live
-/// `nvmlDeviceGetPciInfo_v3` on an RTX 5060 Ti returns a packed vendor/device pair at the
-/// offset the header names `func`, so the words in between are not trustworthy, but their
-/// count is — they have to be kept as padding for the size to stay right and for NVML to
-/// have nowhere to write past us.
-#[repr(C)]
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct NvmlPciInfo {
-    bus_id_legacy: [c_char; 16],
-    numbers: [u32; 5],
-    bus_id: [c_char; 32],
-}
-
-const _: () = assert!(size_of::<NvmlPciInfo>() == 68);
-
 /// NVML's own init and shutdown are process-wide, so a second poller must not tear the
 /// library down while the first one is still reading through it.
 static NVML_LOCK: Mutex<()> = Mutex::new(());
@@ -84,7 +65,6 @@ struct Api {
     temperature: Option<TemperatureFn>,
     fan_speed: Option<FanSpeedFn>,
     power_usage: Option<PowerUsageFn>,
-    pci_info: Option<PciInfoFn>,
 }
 
 impl Api {
@@ -109,14 +89,6 @@ impl Api {
             temperature: lookup(module, &[b"nvmlDeviceGetTemperature\0"]),
             fan_speed: lookup(module, &[b"nvmlDeviceGetFanSpeed\0"]),
             power_usage: lookup(module, &[b"nvmlDeviceGetPowerUsage\0"]),
-            pci_info: lookup(
-                module,
-                &[
-                    b"nvmlDeviceGetPciInfo_v3\0",
-                    b"nvmlDeviceGetPciInfo_v2\0",
-                    b"nvmlDeviceGetPciInfo\0",
-                ],
-            ),
         })
     }
 
@@ -146,7 +118,6 @@ impl Api {
                 temperature_c: self.read_temperature(handle),
                 fan_percent: self.read_fan_speed(handle),
                 power_watts: self.read_power_usage(handle),
-                bus_id: self.read_bus_id(handle),
             });
         }
         out
@@ -192,18 +163,6 @@ impl Api {
         }
         // NVML reports power draw in milliwatts.
         Some(milli as f32 / 1000.0)
-    }
-
-    unsafe fn read_bus_id(&self, device: DeviceHandle) -> Option<String> {
-        let get = self.pci_info?;
-        let mut pci: NvmlPciInfo = unsafe { std::mem::zeroed() };
-        if get(device, &mut pci) != NVML_SUCCESS {
-            return None;
-        }
-        // The wide id is the one a current NVML fills — eight hex digits of domain, the shape
-        // `nvidia-smi` prints. A driver that only has the unsuffixed call leaves it zeroed
-        // and fills the 16-byte legacy id instead.
-        read_ascii(&pci.bus_id).or_else(|| read_ascii(&pci.bus_id_legacy))
     }
 }
 

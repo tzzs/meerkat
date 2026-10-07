@@ -862,3 +862,90 @@
 .danger:hover {
   background: color-mix(in oklab, var(--m-danger) 14%, transparent);
 }
+
+/* ---------- sound mixer ---------- */
+
+.mix-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mix-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1.5fr) 52px minmax(0, 1.7fr) 24px 42px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px 4px;
+  border-radius: var(--r-sm);
+  min-width: 0;
+}
+.mix-row:hover {
+  background: var(--surface-2);
+}
+.mix-row.inactive {
+  opacity: 0.55;
+}
+.mix-name {
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.mix-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mix-value {
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.mix-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+  height: 18px;
+}
+.mix-row input[type="range"]:disabled {
+  opacity: 0.6;
+}
+
+.peak {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.peak-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 90ms linear;
+}
+
+.mute {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+  font-size: 13px;
+}
+.mute:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.mute.on {
+  color: var(--m-danger);
+  background: color-mix(in oklab, var(--m-danger) 14%, transparent);
+}
+
+.pill.accent {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: var(--accent);
+}

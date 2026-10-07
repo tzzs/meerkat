@@ -237,3 +237,76 @@ pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
 pub fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioState {
+    output_endpoints: Vec<crate::audio::Endpoint>,
+    input_endpoints: Vec<crate::audio::Endpoint>,
+    render: Vec<crate::audio::AppSession>,
+    capture: Vec<crate::audio::AppSession>,
+}
+
+/// Read the whole mixer in one pass. Also called from the sampler thread in debug builds,
+/// which is what proves the COM initialisation works off the main thread.
+pub fn snapshot_audio() -> Result<AudioState, String> {
+    crate::audio::init_com()?;
+    Ok(AudioState {
+        output_endpoints: crate::audio::endpoints_of(crate::audio::Role::Render).unwrap_or_default(),
+        input_endpoints: crate::audio::endpoints_of(crate::audio::Role::Capture).unwrap_or_default(),
+        render: crate::audio::sessions(crate::audio::Role::Render).unwrap_or_default(),
+        capture: crate::audio::sessions(crate::audio::Role::Capture).unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+pub fn audio_state(state: State<'_, AppState>) -> Result<AudioState, String> {
+    let snapshot = snapshot_audio()?;
+    #[cfg(debug_assertions)]
+    if let Ok(raw) = serde_json::to_string(&snapshot) {
+        let dir = state.data_dir.join("dev");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("audio.json"), raw);
+    }
+    Ok(snapshot)
+}
+
+/// Windows restores a same-named app's volume within a login session on its own, so the
+/// saved rules mostly earn their keep across a reboot or an audio-service restart.
+#[tauri::command]
+pub fn audio_set_volume(
+    state: State<'_, AppState>,
+    role: String,
+    id: u32,
+    pid: u32,
+    volume: f32,
+    muted: bool,
+) -> Result<(), String> {
+    crate::audio::init_com()?;
+    let role = parse_role(&role)?;
+    crate::audio::set_session_volume(role, id, volume)?;
+    crate::audio::set_session_mute(role, id, muted)?;
+    if let Some(exe) = crate::audio::exe_name(pid) {
+        let endpoint = crate::audio::endpoints_of(role)
+            .ok()
+            .and_then(|list| list.into_iter().find(|e| e.is_default).map(|e| e.id))
+            .unwrap_or_default();
+        crate::audio::remember_volume(&state.data_dir.join("audio-volumes.json"), &exe, &endpoint, volume, muted)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn audio_set_endpoint(endpoint_id: String, volume: f32, muted: bool) -> Result<(), String> {
+    crate::audio::init_com()?;
+    crate::audio::set_endpoint_volume(&endpoint_id, volume)?;
+    crate::audio::set_endpoint_mute(&endpoint_id, muted)
+}
+
+fn parse_role(role: &str) -> Result<crate::audio::Role, String> {
+    match role {
+        "render" => Ok(crate::audio::Role::Render),
+        "capture" => Ok(crate::audio::Role::Capture),
+        other => Err(format!("unknown audio role {other}")),
+    }
+}

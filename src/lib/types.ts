@@ -291,7 +291,7 @@ export const METRIC_ORDER: MetricKind[] = [
   "temperature",
 ];
 
-export const TAB_ORDER = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery"] as const;
+export const TAB_ORDER = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
 export type TabId = (typeof TAB_ORDER)[number];
 
 /** Headline number for a metric, used by tray readouts and panel tiles alike. */
@@ -333,4 +333,34 @@ export function seriesFor(metric: MetricKind, s: Snapshot): number[] {
     case "temperature":
       return s.temperature.history;
   }
+}
+
+export type AudioRole = "render" | "capture";
+
+export interface AudioEndpoint {
+  id: string;
+  friendlyName: string;
+  volume: number;
+  muted: boolean;
+  peak: number;
+  isDefault: boolean;
+}
+
+export interface AudioSession {
+  /** Valid only until the next poll; writes re-resolve the session by identity. */
+  id: number;
+  pid: number;
+  displayName: string;
+  volume: number;
+  muted: boolean;
+  peak: number;
+  active: boolean;
+  role: AudioRole;
+}
+
+export interface AudioState {
+  outputEndpoints: AudioEndpoint[];
+  inputEndpoints: AudioEndpoint[];
+  render: AudioSession[];
+  capture: AudioSession[];
 }

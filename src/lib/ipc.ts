@@ -1,4 +1,4 @@
-import type { HistorySeries, Insight, RankingRow, Settings, Snapshot } from "./types";
+import type { AudioState, HistorySeries, Insight, RankingRow, Settings, Snapshot } from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -28,6 +28,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
       return fixture<T>("latest.json");
     case "insights":
       return fixture<T>("insights.json");
+    case "audio_state":
+      return fixture<T>("audio.json");
     case "history_series": {
       const metric = String(args?.metric ?? "cpu");
       const range = Number(args?.rangeSeconds ?? 3600);
@@ -60,6 +62,11 @@ export const ipc = {
   setPanelPinned: (pinned: boolean) => void call("set_panel_pinned", { pinned }),
   copyReport: async () => (await call<string>("copy_report")) ?? "",
   version: async () => (await call<string>("app_version")) ?? "dev",
+  audioState: () => call<AudioState>("audio_state"),
+  audioSetVolume: (role: string, id: number, pid: number, volume: number, muted: boolean) =>
+    call<string>("audio_set_volume", { role, id, pid, volume, muted }),
+  audioSetEndpoint: (endpointId: string, volume: number, muted: boolean) =>
+    call<string>("audio_set_endpoint", { endpointId, volume, muted }),
 };
 
 export async function listenMetrics(handler: (snapshot: Snapshot) => void): Promise<() => void> {

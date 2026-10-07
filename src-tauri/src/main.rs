@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod alerts;
+mod audio;
 mod history;
 mod ipc;
 mod menu;
@@ -48,7 +49,10 @@ fn main() {
             ipc::set_panel_size,
             ipc::set_panel_pinned,
             ipc::copy_report,
-            ipc::app_version
+            ipc::app_version,
+            ipc::audio_state,
+            ipc::audio_set_volume,
+            ipc::audio_set_endpoint
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
@@ -97,6 +101,17 @@ fn main() {
             }
 
             spawn_sampler(handle.clone());
+
+            // Restore remembered app volumes before anything starts playing sound.
+            if audio::init_com().is_ok() {
+                if let Ok(dir) = handle.path().app_data_dir() {
+                    match audio::apply_saved_volumes(&dir.join("audio-volumes.json")) {
+                        Ok(0) => {}
+                        Ok(count) => println!("restored {count} saved app volumes"),
+                        Err(error) => eprintln!("restore saved volumes: {error}"),
+                    }
+                }
+            }
 
             // Opened by hand it shows its window; started at sign-in it stays in the tray.
             let at_startup = std::env::args().any(|a| a == "--autostart");
@@ -195,6 +210,16 @@ fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
     }
     if let Ok(raw) = serde_json::to_string(&state.watcher.lock().unwrap().list()) {
         let _ = std::fs::write(dir.join("insights.json"), raw);
+    }
+    // Runs on the sampler thread on purpose: Core Audio needs COM, and this is the only
+    // place that proves it initialises correctly away from the main thread.
+    match ipc::snapshot_audio() {
+        Ok(snapshot) => {
+            if let Ok(raw) = serde_json::to_string(&snapshot) {
+                let _ = std::fs::write(dir.join("audio.json"), raw);
+            }
+        }
+        Err(error) => eprintln!("audio snapshot: {error}"),
     }
     let now = history::now_seconds();
     let store = state.history.lock().unwrap();

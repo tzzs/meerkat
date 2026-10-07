@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { listenNavigate } from "./lib/ipc";
+import type { Key } from "./i18n/en";
 import { useStore } from "./lib/store";
 import type { TabId } from "./lib/types";
 import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab } from "./components/tabs";
 import { QuitDialog } from "./components/ui";
 import { SettingsPages } from "./components/settings";
+import { SoundTab } from "./components/sound";
 
-const TAB_LABEL: Record<string, "tab.overview" | "tab.cpu" | "tab.memory" | "tab.disk" | "tab.network" | "tab.gpu" | "tab.battery"> = {
+const TAB_LABEL: Record<string, Key> = {
   overview: "tab.overview",
   cpu: "tab.cpu",
   memory: "tab.memory",
@@ -15,6 +17,7 @@ const TAB_LABEL: Record<string, "tab.overview" | "tab.cpu" | "tab.memory" | "tab
   network: "tab.network",
   gpu: "tab.gpu",
   battery: "tab.battery",
+  sound: "tab.sound",
 };
 
 export default function App() {
@@ -142,6 +145,7 @@ export default function App() {
             {tab === "network" && <NetworkTab />}
             {tab === "gpu" && <GpuTab />}
             {tab === "battery" && <BatteryTab />}
+            {tab === "sound" && <SoundTab />}
           </>
         )}
       </main>

@@ -138,7 +138,7 @@ pub struct Settings {
     pub alerts: AlertThresholds,
 }
 
-pub const TAB_IDS: [&str; 7] = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery"];
+pub const TAB_IDS: [&str; 8] = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"];
 
 pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
     let ids: Vec<&str> = match tab {
@@ -149,6 +149,7 @@ pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
         "network" => vec!["rate", "adapters", "totals", "history", "connections"],
         "gpu" => vec!["utilisation", "adapters", "memory", "history", "apps"],
         "battery" => vec!["charge", "health", "power", "history"],
+        "sound" => vec!["output", "apps", "input"],
         _ => vec![],
     };
     ids.into_iter()
