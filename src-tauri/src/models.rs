@@ -116,6 +116,8 @@ pub struct GpuAdapter {
     pub dedicated_used_bytes: Option<u64>,
     pub shared_used_bytes: Option<u64>,
     pub temperature_c: Option<f64>,
+    pub fan_percent: Option<f64>,
+    pub power_watts: Option<f64>,
     pub utilization_percent: Option<f64>,
 }
 

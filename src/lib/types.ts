@@ -95,6 +95,8 @@ export interface GpuAdapter {
   dedicatedUsedBytes: number | null;
   sharedUsedBytes: number | null;
   temperatureC: number | null;
+  fanPercent: number | null;
+  powerWatts: number | null;
   utilizationPercent: number | null;
 }
 

@@ -83,6 +83,7 @@ const en = {
   "label.charge": "Charge",
   "label.timeRemaining": "Time remaining",
   "label.powerDraw": "Drawing",
+  "label.fan": "Fan",
   "label.cycles": "Cycle count",
   "label.designCapacity": "Design capacity",
   "label.fullCharge": "Full charge capacity",

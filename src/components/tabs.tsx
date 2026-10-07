@@ -578,6 +578,15 @@ export function GpuTab() {
               {adapter.dedicatedTotalBytes ? (
                 <Meter ratio={(adapter.dedicatedUsedBytes ?? 0) / adapter.dedicatedTotalBytes} color={TONE.gpu} />
               ) : null}
+              {(adapter.temperatureC !== null || adapter.fanPercent !== null || adapter.powerWatts !== null) && (
+                <div className="legend">
+                  {adapter.temperatureC !== null && (
+                    <span>{t("metric.temperature")} {formatTemp(adapter.temperatureC, units)}</span>
+                  )}
+                  {adapter.fanPercent !== null && <span>{t("label.fan")} {Math.round(adapter.fanPercent)}%</span>}
+                  {adapter.powerWatts !== null && <span>{t("label.powerDraw")} {adapter.powerWatts.toFixed(1)} W</span>}
+                </div>
+              )}
             </div>
           ))}
         </Card>

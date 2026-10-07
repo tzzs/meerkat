@@ -17,6 +17,7 @@ pub struct EngineProbe {
     index: usize,
     adapters: Vec<GpuAdapter>,
     last_adapter_refresh: std::time::Instant,
+    last_sensor_read: std::time::Instant,
 }
 
 pub fn enumerate_adapters() -> Vec<GpuAdapter> {
@@ -68,6 +69,8 @@ pub fn enumerate_adapters() -> Vec<GpuAdapter> {
             dedicated_used_bytes: dedicated_used,
             shared_used_bytes: shared_used,
             temperature_c: None,
+            fan_percent: None,
+            power_watts: None,
             utilization_percent: None,
         });
     }
@@ -104,10 +107,34 @@ impl EngineProbe {
             index,
             adapters: enumerate_adapters(),
             last_adapter_refresh: std::time::Instant::now(),
+            last_sensor_read: std::time::Instant::now() - std::time::Duration::from_secs(60),
         })
     }
 
+    /// NVIDIA reports temperature, fan and live power draw through NVML without any
+    /// elevation, which is the only real sensor source on a machine whose ACPI thermal
+    /// zone is a static motherboard reading rather than the CPU die.
+    fn read_sensors(&mut self) {
+        if self.last_sensor_read.elapsed().as_secs() < 5 {
+            return;
+        }
+        self.last_sensor_read = std::time::Instant::now();
+        let Some(devices) = crate::nvml::devices() else {
+            return;
+        };
+        for adapter in self.adapters.iter_mut() {
+            let name = adapter.name.to_lowercase();
+            let Some(device) = devices.iter().find(|d| d.name.to_lowercase() == name) else {
+                continue;
+            };
+            adapter.temperature_c = device.temperature_c.map(|v| v as f64);
+            adapter.fan_percent = device.fan_percent.map(|v| v as f64);
+            adapter.power_watts = device.power_watts.map(|v| v as f64);
+        }
+    }
+
     pub fn refresh(&mut self) -> (Option<f64>, Vec<GpuProcess>, Availability) {
+        self.read_sensors();
         if self.last_adapter_refresh.elapsed().as_secs() > 300 {
             self.adapters = enumerate_adapters();
             self.last_adapter_refresh = std::time::Instant::now();

@@ -6,6 +6,7 @@ mod ipc;
 mod menu;
 mod metrics;
 mod models;
+mod nvml;
 mod settings;
 mod tray;
 mod tray_render;

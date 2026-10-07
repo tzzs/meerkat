@@ -182,6 +182,23 @@ impl Sampler {
         let mut gpu = self.gpu();
         let mut battery_metric = self.battery();
         let mut temperature = self.temperature();
+        // NVML is usually the only real temperature an unprivileged process can read,
+        // so it fills the gap the ACPI thermal zone leaves rather than staying unused.
+        if temperature.gpu_celsius.is_none() {
+            temperature.gpu_celsius = gpu
+                .adapters
+                .iter()
+                .filter_map(|adapter| adapter.temperature_c)
+                .max_by(|a, b| a.total_cmp(b));
+        }
+        if let Some(gpu_temp) = temperature.gpu_celsius {
+            if temperature.hottest.map_or(true, |h| gpu_temp > h) {
+                temperature.hottest = Some(gpu_temp);
+            }
+            if temperature.availability == Availability::NeedsElevation {
+                temperature.availability = Availability::Partial;
+            }
+        }
 
         let temp_headline = temperature.hottest.unwrap_or(0.0);
         for (key, value) in [
