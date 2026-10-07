@@ -1,0 +1,13 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+*.log
+.DS_Store
+.idea/
+.vscode/
+shots/
+build.log
+dev.log
+probe-nvml/
+probe-audio/
