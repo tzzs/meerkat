@@ -9,6 +9,7 @@ import {
 import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
+import type { Translate } from "../i18n";
 import {
   AppIcon,
   AppTable,
@@ -19,6 +20,7 @@ import {
   Meter,
   Pill,
   Stat,
+  Tween,
   type AppMetric,
 } from "./ui";
 
@@ -299,7 +301,7 @@ export function CpuTab() {
       <div className="hero-row">
         <Card className="hero" tone={TONE.cpu} title={t("cpu.title")}>
           <div className="hero-figure">
-            <span className="huge num">{formatPercent(snapshot.cpu.totalPercent, units.locale)}</span>
+            <Tween className="huge num" value={snapshot.cpu.totalPercent} format={(n) => formatPercent(n, units.locale)} />
             <span className="faint">{t("label.loadQueue")}: {snapshot.cpu.processorQueueLength ?? "—"}</span>
           </div>
           <Chart values={snapshot.cpu.history} max={100} color={TONE.cpu} height={80} />
@@ -362,7 +364,7 @@ export function MemoryTab({ search }: { search?: string }) {
       <div className="hero-row">
         <Card className="hero" tone={TONE.memory} title={t("memory.title")}>
           <div className="hero-figure">
-            <span className="huge num">{formatBytes(m.inUseBytes, units)}</span>
+            <Tween className="huge num" value={m.inUseBytes} format={(n) => formatBytes(n, units)} />
             <span className="faint">{t("label.ofTotal", { total: formatBytes(m.totalBytes, units) })}</span>
           </div>
           <Meter ratio={m.inUseBytes / Math.max(1, m.totalBytes)} color={TONE.memory} />
@@ -370,9 +372,7 @@ export function MemoryTab({ search }: { search?: string }) {
         </Card>
         <Card title={t("label.pressure")} tone={TONE.memory}>
           <div className="hero-figure">
-            <span className="huge num" style={{ fontSize: 30 }}>
-              {formatPercent(m.pressurePercent, units.locale)}
-            </span>
+            <Tween className="huge num" style={{ fontSize: 30 }} value={m.pressurePercent} format={(n) => formatPercent(n, units.locale)} />
           </div>
           <Chart values={m.history} max={100} color={TONE.memory} height={72} />
           <div className="legend">
@@ -438,12 +438,12 @@ export function DiskTab() {
           <div className="rate-pair">
             <div>
               <span className="rate-label">{t("label.read")}</span>
-              <span className="huge num">{formatRate(d.readBytesPerSecond, units, "storage")}</span>
+              <Tween className="huge num" value={d.readBytesPerSecond} format={(n) => formatRate(n, units, "storage")} />
               <Chart values={d.historyRead} color={TONE.disk} height={54} />
             </div>
             <div>
               <span className="rate-label">{t("label.write")}</span>
-              <span className="huge num">{formatRate(d.writeBytesPerSecond, units, "storage")}</span>
+              <Tween className="huge num" value={d.writeBytesPerSecond} format={(n) => formatRate(n, units, "storage")} />
               <Chart values={d.historyWrite} color={TONE.disk} variant="bars" height={54} />
             </div>
           </div>
@@ -493,12 +493,12 @@ export function NetworkTab() {
           <div className="rate-pair">
             <div>
               <span className="rate-label">{t("label.download")}</span>
-              <span className="huge num">{formatRate(n.downloadBytesPerSecond, units, "network")}</span>
+              <Tween className="huge num" value={n.downloadBytesPerSecond} format={(v) => formatRate(v, units, "network")} />
               <Chart values={n.historyDownload} color={TONE.network} height={54} />
             </div>
             <div>
               <span className="rate-label">{t("label.upload")}</span>
-              <span className="huge num">{formatRate(n.uploadBytesPerSecond, units, "network")}</span>
+              <Tween className="huge num" value={n.uploadBytesPerSecond} format={(v) => formatRate(v, units, "network")} />
               <Chart values={n.historyUpload} color={TONE.network} variant="bars" height={54} />
             </div>
           </div>
@@ -556,8 +556,8 @@ export function GpuTab() {
       <div className="hero-row">
         <Card className="hero" tone={TONE.gpu} title={t("gpu.title")}>
           <div className="hero-figure">
-            <span className="huge num">{g.totalPercent === null ? "—" : formatPercent(g.totalPercent, units.locale)}</span>
-            <span className="faint">{g.adapters.length} {g.adapters.length === 1 ? "adapter" : "adapters"}</span>
+            <Tween className="huge num" value={g.totalPercent} format={(n) => formatPercent(n, units.locale)} />
+            <span className="faint">{t("label.adapters", { count: g.adapters.length })}</span>
           </div>
           <Chart values={g.history} max={100} color={TONE.gpu} height={80} />
           <AvailabilityNote state={g.availability} t={t} />
@@ -638,7 +638,7 @@ export function BatteryTab() {
         {b.hasBattery ? (
           <Card className="hero" tone={TONE.battery} title={t("battery.title")}>
             <div className="hero-figure">
-              <span className="huge num">{formatPercent(b.chargePercent ?? 0, units.locale)}</span>
+              <Tween className="huge num" value={b.chargePercent} format={(n) => formatPercent(n, units.locale)} />
               <span className="faint">{b.isCharging ? t("label.charging") : b.onAcPower ? t("label.onAc") : t("label.timeRemaining")}</span>
             </div>
             <Meter ratio={(b.chargePercent ?? 0) / 100} color={b.isCritical ? "var(--m-danger)" : TONE.battery} />
@@ -666,9 +666,7 @@ export function BatteryTab() {
       {sectionShown(shown, "power") && (
         <Card title={t("temperature.title")} tone={TONE.temperature}>
           <div className="hero-figure">
-            <span className="huge num" style={{ color: TONE.temperature }}>
-              {temp.hottest ? formatTemp(temp.hottest, units) : "—"}
-            </span>
+            <Tween className="huge num" style={{ color: TONE.temperature }} value={temp.hottest} format={(n) => formatTemp(n, units)} />
             <span className="faint">{t("label.hottest")}</span>
           </div>
           <div className="breakdown">
@@ -724,6 +722,19 @@ function VolumeList() {
   );
 }
 
+/**
+ * "4 minutes ago" rather than a timestamp. The list is read to notice what just happened, and
+ * working out how stale a line is from an absolute date is arithmetic nobody wants to do while
+ * scanning; the exact time is still there on hover.
+ */
+function ago(atMs: number, t: Translate): string {
+  const seconds = Math.max(0, (Date.now() - atMs) / 1000);
+  if (seconds < 60) return t("time.justNow");
+  if (seconds < 3600) return t("time.minutesAgo", { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return t("time.hoursAgo", { count: Math.floor(seconds / 3600) });
+  return t("time.daysAgo", { count: Math.floor(seconds / 86400) });
+}
+
 function InsightRows({ insights }: { insights: Insight[] }) {
   const { t, units } = useStore();
   const text = (insight: Insight) => {
@@ -743,12 +754,12 @@ function InsightRows({ insights }: { insights: Insight[] }) {
   return (
     <div className="rows">
       {insights.map((insight) => (
-        <div key={insight.id} className="row">
+        <div key={insight.id} className="row insight-row">
           <span className={`kind-dot ${insight.kind}`} />
           <div className="row-main">
             <span className="row-name">{text(insight)}</span>
-            <span className="row-sub faint">
-              {new Date(insight.atMs).toLocaleString(units.locale)}
+            <span className="row-sub faint" title={new Date(insight.atMs).toLocaleString(units.locale)}>
+              {ago(insight.atMs, t)}
               {insight.repeatCount > 1 ? ` · ${insight.repeatCount}×` : ""}
             </span>
           </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
 import { useStore } from "../lib/store";
@@ -112,7 +112,9 @@ export function CoreGrid({ values, units }: { values: number[]; units: UnitPrefs
       {values.map((value, i) => (
         <div key={i} className="core" title={`${i}: ${Math.round(value)}%`}>
           <div className="core-track">
-            <div className="core-fill" style={{ height: `${Math.min(100, value)}%` }} />
+            {/* Height rather than a scale: twenty bars cost nothing to lay out, and scaling
+                one would squash its gradient along with it. */}
+            <div className="core-fill" style={{ height: `${Math.min(100, Math.max(0, value))}%` }} />
           </div>
           <span className="core-index">{i}</span>
         </div>
@@ -135,10 +137,70 @@ export function Pill({ children, tone }: { children: ReactNode; tone?: string })
   return <span className={`pill ${tone ?? ""}`}>{children}</span>;
 }
 
+/**
+ * Eases a number towards its latest reading instead of snapping to it.
+ *
+ * The sampler reports once a second, and a headline that jumps by nine every second reads as
+ * a glitch rather than as a machine that is working. Each new reading is walked to over a few
+ * hundred milliseconds from wherever the previous animation had got to, so a change that
+ * arrives mid-flight stays smooth instead of restarting.
+ */
+export function useTweenedNumber(value: number, ms = 420): number {
+  const [shown, setShown] = useState(value);
+  const position = useRef(value);
+
+  useEffect(() => {
+    if (value === position.current) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      position.current = value;
+      setShown(value);
+      return;
+    }
+    const from = position.current;
+    const started = performance.now();
+    let frame = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - started) / ms);
+      const eased = 1 - Math.pow(1 - t, 3);
+      position.current = from + (value - from) * eased;
+      setShown(position.current);
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [value, ms]);
+
+  return shown;
+}
+
+/**
+ * A headline figure that moves. `null` is the honest "no reading" case and stays a dash:
+ * easing towards zero would claim the machine went quiet.
+ */
+export function Tween({
+  value,
+  format,
+  className,
+  style,
+}: {
+  value: number | null;
+  format: (n: number) => string;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const shown = useTweenedNumber(value ?? 0);
+  return (
+    <span className={className} style={style}>
+      {value === null ? "—" : format(shown)}
+    </span>
+  );
+}
+
 export function Meter({ ratio, color }: { ratio: number; color: string }) {
+  const clamped = Math.min(1, Math.max(0, Number.isFinite(ratio) ? ratio : 0));
   return (
     <div className="meter">
-      <div className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%`, background: color }} />
+      <div className="meter-fill" style={{ transform: `scaleX(${clamped})`, background: color }} />
     </div>
   );
 }
@@ -484,17 +546,66 @@ export function AppTable({
 }
 
 /**
+ * Keeps a node mounted for one animation after it has been asked to go, which is the only way
+ * an exit can be seen at all. `motion`'s AnimatePresence does the same job; this is the part
+ * of that behaviour worth its weight in bytes.
+ */
+function usePresence<T>(value: T | null, ms = 150): { shown: T | null; leaving: boolean } {
+  const [shown, setShown] = useState<T | null>(value);
+  const [leaving, setLeaving] = useState(false);
+
+  useEffect(() => {
+    if (value) {
+      setShown(value);
+      setLeaving(false);
+      return;
+    }
+    // Nothing to animate away if it was never on screen.
+    setShown((current) => {
+      if (!current) return null;
+      setLeaving(true);
+      return current;
+    });
+  }, [value]);
+
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = window.setTimeout(() => {
+      setShown(null);
+      setLeaving(false);
+    }, ms);
+    return () => window.clearTimeout(timer);
+  }, [leaving, ms]);
+
+  return { shown, leaving };
+}
+
+/**
  * Nothing closes without being asked first, and force quit is offered separately rather
  * than taken for granted — the same two-step the Mac version uses.
  */
 export function QuitDialog() {
   const { pendingQuit, clearQuit, t } = useStore();
-  if (!pendingQuit) return null;
-  const app = pendingQuit;
+  const { shown, leaving } = usePresence(pendingQuit, 150);
+  const primary = useRef<HTMLButtonElement>(null);
+  const app = shown;
+
+  useEffect(() => {
+    if (!app || leaving) return;
+    // Focus lands on the safe action, and Escape dismisses without touching anything.
+    primary.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearQuit();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [app, leaving, clearQuit]);
+
+  if (!app) return null;
   return (
     <div
-      className="overlay"
-      onClick={clearQuit}
+      className={`overlay ${leaving ? "leaving" : ""}`}
+      onClick={leaving ? undefined : clearQuit}
       role="dialog"
       aria-modal="true"
       aria-label={t("action.confirmQuit", { name: app.name })}
@@ -525,6 +636,7 @@ export function QuitDialog() {
           </button>
           <button
             className="primary"
+            ref={primary}
             onClick={() => {
               void ipc.quitApp(app.key, false);
               clearQuit();

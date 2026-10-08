@@ -121,14 +121,11 @@ function MixHead() {
 }
 
 function PeakBar({ peak }: { peak: number }) {
+  // Square-rooted: dB is logarithmic, and a linear meter sits near silent most of the day.
+  const ratio = Math.min(1, Math.sqrt(Math.max(0, peak)));
   return (
     <span className="peak" aria-hidden="true">
-      <span
-        className="peak-fill"
-        style={{
-          width: `${Math.min(100, Math.round(Math.sqrt(Math.max(0, peak)) * 100))}%`,
-        }}
-      />
+      <span className="peak-fill" style={{ transform: `scaleX(${ratio})` }} />
     </span>
   );
 }

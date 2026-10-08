@@ -73,6 +73,7 @@ const en = {
   "label.cores": "Cores",
   "label.threads": "Threads",
   "label.processes": "Processes",
+  "label.adapters": "{count, plural, one {# adapter} other {# adapters}}",
   "label.apps": "Apps",
   "label.uptime": "Up time",
   "label.read": "Reading",
@@ -117,6 +118,10 @@ const en = {
   "list.kind": "Kind",
   "list.windows": "Windows",
   "list.openPorts": "Open ports",
+  "time.justNow": "just now",
+  "time.minutesAgo": "{count, plural, one {# minute ago} other {# minutes ago}}",
+  "time.hoursAgo": "{count, plural, one {# hour ago} other {# hours ago}}",
+  "time.daysAgo": "{count, plural, one {# day ago} other {# days ago}}",
   "list.sortBy": "Sort",
   "list.unreadable": "Processes Pulse cannot open",
   "list.unreadableHint":

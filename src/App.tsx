@@ -21,7 +21,7 @@ const TAB_LABEL: Record<string, Key> = {
 };
 
 export default function App() {
-  const { snapshot, settings, t, units, connected } = useStore();
+  const { snapshot, settings, t, units, connected, pendingQuit } = useStore();
   const [tab, setTab] = useState(
     () => new URLSearchParams(window.location.search).get("tab") || settings.openWindowOn || "overview",
   );
@@ -50,6 +50,8 @@ export default function App() {
         window.setTimeout(() => document.querySelector<HTMLInputElement>(".titlebar .find")?.focus(), 30);
       }
       if (event.key === "Escape") {
+        // The quit dialog owns Escape while it is up; it should not also drop out of Settings.
+        if (pendingQuit) return;
         if (page) setPage(null);
       }
       const digits = "1234567";
@@ -65,7 +67,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [settings.window.tabs, page]);
+  }, [settings.window.tabs, page, pendingQuit]);
 
   const tabs = settings.window.tabs.filter((x) => x.visible);
   const uptime = snapshot ? formatDuration(snapshot.machine.uptimeSeconds, units.locale, { short: true }) : "—";

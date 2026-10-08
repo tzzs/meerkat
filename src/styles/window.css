@@ -371,8 +371,12 @@
 }
 .meter-fill {
   height: 100%;
+  width: 100%;
   border-radius: 3px;
-  transition: width var(--t-med);
+  /* Scaled, not resized. Every row redraws its meter on every sample, and animating `width`
+     makes the browser lay the whole list out each time; a transform is composited. */
+  transform-origin: left center;
+  transition: transform var(--t-med);
 }
 
 .legend {
@@ -481,7 +485,9 @@
   font-size: 11.5px;
   color: var(--text-2);
   border: 1px solid transparent;
-  transition: all var(--t-fast);
+  /* Named properties: `all` also animates transform and opacity, which is exactly what a
+     motion library or a row transform wants to own. */
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
 }
 .chip:hover {
   background: var(--surface-2);
@@ -513,13 +519,20 @@
 }
 .row {
   display: grid;
-  grid-template-columns: 24px minmax(120px, 1.4fr) minmax(60px, 1fr) 84px 22px;
+  /* The name column is capped rather than proportional: with a flexible one the meters
+     started halfway across a wide window and left a dead strip nothing belonged to. */
+  grid-template-columns: 24px minmax(120px, 300px) minmax(60px, 1fr) 84px 22px;
   align-items: center;
   gap: var(--sp-3);
   padding: 7px 4px;
   border-radius: var(--r-sm);
   transition: background var(--t-fast);
 }
+/* An insight has no meter and no value, so it does not use the application row's columns. */
+.insight-row {
+  grid-template-columns: 10px minmax(0, 1fr) 22px;
+}
+
 .row:hover {
   background: var(--surface-2);
 }
@@ -824,6 +837,28 @@
   }
 }
 
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(5px) scale(0.985);
+  }
+}
+
+/* An exit has to be kept on screen to be seen at all; see usePresence in ui.tsx. */
+.overlay.leaving {
+  animation: fade-out 150ms var(--ease) forwards;
+  pointer-events: none;
+}
+.overlay.leaving .dialog {
+  animation: dialog-out 150ms var(--ease) forwards;
+}
+
 .dialog {
   width: min(420px, 88vw);
   background: var(--surface);
@@ -958,10 +993,12 @@
 .peak-fill {
   display: block;
   height: 100%;
-  margin-left: auto;
+  width: 100%;
   border-radius: 2px;
   background: var(--accent);
-  transition: width 90ms linear;
+  /* Anchored to the right and scaled, so the level reads as growing out of the slider. */
+  transform-origin: right center;
+  transition: transform 90ms linear;
 }
 
 .mute {
