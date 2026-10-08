@@ -50,7 +50,7 @@ pub fn refresh_visibility(app: &AppHandle) {
 
 #[tauri::command]
 pub fn snapshot(state: State<'_, AppState>) -> Option<Snapshot> {
-    state.latest.read().unwrap().clone()
+    state.latest.read().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
 #[tauri::command]
@@ -62,11 +62,11 @@ pub fn settings_get(state: State<'_, AppState>) -> Settings {
 pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) -> Result<Settings, String> {
     let saved = state.settings.set(next.clone())?;
     {
-        let mut tray = state.tray.lock().unwrap();
+        let mut tray = state.tray.lock().unwrap_or_else(|p| p.into_inner());
         tray.rebuild(&app, &saved);
     }
-    if let Some(snapshot) = state.latest.read().unwrap().as_ref() {
-        state.tray.lock().unwrap().update(&app, snapshot, &saved);
+    if let Some(snapshot) = state.latest.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        state.tray.lock().unwrap_or_else(|p| p.into_inner()).update(&app, snapshot, &saved);
     }
     let autostart = app.autolaunch();
     if saved.start_at_login {
@@ -88,35 +88,45 @@ pub fn history_series(
     range_seconds: u64,
 ) -> crate::models::HistorySeries {
     let now = crate::history::now_seconds();
-    let history = state.history.lock().unwrap();
+    let history = state.history.lock().unwrap_or_else(|p| p.into_inner());
     history.series(&metric, range_seconds, now)
 }
 
 #[tauri::command]
 pub fn history_ranking(state: State<'_, AppState>, hours: u64) -> Vec<crate::models::RankingRow> {
     let now = crate::history::now_seconds();
-    let history = state.history.lock().unwrap();
+    let history = state.history.lock().unwrap_or_else(|p| p.into_inner());
     history.ranking(hours, now)
 }
 
 #[tauri::command]
 pub fn insights(state: State<'_, AppState>) -> Vec<Insight> {
-    state.watcher.lock().unwrap().list()
+    state.watcher.lock().unwrap_or_else(|p| p.into_inner()).list()
 }
 
 #[tauri::command]
 pub fn insight_dismiss(state: State<'_, AppState>, id: String) {
-    state.watcher.lock().unwrap().dismiss(&id);
+    state.watcher.lock().unwrap_or_else(|p| p.into_inner()).dismiss(&id);
 }
 
 #[tauri::command]
 pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitResult {
-    let Some(snapshot) = state.latest.read().unwrap().clone() else {
+    let Some(snapshot) = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone() else {
         return QuitResult { asked: 0, force_used: force, error: Some("no reading yet".into()) };
     };
     let Some(app) = snapshot.apps.into_iter().find(|a| a.key == key) else {
         return QuitResult { asked: 0, force_used: force, error: Some("that app is gone".into()) };
     };
+
+    // The synthetic row is a count, not an application: its pids are the system processes this
+    // user cannot even open, so refusing is better than presenting them as something to kill.
+    if app.key == crate::metrics::grouping::UNREADABLE_KEY {
+        return QuitResult {
+            asked: 0,
+            force_used: false,
+            error: Some("not an application".into()),
+        };
+    }
 
     if force {
         let pids: Vec<sysinfo::Pid> = app.pids.iter().map(|p| sysinfo::Pid::from(*p as usize)).collect();
@@ -166,13 +176,13 @@ pub fn set_tray_bitmap(
     id: String,
     png: Vec<u8>,
 ) -> Result<(), String> {
-    let tray = state.tray.lock().unwrap();
+    let tray = state.tray.lock().unwrap_or_else(|p| p.into_inner());
     tray.set_bitmap(&app, &id, &png)
 }
 
 #[tauri::command]
 pub fn tray_ids(state: State<'_, AppState>) -> Vec<String> {
-    state.tray.lock().unwrap().ids()
+    state.tray.lock().unwrap_or_else(|p| p.into_inner()).ids()
 }
 
 #[tauri::command]
@@ -205,7 +215,7 @@ pub fn set_panel_size(app: AppHandle, width: u32, height: u32) -> Result<(), Str
 /// The report Settings → About copies: machine, settings, recent log. No app names.
 #[tauri::command]
 pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
-    let snapshot = state.latest.read().unwrap().clone();
+    let snapshot = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone();
     let settings = state.settings.get();
     let mut lines = Vec::new();
     lines.push(format!("Pulse {}", app.package_info().version));

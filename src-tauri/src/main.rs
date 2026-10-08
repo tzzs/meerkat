@@ -146,10 +146,10 @@ fn spawn_sampler(app: AppHandle) {
                 let settings = state.settings.get();
                 let snapshot = sampler.sample();
 
-                *state.latest.write().unwrap() = Some(snapshot.clone());
-                state.history.lock().unwrap().record(&snapshot);
+                *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
+                state.history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot);
 
-                for insight in state.watcher.lock().unwrap().evaluate(&snapshot, &settings) {
+                for insight in state.watcher.lock().unwrap_or_else(|p| p.into_inner()).evaluate(&snapshot, &settings) {
                     let _ = app.emit("insight", &insight);
                     if settings.alerts.enabled {
                         let _ = app
@@ -208,7 +208,7 @@ fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
     if tick % 20 != 0 {
         return;
     }
-    if let Ok(raw) = serde_json::to_string(&state.watcher.lock().unwrap().list()) {
+    if let Ok(raw) = serde_json::to_string(&state.watcher.lock().unwrap_or_else(|p| p.into_inner()).list()) {
         let _ = std::fs::write(dir.join("insights.json"), raw);
     }
     // Runs on the sampler thread on purpose: Core Audio needs COM, and this is the only
@@ -222,7 +222,7 @@ fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
         Err(error) => eprintln!("audio snapshot: {error}"),
     }
     let now = history::now_seconds();
-    let store = state.history.lock().unwrap();
+    let store = state.history.lock().unwrap_or_else(|p| p.into_inner());
     for range in [3600u64, 43200, 86400, 604800, 2592000] {
         for metric in ["cpu", "memory", "diskWrite", "download", "gpu", "battery", "temp"] {
             if let Ok(raw) = serde_json::to_string(&store.series(metric, range, now)) {

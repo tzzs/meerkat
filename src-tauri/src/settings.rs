@@ -234,7 +234,7 @@ impl SettingsStore {
     }
 
     pub fn get(&self) -> Settings {
-        self.current.read().unwrap().clone()
+        self.current.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     pub fn set(&self, next: Settings) -> Result<Settings, String> {
@@ -244,7 +244,7 @@ impl SettingsStore {
         fs::create_dir_all(self.path.parent().unwrap()).map_err(|e| e.to_string())?;
         fs::write(&tmp, serialized).map_err(|e| e.to_string())?;
         fs::rename(&tmp, &self.path).map_err(|e| e.to_string())?;
-        *self.current.write().unwrap() = next.clone();
+        *self.current.write().unwrap_or_else(|p| p.into_inner()) = next.clone();
         Ok(next)
     }
 }

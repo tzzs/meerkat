@@ -77,13 +77,13 @@ impl Watcher {
 
             if app.cpu_percent >= settings.alerts.cpu_percent {
                 let since = *state.cpu_since.get_or_insert(now);
-                if now - since >= settings.alerts.sustained_seconds {
+                if now.saturating_sub(since) >= settings.alerts.sustained_seconds {
                     hits.push(Hit {
                         kind: InsightKind::HighCpu,
                         key: app.key.clone(),
                         name: app.name.clone(),
                         value: app.cpu_percent,
-                        sustained: now - since,
+                        sustained: now.saturating_sub(since),
                     });
                     state.cpu_since = None;
                 }
@@ -94,13 +94,13 @@ impl Watcher {
             let rate = app.read_bytes_per_second + app.write_bytes_per_second;
             if rate >= settings.alerts.disk_bytes_per_second {
                 let since = *state.disk_since.get_or_insert(now);
-                if now - since >= settings.alerts.sustained_seconds {
+                if now.saturating_sub(since) >= settings.alerts.sustained_seconds {
                     hits.push(Hit {
                         kind: InsightKind::HeavyDisk,
                         key: app.key.clone(),
                         name: app.name.clone(),
                         value: rate,
-                        sustained: now - since,
+                        sustained: now.saturating_sub(since),
                     });
                     state.disk_since = None;
                 }
@@ -110,14 +110,14 @@ impl Watcher {
 
             let growth = app.memory_bytes.saturating_sub(state.baseline_memory);
             if growth >= settings.alerts.memory_grow_bytes
-                && now - state.started_at >= settings.alerts.sustained_seconds
+                && now.saturating_sub(state.started_at) >= settings.alerts.sustained_seconds
             {
                 hits.push(Hit {
                     kind: InsightKind::GrowingMemory,
                     key: app.key.clone(),
                     name: app.name.clone(),
                     value: growth as f64,
-                    sustained: now - state.started_at,
+                    sustained: now.saturating_sub(state.started_at),
                 });
                 state.baseline_memory = app.memory_bytes;
                 state.started_at = now;
@@ -129,7 +129,7 @@ impl Watcher {
         if let Some(hottest) = snapshot.temperature.hottest {
             if hottest >= HEAT_CELSIUS {
                 let since = *self.heat_since.get_or_insert(now);
-                if now - since >= 60 {
+                if now.saturating_sub(since) >= 60 {
                     if let Some(busiest) = snapshot
                         .apps
                         .iter()
@@ -141,7 +141,7 @@ impl Watcher {
                             key: busiest.key.clone(),
                             name: busiest.name.clone(),
                             value: hottest,
-                            sustained: now - since,
+                            sustained: now.saturating_sub(since),
                         });
                     }
                     self.heat_since = None;
@@ -155,7 +155,7 @@ impl Watcher {
             snapshot.network.download_bytes_per_second + snapshot.network.upload_bytes_per_second;
         if traffic >= settings.alerts.network_bytes_per_second {
             let since = *self.network_since.get_or_insert(now);
-            if now - since >= settings.alerts.sustained_seconds {
+            if now.saturating_sub(since) >= settings.alerts.sustained_seconds {
                 if let Some(top) = snapshot
                     .apps
                     .iter()
@@ -167,7 +167,7 @@ impl Watcher {
                         key: top.key.clone(),
                         name: top.name.clone(),
                         value: traffic,
-                        sustained: now - since,
+                        sustained: now.saturating_sub(since),
                     });
                 }
                 self.network_since = None;
@@ -206,7 +206,7 @@ impl Watcher {
             existing.sustained_seconds = hit.sustained;
             existing.resolved = false;
             let last = self.notified_at.get(&id).copied().unwrap_or(0);
-            if now - last >= RE_NOTIFY_AFTER {
+            if now.saturating_sub(last) >= RE_NOTIFY_AFTER {
                 self.notified_at.insert(id.clone(), now);
                 return Some(existing.clone());
             }

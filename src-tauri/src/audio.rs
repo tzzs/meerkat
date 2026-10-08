@@ -732,13 +732,6 @@ pub fn endpoints_of(role: Role) -> Result<Vec<Endpoint>, String> {
 /// All active endpoints, playback first then capture.
 ///
 /// Because [`Endpoint`] carries no flow field, prefer [`endpoints_of`] when the UI needs the
-/// two lists separately; `is_default` is per-flow here.
-pub fn endpoints() -> Result<Vec<Endpoint>, String> {
-    let mut out = endpoints_of(Role::Render)?;
-    out.extend(endpoints_of(Role::Capture)?);
-    Ok(out)
-}
-
 /// All audio sessions on the default endpoint of `role`, in the order the audio service
 /// reports them, and refreshes the `id -> session` registry used by the write calls.
 ///
