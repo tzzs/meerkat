@@ -183,10 +183,11 @@ function Fader({
   hold: Record<string, () => void>;
   onInput: (next: number) => void;
 }) {
-  // Square-rooted because dB is logarithmic: a linear meter reads silent most of the day. The
-  // level rides inside the filled track, so one control answers both "how loud is it set" and
-  // "how loud is it right now".
-  const level = Math.min(1, Math.sqrt(Math.max(0, peak)));
+  // Square-rooted because dB is logarithmic: a linear meter reads silent most of the day.
+  // Then scaled by the volume, because Core Audio reports the peak of the stream *before* the
+  // slider attenuates it — drawn unscaled, a device at 23% showed a level that ran past its own
+  // thumb, which reads as a control that is lying about its value.
+  const level = Math.min(1, Math.sqrt(Math.max(0, peak))) * Math.min(1, Math.max(0, value));
   return (
     <span className="fader">
       <span className="fader-track" aria-hidden="true">
