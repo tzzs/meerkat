@@ -17,6 +17,7 @@ use std::time::Instant;
 use sysinfo::{Components, Disks, Networks, System};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::FILETIME;
+use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
     REG_VALUE_TYPE,
@@ -398,10 +399,14 @@ impl Sampler {
 
     fn network(&mut self, elapsed: f64, tcp: &netinfo::TcpOwnership) -> NetworkMetric {
         self.networks.refresh(true);
-        let mut adapters = Vec::new();
+        // One walk of the interface table per refresh, shared by every adapter row. An empty
+        // map is a normal outcome: the speeds stay unset and the traffic numbers survive.
+        let speeds = link_speed_index();
         let mut seen: HashMap<String, (u64, u64)> = HashMap::new();
-        let (mut download, mut upload) = (0f64, 0f64);
+        let mut rows: Vec<AdapterRow> = Vec::with_capacity(self.networks.len());
 
+        // Rate every interface sysinfo reported first; the totals are summed after the dedupe
+        // below, never here, so a driver binding cannot contribute its card's bytes twice.
         for (name, data) in self.networks.iter() {
             let (received, transmitted) = (data.total_received(), data.total_transmitted());
             let (read_rate, write_rate) = match self.previous_network.get(name) {
@@ -412,21 +417,34 @@ impl Sampler {
                 None => (0.0, 0.0),
             };
             seen.insert(name.clone(), (received, transmitted));
-            let looping = is_loopback(name);
-            if !looping {
-                download += read_rate;
-                upload += write_rate;
-            }
-            adapters.push(AdapterInfo {
+            rows.push(AdapterRow {
                 name: name.clone(),
-                is_up: matches!(data.operational_state(), sysinfo::InterfaceOperationalState::Up),
-                link_speed_bits_per_second: None,
+                received,
+                transmitted,
                 download_bytes_per_second: read_rate,
                 upload_bytes_per_second: write_rate,
-                is_loopback: looping,
+                is_up: matches!(data.operational_state(), sysinfo::InterfaceOperationalState::Up),
+                is_loopback: is_loopback(name),
             });
         }
         self.previous_network = seen;
+
+        let mut adapters = Vec::new();
+        let (mut download, mut upload) = (0f64, 0f64);
+        for row in drop_binding_rows(rows) {
+            if !row.is_loopback {
+                download += row.download_bytes_per_second;
+                upload += row.upload_bytes_per_second;
+            }
+            adapters.push(AdapterInfo {
+                name: row.name.clone(),
+                is_up: row.is_up,
+                link_speed_bits_per_second: match_link_speed(&row.name, &speeds),
+                download_bytes_per_second: row.download_bytes_per_second,
+                upload_bytes_per_second: row.upload_bytes_per_second,
+                is_loopback: row.is_loopback,
+            });
+        }
         adapters.sort_by(|a, b| {
             (b.download_bytes_per_second + b.upload_bytes_per_second)
                 .total_cmp(&(a.download_bytes_per_second + a.upload_bytes_per_second))
@@ -461,6 +479,17 @@ impl Sampler {
                 first.utilization_percent = Some(percent);
             }
         }
+        // The probe reports Ok as soon as the engine counters answer; an adapter with nothing
+        // measured at all is the case that has to demote it, because then the headline
+        // describes only part of what the machine has. An adapter that reports memory but no
+        // sensors is not a broken reading — it is a card whose driver exposes no sensors — and
+        // saying so per adapter beats a global warning that would be permanently on for
+        // everyone with an integrated GPU.
+        let availability = if gpu::all_adapters_measured(&adapters) {
+            availability
+        } else {
+            Availability::Partial
+        };
         GpuMetric {
             total_percent,
             adapters,
@@ -566,6 +595,163 @@ fn is_loopback(name: &str) -> bool {
     lower.contains("loopback") || lower.starts_with("lo ") || name == "Software Simple"
 }
 
+/// One interface as `Sampler::network` sees it, before bindings are filtered out. A plain
+/// struct so the dedupe can be unit tested without a live interface table.
+#[derive(Clone, Debug, PartialEq)]
+struct AdapterRow {
+    name: String,
+    /// Cumulative counters, not rates: the binding filter compares totals.
+    received: u64,
+    transmitted: u64,
+    download_bytes_per_second: f64,
+    upload_bytes_per_second: f64,
+    is_up: bool,
+    is_loopback: bool,
+}
+
+/// Windows keeps a driver binding — the packet driver Npcap attaches to a card, VMware's
+/// VMnet1 adapter, and friends — as a separate row in the interface table, with its own
+/// `Alias` of `<card>-<binding>` but the very same counters as the card it is bound to.
+/// sysinfo therefore hands back `以太网 2` *and*
+/// `以太网 2-Npcap Packet Driver (NPCAP)-0000`, and the UI shows one network card twice with
+/// identical numbers. `Some(parent)` marks a row as such a shadow of an already kept adapter.
+///
+/// Both halves of the test are load-bearing: matching the name shape alone would merge two
+/// genuinely distinct idle cards, which are both sitting at zero counters.
+fn binding_parent<'a>(
+    row: &AdapterRow,
+    mut kept: impl Iterator<Item = &'a AdapterRow>,
+) -> Option<&'a AdapterRow> {
+    kept.find(|parent| {
+        parent.name != row.name
+            && parent.received == row.received
+            && parent.transmitted == row.transmitted
+            && is_binding_of(&row.name, &parent.name)
+    })
+}
+
+/// The `<card>-<binding>` name shape: `name` is `parent` followed by `-` and then the binding.
+fn is_binding_of(name: &str, parent: &str) -> bool {
+    name.strip_prefix(parent)
+        .is_some_and(|rest| rest.starts_with('-') && rest.len() > 1)
+}
+
+/// Drops binding shadows, keeping the shortest name — the physical card always comes first.
+fn drop_binding_rows(rows: Vec<AdapterRow>) -> Vec<AdapterRow> {
+    let mut rows = rows;
+    rows.sort_by(|a, b| {
+        a.name
+            .chars()
+            .count()
+            .cmp(&b.name.chars().count())
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    rows.into_iter().fold(Vec::<AdapterRow>::new(), |mut kept, row| {
+        if binding_parent(&row, kept.iter()).is_none() {
+            kept.push(row);
+        }
+        kept
+    })
+}
+
+/// Bound on how many interface rows are read, purely defensive: `NumEntries` comes from memory
+/// the system allocated, and a nonsensical value must not turn into an unbounded loop. Real
+/// machines are two orders of magnitude below this.
+const MAX_IF_ROWS: usize = 4096;
+
+/// Index keys say which `MIB_IF_ROW2` field they came from, because the match order matters:
+/// exact alias, then exact description, then case-insensitive alias.
+const FROM_ALIAS: &str = "alias=";
+const FROM_DESCRIPTION: &str = "description=";
+const FROM_FOLDED_ALIAS: &str = "folded-alias=";
+
+/// An interface row reduced to the fields name matching needs.
+#[derive(Clone, Debug)]
+struct InterfaceSpeed {
+    alias: String,
+    description: String,
+    /// Bits per second. `0` means "this interface reports no speed" and never reaches the index.
+    link_speed: u64,
+}
+
+/// Reads `GetIfTable2` once and indexes it by name. Read-only, no elevation.
+///
+/// Failure is not interesting: iphlpapi can refuse, and an empty index just means every adapter
+/// keeps `link_speed_bits_per_second: None`. Traffic numbers must never depend on this call.
+fn link_speed_index() -> HashMap<String, u64> {
+    let mut table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+    if unsafe { GetIfTable2(&mut table) }.is_err() || table.is_null() {
+        return HashMap::new();
+    }
+    let rows = unsafe { read_interface_speeds(table) };
+    unsafe { FreeMibTable(table as *const core::ffi::c_void) };
+    index_speeds(&rows)
+}
+
+/// Copies the rows out while the table is still ours to free.
+unsafe fn read_interface_speeds(table: *mut MIB_IF_TABLE2) -> Vec<InterfaceSpeed> {
+    let count = unsafe { (*table).NumEntries } as usize;
+    let source = unsafe { (*table).Table.as_ptr() };
+    let mut rows = Vec::new();
+    for index in 0..count.min(MAX_IF_ROWS) {
+        let row = unsafe { &*source.add(index) };
+        // windows-rs 0.62 exposes MIB_IF_ROW2's speed as the transmit/receive pair rather than a
+        // single `LinkSpeed` field. The two agree on Ethernet and can differ on Wi-Fi, where the
+        // negotiated rate is the faster side.
+        let link_speed = row.TransmitLinkSpeed.max(row.ReceiveLinkSpeed);
+        rows.push(InterfaceSpeed {
+            alias: from_utf16_nul(&row.Alias),
+            description: from_utf16_nul(&row.Description),
+            link_speed,
+        });
+    }
+    rows
+}
+
+/// `MIB_IF_ROW2` name fields are fixed UTF-16 arrays; the string ends at the first NUL.
+fn from_utf16_nul(field: &[u16]) -> String {
+    let end = field.iter().position(|c| *c == 0).unwrap_or(field.len());
+    String::from_utf16_lossy(&field[..end])
+}
+
+/// Builds the lookup keys for the three match tiers. Interfaces that report no speed — loopback,
+/// a disconnected radio, a pseudo adapter, which all come back as 0 — are left out entirely, so
+/// a match can never hand back a link of 0 bps. When several interfaces claim one key the faster
+/// speed wins, because a binding mirrors its card and if it disagrees the card's rate is right.
+fn index_speeds(rows: &[InterfaceSpeed]) -> HashMap<String, u64> {
+    let mut index = HashMap::with_capacity(rows.len() * 3);
+    for row in rows {
+        if row.link_speed == 0 {
+            continue;
+        }
+        for (prefix, key) in [
+            (FROM_ALIAS, row.alias.clone()),
+            (FROM_DESCRIPTION, row.description.clone()),
+            (FROM_FOLDED_ALIAS, row.alias.to_lowercase()),
+        ] {
+            let key = format!("{prefix}{key}");
+            index
+                .entry(key)
+                .and_modify(|speed: &mut u64| *speed = (*speed).max(row.link_speed))
+                .or_insert(row.link_speed);
+        }
+    }
+    index
+}
+
+/// The link speed of the adapter sysinfo named `name`, in bits per second: exact `Alias` first,
+/// then exact `Description`, then case-insensitive `Alias`. `None` when nothing in the table
+/// matches — an honest gap beats a guessed speed.
+fn match_link_speed(name: &str, index: &HashMap<String, u64>) -> Option<u64> {
+    let speed = index
+        .get(&format!("{FROM_ALIAS}{name}"))
+        .or_else(|| index.get(&format!("{FROM_DESCRIPTION}{name}")))
+        .or_else(|| index.get(&format!("{FROM_FOLDED_ALIAS}{}", name.to_lowercase())))
+        .copied()
+        .unwrap_or(0);
+    (speed > 0).then_some(speed)
+}
+
 pub fn day_key(at_ms: u64) -> String {
     ((at_ms as i64 + local_offset_ms()) / 86_400_000).to_string()
 }
@@ -658,5 +844,167 @@ pub fn machine_info(system: &System) -> MachineInfo {
         logical_cores: system.cpus().len().max(1),
         total_memory_bytes: system.total_memory(),
         uptime_seconds: System::uptime(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// tests (pure logic only — no interface table and no iphlpapi, so they run anywhere)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(name: &str, received: u64, transmitted: u64) -> AdapterRow {
+        AdapterRow {
+            name: name.to_string(),
+            received,
+            transmitted,
+            download_bytes_per_second: 0.0,
+            upload_bytes_per_second: 0.0,
+            is_up: true,
+            is_loopback: false,
+        }
+    }
+
+    fn speed(alias: &str, description: &str, link_speed: u64) -> InterfaceSpeed {
+        InterfaceSpeed {
+            alias: alias.to_string(),
+            description: description.to_string(),
+            link_speed,
+        }
+    }
+
+    #[test]
+    fn binding_name_is_the_card_dashed_with_the_binding() {
+        // The real shapes: Npcap's packet driver and VMware's host-only adapter.
+        assert!(is_binding_of(
+            "以太网 2-Npcap Packet Driver (NPCAP)-0000",
+            "以太网 2"
+        ));
+        assert!(is_binding_of(
+            "以太网 2-VMware Network Adapter VMnet1",
+            "以太网 2"
+        ));
+        // A different card is not a binding, however similar the name looks.
+        assert!(!is_binding_of("以太网 10", "以太网 2"));
+        assert!(!is_binding_of("以太网 20", "以太网 2"));
+        assert!(!is_binding_of("以太网 2", "以太网 2"));
+        // A dash is required, and so is something after it.
+        assert!(!is_binding_of("以太网 2", "以太网"));
+        assert!(!is_binding_of("以太网 2-", "以太网 2"));
+        assert!(!is_binding_of("WLAN 2", "以太网 2"));
+    }
+
+    #[test]
+    fn binding_parent_needs_the_name_shape_and_identical_counters() {
+        let card = row("以太网 2", 618_790, 52_205);
+        let binding = row("以太网 2-Npcap Packet Driver (NPCAP)-0000", 618_790, 52_205);
+        assert_eq!(binding_parent(&binding, [&card].into_iter()), Some(&card));
+
+        // Two genuinely distinct idle cards: the counters agree (both zero) but neither name is
+        // a binding of the other, so both must be reported.
+        let idle = row("以太网 10", 0, 0);
+        let other_idle = row("以太网 20", 0, 0);
+        assert_eq!(binding_parent(&other_idle, [&idle].into_iter()), None);
+        // Even a prefix-shaped pair with equal zero counters survives if the names are the
+        // wrong way round, i.e. the shorter one is the one being tested.
+        let prefixed_idle = row("以太网 2-VirtualBox Host Only", 0, 0);
+        let zero_card = row("以太网 2", 0, 0);
+        assert_eq!(binding_parent(&prefixed_idle, [&zero_card].into_iter()), Some(&zero_card));
+        assert_eq!(binding_parent(&zero_card, [&prefixed_idle].into_iter()), None);
+
+        // Name shape matches but the totals differ, so this is traffic of its own.
+        let mut drifting = binding.clone();
+        drifting.received += 1;
+        assert_eq!(binding_parent(&drifting, [&card].into_iter()), None);
+    }
+
+    #[test]
+    fn dedupe_keeps_the_card_and_drops_its_shadow() {
+        let kept = drop_binding_rows(vec![
+            row("以太网 2-Npcap Packet Driver (NPCAP)-0000", 618_790, 52_205),
+            row("以太网 2", 618_790, 52_205),
+            row("蓝牙网络连接 2", 0, 0),
+            row("WLAN 2", 0, 0),
+        ]);
+        // The kept set is what matters; `drop_binding_rows` orders by name length so that the
+        // card always precedes its binding, and `Sampler::network` re-sorts by traffic anyway.
+        let mut names: Vec<&str> = kept.iter().map(|row| row.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["WLAN 2", "以太网 2", "蓝牙网络连接 2"]);
+        assert_eq!(
+            kept.iter().find(|row| row.name == "以太网 2").map(|row| row.received),
+            Some(618_790),
+            "the surviving row is the physical card"
+        );
+    }
+
+    #[test]
+    fn aggregate_totals_count_each_interface_once() {
+        // `Sampler::network` sums over the deduped rows; the same arithmetic here proves a
+        // binding's mirrored bytes cannot double the headline download figure.
+        let mut card = row("以太网 2", 618_790, 52_205);
+        card.download_bytes_per_second = 61_879.9;
+        card.upload_bytes_per_second = 5_220.5;
+        let mut shadow = card.clone();
+        shadow.name = "以太网 2-Npcap Packet Driver (NPCAP)-0000".to_string();
+
+        let rows = drop_binding_rows(vec![shadow, card]);
+        let download: f64 = rows.iter().map(|r| r.download_bytes_per_second).sum();
+        let upload: f64 = rows.iter().map(|r| r.upload_bytes_per_second).sum();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(download, 61_879.9);
+        assert_eq!(upload, 5_220.5);
+    }
+
+    #[test]
+    fn link_speed_matches_alias_then_description_then_folded_alias() {
+        let index = index_speeds(&[
+            speed("以太网 2", "Realtek PCIe 2.5GbE Family Controller", 1_000_000_000),
+            speed("WLAN 2", "MediaTek Wi-Fi 6E MT7922 Card", 866_000_000),
+        ]);
+        assert_eq!(match_link_speed("以太网 2", &index), Some(1_000_000_000));
+        assert_eq!(
+            match_link_speed("Realtek PCIe 2.5GbE Family Controller", &index),
+            Some(1_000_000_000)
+        );
+        assert_eq!(match_link_speed("wlan 2", &index), Some(866_000_000));
+        assert_eq!(match_link_speed("WLAN 2 ", &index), None, "names are not trimmed");
+        assert_eq!(match_link_speed("以太网 99", &index), None);
+        // GetIfTable2 failed, or the adapter simply is not in the table: an empty index is a
+        // gap in the UI, not a wrong number.
+        assert_eq!(match_link_speed("以太网 2", &HashMap::new()), None);
+    }
+
+    #[test]
+    fn link_speed_tie_breaks_by_tier_then_by_the_faster_link() {
+        // "Ethernet" is one interface's alias and another's description; the alias tier wins.
+        let index = index_speeds(&[
+            speed("Ethernet", "Realtek PCIe GbE", 1_000_000_000),
+            speed("Card", "Ethernet", 100_000_000),
+        ]);
+        assert_eq!(match_link_speed("Ethernet", &index), Some(1_000_000_000));
+        assert_eq!(match_link_speed("Card", &index), Some(100_000_000));
+
+        // Two rows claim the same alias (a binding mirroring its card): the faster speed wins.
+        let index = index_speeds(&[
+            speed("以太网 2", "Npcap Packet Driver", 100_000_000),
+            speed("以太网 2", "Realtek PCIe 2.5GbE Family Controller", 2_500_000_000),
+        ]);
+        assert_eq!(match_link_speed("以太网 2", &index), Some(2_500_000_000));
+
+        // 0 bps is "no speed reported", so such an interface is never indexed at all.
+        let index = index_speeds(&[speed("TAP-Windows Adapter V9", "TAP Adapter V9", 0)]);
+        assert!(index.is_empty());
+        assert_eq!(match_link_speed("TAP-Windows Adapter V9", &index), None);
+    }
+
+    #[test]
+    fn interface_names_end_at_their_first_nul() {
+        let utf16 = "以太网 2".encode_utf16().collect::<Vec<u16>>();
+        let field = utf16.into_iter().chain([0u16; 4]).collect::<Vec<u16>>();
+        assert_eq!(from_utf16_nul(&field), "以太网 2");
+        assert_eq!(from_utf16_nul(&[0, 0, 0]), "");
     }
 }

@@ -32,20 +32,11 @@ pub fn enumerate_adapters() -> Vec<GpuAdapter> {
         let Some(desc) = adapter_desc(&adapter1) else {
             continue;
         };
-        // The WARP software rasteriser and the Microsoft Basic Render Driver show up as
-        // adapters too; neither is a chip anyone wants a row for.
-        const DXGI_ADAPTER_FLAG_SOFTWARE: u32 = 2;
         let name = wide_to_string(&desc.Description);
-        let basic = desc.VendorId == 0x1414 || name.contains("Basic Render");
-        if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE != 0 || basic {
+        if is_hidden_renderer(&name, desc.VendorId, desc.Flags) {
             continue;
         }
-        // DXGI can hand back the same physical chip twice under different LUIDs, so match
-        // on what the row would show rather than on the identifier.
-        if out
-            .iter()
-            .any(|a| a.name == name && a.dedicated_total_bytes == Some(desc.DedicatedVideoMemory as u64))
-        {
+        if is_duplicate_adapter(&out, &name, desc.DedicatedVideoMemory as u64) {
             continue;
         }
         let mut dedicated_total = Some(desc.DedicatedVideoMemory as u64);
@@ -76,6 +67,30 @@ pub fn enumerate_adapters() -> Vec<GpuAdapter> {
     }
     let _ = factory;
     out
+}
+
+/// The WARP software rasteriser and the Microsoft Basic Render Driver show up as adapters
+/// too; neither is a chip anyone wants a row for.
+const DXGI_ADAPTER_FLAG_SOFTWARE: u32 = 2;
+
+fn is_hidden_renderer(name: &str, vendor_id: u32, flags: u32) -> bool {
+    flags & DXGI_ADAPTER_FLAG_SOFTWARE != 0 || vendor_id == 0x1414 || name.contains("Basic Render")
+}
+
+/// DXGI can hand back the same physical chip twice under different LUIDs, so match on what
+/// the row would show rather than on the identifier.
+fn is_duplicate_adapter(seen: &[GpuAdapter], name: &str, dedicated_total_bytes: u64) -> bool {
+    seen
+        .iter()
+        .any(|a| a.name == name && a.dedicated_total_bytes == Some(dedicated_total_bytes))
+}
+
+/// The caller folds the headline utilisation onto the first adapter only, so this is how it
+/// tells whether every row still has at least one measured number to show.
+pub fn all_adapters_measured(adapters: &[GpuAdapter]) -> bool {
+    adapters
+        .iter()
+        .all(|a| a.utilization_percent.is_some() || a.dedicated_total_bytes.is_some())
 }
 
 fn adapter_desc(adapter: &windows::Win32::Graphics::Dxgi::IDXGIAdapter1) -> Option<DXGI_ADAPTER_DESC1> {
@@ -138,6 +153,9 @@ impl EngineProbe {
         }
     }
 
+    /// Reports availability as what actually arrived: `Unavailable` when the counter query
+    /// failed, `Partial` when it succeeded but yielded no engine rows, `Ok` when it did. The
+    /// caller can still downgrade with `all_adapters_measured`.
     pub fn refresh(&mut self) -> (Option<f64>, Vec<GpuProcess>, Availability) {
         self.read_sensors();
         if self.last_adapter_refresh.elapsed().as_secs() > 300 {
@@ -149,6 +167,8 @@ impl EngineProbe {
         }
         let rows = self.query.array(self.index);
         if rows.is_empty() {
+            // No engine instances came back, so the 0.0 this branch reports is a guess
+            // rather than a measurement; the reading is only partial.
             return (
                 Some(0.0),
                 Vec::new(),
@@ -176,7 +196,7 @@ impl EngineProbe {
 
         // Windows reports one number per engine per process; the headline figure is the
         // busiest single engine, which is the reading Task Manager uses too.
-        (Some(busiest), per_process, Availability::Partial)
+        (Some(busiest), per_process, Availability::Ok)
     }
 
     pub fn adapters(&self) -> &[GpuAdapter] {
@@ -189,4 +209,83 @@ fn parse_pid(instance: &str) -> Option<u32> {
     let after = instance.strip_prefix("pid_")?;
     let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn adapter(
+        name: &str,
+        dedicated_total_bytes: Option<u64>,
+        utilization_percent: Option<f64>,
+    ) -> GpuAdapter {
+        GpuAdapter {
+            index: 0,
+            name: name.to_string(),
+            dedicated_total_bytes,
+            dedicated_used_bytes: None,
+            shared_used_bytes: None,
+            temperature_c: None,
+            fan_percent: None,
+            power_watts: None,
+            utilization_percent,
+        }
+    }
+
+    /// Neither the WARP rasteriser nor the Basic Render Driver is a chip worth a row.
+    #[test]
+    fn software_and_basic_renderers_are_filtered_out() {
+        assert!(is_hidden_renderer("Microsoft Basic Render Driver", 0x1414, 0));
+        assert!(is_hidden_renderer("Intel UHD Graphics", 0x8086, DXGI_ADAPTER_FLAG_SOFTWARE));
+        assert!(is_hidden_renderer("Some Accelerator", 0x1414, 0));
+        assert!(!is_hidden_renderer("NVIDIA GeForce RTX 4070", 0x10de, 0));
+    }
+
+    /// The same chip behind a second LUID stays one row; a second chip that merely shares
+    /// its name does not get folded away with it.
+    #[test]
+    fn adapters_dedupe_by_name_and_capacity() {
+        let seen = vec![adapter("NVIDIA GeForce RTX 4070", Some(12_884_901_888), None)];
+        assert!(is_duplicate_adapter(&seen, "NVIDIA GeForce RTX 4070", 12_884_901_888));
+        assert!(!is_duplicate_adapter(&seen, "NVIDIA GeForce RTX 4070", 4_294_967_296));
+        assert!(!is_duplicate_adapter(&seen, "Intel UHD Graphics 770", 0));
+        assert!(!is_duplicate_adapter(&[], "NVIDIA GeForce RTX 4070", 12_884_901_888));
+    }
+
+    /// A row is honest as soon as it carries one measured number, and the reading goes
+    /// partial the moment any row would have to be blank.
+    #[test]
+    fn a_row_counts_as_measured_once_it_has_one_real_number() {
+        let utilised = adapter("NVIDIA GeForce RTX 4070", Some(12_884_901_888), Some(18.7));
+        assert!(all_adapters_measured(&[utilised.clone()]));
+
+        // No engine attributed to this chip, but DXGI did measure its memory.
+        assert!(all_adapters_measured(&[adapter(
+            "Intel UHD Graphics 770",
+            Some(134_217_728),
+            None
+        )]));
+
+        let blank = adapter("Virtual Display Adapter", None, None);
+        assert!(!all_adapters_measured(&[blank.clone()]));
+        assert!(
+            !all_adapters_measured(&[utilised, blank]),
+            "one blank row makes the whole reading partial"
+        );
+
+        // Nothing enumerated is nothing unmeasured; the rows carry no claim at all.
+        assert!(all_adapters_measured(&[]));
+    }
+
+    #[test]
+    fn parse_pid_reads_the_engine_instance_name() {
+        assert_eq!(
+            parse_pid("pid_1234,luid_0x0000000000008698,engtype_3d"),
+            Some(1234)
+        );
+        assert_eq!(parse_pid("pid_0,luid_0x1,engtype_copy"), Some(0));
+        assert_eq!(parse_pid("luid_0x1,engtype_3d"), None);
+        assert_eq!(parse_pid("pid_abc,luid_0x1"), None);
+    }
 }
