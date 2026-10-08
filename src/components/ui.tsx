@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import type { UnitPrefs } from "../lib/format";
 import type { Translate } from "../i18n";
 import type { AppInfo, Availability } from "../lib/types";
+import { UNREADABLE_GROUP } from "../lib/types";
 
 export function Card({
   title,
@@ -104,6 +106,7 @@ export function Chart({
 }
 
 export function CoreGrid({ values, units }: { values: number[]; units: UnitPrefs }) {
+  const { t } = useStore();
   return (
     <div className="core-grid">
       {values.map((value, i) => (
@@ -115,8 +118,14 @@ export function CoreGrid({ values, units }: { values: number[]; units: UnitPrefs
         </div>
       ))}
       <p className="hint faint">
-        {formatPercent(values.reduce((a, b) => a + b, 0) / Math.max(1, values.length), units.locale, 0)}{" "}
-        average across {values.length} logical cores
+        {t("cpu.perCoreAverage", {
+          average: formatPercent(
+            values.reduce((a, b) => a + b, 0) / Math.max(1, values.length),
+            units.locale,
+            0,
+          ),
+          cores: values.length,
+        })}
       </p>
     </div>
   );
@@ -235,6 +244,72 @@ export function AppTable({
 
   const peak = Math.max(1, ...filtered.map((a) => appValue(a, metric)));
 
+  // The list scrolls with the page rather than in its own box, so the virtualiser needs
+  // the distance between the scroller's top and the list's top. That distance is only
+  // stable while everything above the list keeps its height, and the cards above do move
+  // (an insight row appears, a graph reflows when the window resizes), so the margin is
+  // re-read after every render and on scroll as well as on resize. A stale margin would
+  // shift the whole rendered block off the rows the user is actually looking at.
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLElement | null>(null);
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  const measure = useCallback(() => {
+    const list = listRef.current;
+    const scroller = scrollRef.current;
+    if (!list || !scroller) return;
+    const next =
+      list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    // Setting the same number back into state would re-render, which would measure again.
+    setScrollMargin((prev) => (Math.abs(prev - next) < 0.5 ? prev : Math.round(next)));
+  }, []);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const scroller = (list.closest(".content") as HTMLElement | null) ?? null;
+    scrollRef.current = scroller;
+    setScrollEl(scroller);
+    measure();
+  }, [measure]);
+
+  useEffect(() => {
+    const scroller = scrollEl;
+    if (!scroller) return;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    const observer = new ResizeObserver(measure);
+    if (listRef.current) observer.observe(listRef.current);
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      scroller.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+    };
+  }, [scrollEl, measure]);
+
+  // Everything above the list can change height as the snapshot updates, and that does not
+  // resize the list itself, so the margin is re-read after each render rather than cached.
+  useEffect(measure);
+
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => scrollEl,
+    // Measured in the browser: an application row is 47px tall (7px of padding twice over
+    // two lines of text). The estimate is what sizes the scrollbar before the first row is
+    // measured, so an off-by-ten guess shows as a blank strip while scrolling fast.
+    estimateSize: () => 47,
+    overscan: 8,
+    scrollMargin,
+  });
+
   const format = (app: AppInfo) => {
     switch (metric) {
       case "cpu":
@@ -271,37 +346,65 @@ export function AppTable({
           ))}
         </div>
       </div>
-      <div className="rows">
-        {filtered.map((app) => (
-          <div
-            key={app.key}
-            className={`row ${pinned.includes(app.key) ? "pinned" : ""}`}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setPinned((p) => (p.includes(app.key) ? p.filter((k) => k !== app.key) : [...p, app.key]));
-            }}
-            title={app.windows.map((w) => w.title).join("\u000a") || app.exePath}
-          >
-            <Monogram name={app.name} seed={app.key} />
-            <div className="row-main">
-              <span className="row-name">{app.name}</span>
-              <span className={`row-sub ${KIND_TONE[app.kind]}`}>
-                {t(`kind.${app.kind}`)}
-                {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
-                {app.listeningPorts.length > 0
-                  ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
-                  : ""}
-              </span>
+      <div
+        className="rows"
+        ref={listRef}
+        data-count={filtered.length}
+        style={filtered.length > 0 ? { position: "relative", height: virtualizer.getTotalSize() } : undefined}
+      >
+        {virtualizer.getVirtualItems().map((item) => {
+          const app = filtered[item.index];
+          if (!app) return null;
+          // The synthetic row is a count of processes that need administrative rights to open,
+          // not an application: it has no figures, and it must never offer to close anything.
+          const unreadable = app.key === UNREADABLE_GROUP;
+          const label = unreadable ? t("list.unreadable") : app.name;
+          return (
+            <div
+              key={app.key}
+              data-index={item.index}
+              ref={virtualizer.measureElement}
+              className={`row ${pinned.includes(app.key) ? "pinned" : ""}`}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                transform: `translateY(${item.start - scrollMargin}px)`,
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setPinned((p) => (p.includes(app.key) ? p.filter((k) => k !== app.key) : [...p, app.key]));
+              }}
+              title={
+                unreadable
+                  ? t("list.unreadableHint")
+                  : app.windows.map((w) => w.title).join("\u000a") || app.exePath
+              }
+            >
+              <Monogram name={label} seed={app.key} />
+              <div className="row-main">
+                <span className="row-name">{label}</span>
+                <span className={`row-sub ${KIND_TONE[app.kind]}`}>
+                  {t(`kind.${app.kind}`)}
+                  {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
+                  {app.listeningPorts.length > 0
+                    ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
+                    : ""}
+                </span>
+              </div>
+              <div className="row-meter">
+                <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
+              </div>
+              <span className="row-value num">{unreadable ? "—" : format(app)}</span>
+              {!unreadable && (
+                <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
+                  ×
+                </button>
+              )}
             </div>
-            <div className="row-meter">
-              <Meter ratio={appValue(app, metric) / peak} color="var(--accent)" />
-            </div>
-            <span className="row-value num">{format(app)}</span>
-            <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
-              ×
-            </button>
-          </div>
-        ))}
+          );
+        })}
         {filtered.length === 0 && <p className="empty faint">{t("state.noData")}</p>}
       </div>
     </div>

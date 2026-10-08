@@ -294,6 +294,12 @@ export const METRIC_ORDER: MetricKind[] = [
 export const TAB_ORDER = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
 export type TabId = (typeof TAB_ORDER)[number];
 
+/**
+ * The grouping engine folds every process it cannot open into one row under this key. Its
+ * `name` arrives empty, so the label comes from the translation rather than from Windows.
+ */
+export const UNREADABLE_GROUP = "unreadable-processes";
+
 /** Headline number for a metric, used by tray readouts and panel tiles alike. */
 export function headline(metric: MetricKind, s: Snapshot): number {
   switch (metric) {

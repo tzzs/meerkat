@@ -118,6 +118,9 @@ const en = {
   "list.windows": "Windows",
   "list.openPorts": "Open ports",
   "list.sortBy": "Sort",
+  "list.unreadable": "Processes Pulse cannot open",
+  "list.unreadableHint":
+    "Reading these needs administrative rights, so Pulse has no figures for them and offers no way to close them.",
 
   "kind.app": "App",
   "kind.background": "Background",
@@ -141,6 +144,8 @@ const en = {
 
   "cpu.title": "Processor",
   "cpu.queueHelp": "Work waiting for a core. Above the core count means things are queued.",
+  "cpu.perCoreAverage":
+    "{average} average across {cores, plural, one {# logical core} other {# logical cores}}",
   "memory.title": "Memory",
   "memory.pressureHelp": "How hard the machine is working to keep things in RAM.",
   "disk.title": "Disk",

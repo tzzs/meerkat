@@ -121,6 +121,8 @@ const zh: Record<Key, string> = {
   "list.windows": "窗口",
   "list.openPorts": "开放端口",
   "list.sortBy": "排序",
+  "list.unreadable": "Pulse 无法打开的进程",
+  "list.unreadableHint": "读取这些进程需要管理员权限，所以 Pulse 没有它们的数据，也不提供关闭它们的方式。",
 
   "kind.app": "应用",
   "kind.background": "后台",
@@ -144,6 +146,7 @@ const zh: Record<Key, string> = {
 
   "cpu.title": "处理器",
   "cpu.queueHelp": "等待上核的工作量。超过核心数就说明在排队。",
+  "cpu.perCoreAverage": "{cores} 个逻辑核心的平均值为 {average}",
   "memory.title": "内存",
   "memory.pressureHelp": "机器为了把事情留在内存里有多吃力。",
   "disk.title": "磁盘",
