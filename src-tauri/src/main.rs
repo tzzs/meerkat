@@ -54,7 +54,8 @@ fn main() {
             ipc::audio_state,
             ipc::audio_set_volume,
             ipc::audio_set_endpoint,
-            ipc::app_icon
+            ipc::app_icon,
+            ipc::relaunch_elevated
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {

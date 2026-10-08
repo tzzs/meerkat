@@ -300,6 +300,22 @@ export type TabId = (typeof TAB_ORDER)[number];
  */
 export const UNREADABLE_GROUP = "unreadable-processes";
 
+export type PowerTabMode = "battery" | "thermal" | "hidden";
+
+/**
+ * What the power tab should be on this machine.
+ *
+ * Hiding it outright on a desktop would strand the temperature panel, which on many machines
+ * is the only thermal reading an unprivileged process can get at all — so the tab keeps its
+ * temperature content and changes its name instead. It disappears only when there is neither a
+ * battery nor a single temperature to show.
+ */
+export function powerTabMode(s: Snapshot | null): PowerTabMode {
+  if (!s) return "battery";
+  if (s.battery.hasBattery) return "battery";
+  return s.temperature.hottest !== null || s.temperature.sensors.length > 0 ? "thermal" : "hidden";
+}
+
 /** Headline number for a metric, used by tray readouts and panel tiles alike. */
 export function headline(metric: MetricKind, s: Snapshot): number {
   switch (metric) {

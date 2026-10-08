@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ipc } from "../lib/ipc";
 import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
-import { METRIC_ORDER, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
+import { METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
+import { TAB_LABEL } from "../i18n";
 import type { Key } from "../i18n/en";
 
 type Page = "general" | "layout" | "about";
@@ -285,7 +286,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
       ))}
       <div className="add-row">
         <span>{t("settings.addReadout")}</span>
-        {METRIC_ORDER.filter((m) => !usedMetrics.has(m)).map((metric) => (
+        {METRIC_ORDER.filter((m) => !usedMetrics.has(m) && (m !== "battery" || snapshot?.battery.hasBattery)).map((metric) => (
           <button key={metric} className="chip" onClick={() => addReadout(metric)}>
             {t(TRAY_METRICS[metric] as "metric.cpu")}
           </button>
@@ -324,11 +325,17 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
       </div>
 
       <h4 className="section-title">{t("settings.windowTabs")}</h4>
-      {settings.window.tabs.map((tab, index) => (
+      {settings.window.tabs.map((tab, index) => {
+        // The power tab is not a choice on hardware that has nothing to put in it.
+        const mode = powerTabMode(snapshot);
+        const offHardware = tab.id === "battery" && mode === "hidden";
+        const label = tab.id === "battery" && mode === "thermal" ? "metric.temperature" : TAB_LABEL[tab.id];
+        return (
         <div className="tray-row" key={tab.id}>
           <input
             type="checkbox"
             checked={tab.visible}
+            disabled={offHardware}
             onChange={(e) =>
               save({
                 ...settings,
@@ -338,7 +345,8 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
               })
             }
           />
-          <span className="tray-name">{tab.id}</span>
+          <span className="tray-name">{t(label)}</span>
+          {offHardware && <span className="faint">{t("settings.noPowerHardware")}</span>}
           <span className="spacer" />
           <button
             onClick={() => {
@@ -363,7 +371,8 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
             ↓
           </button>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

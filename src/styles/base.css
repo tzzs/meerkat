@@ -208,6 +208,7 @@ button {
 .unavailable {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
   border: 1px dashed var(--hairline-strong);
@@ -227,4 +228,15 @@ button {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+.unavailable-action {
+  display: flex;
+  align-items: center;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.unavailable-action .chip {
+  flex: none;
 }

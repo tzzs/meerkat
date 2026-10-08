@@ -73,6 +73,20 @@ export const ipc = {
    * a given program is the expensive one.
    */
   appIcon: (exePath: string, size: number) => call<string | null>("app_icon", { exePath, size }),
+  /**
+   * Restarts the app with administrative rights. Returns the reason it did not happen: when
+   * the user agrees, the process is already exiting and nothing is rendered in between.
+   */
+  relaunchElevated: async (): Promise<string | null> => {
+    if (!inTauri) return null;
+    const { invoke } = await import("@tauri-apps/api/core");
+    try {
+      await invoke("relaunch_elevated");
+      return null;
+    } catch (error) {
+      return typeof error === "string" ? error : String(error);
+    }
+  },
 };
 
 export async function listenMetrics(handler: (snapshot: Snapshot) => void): Promise<() => void> {

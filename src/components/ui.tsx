@@ -205,7 +205,19 @@ export function Meter({ ratio, color }: { ratio: number; color: string }) {
   );
 }
 
-export function AvailabilityNote({ state, t }: { state: Availability; t: Translate }) {
+export function AvailabilityNote({
+  state,
+  t,
+  elevate = false,
+}: {
+  state: Availability;
+  t: Translate;
+  /** Whether elevation is the thing that could plausibly change this. Not every gap is a
+      permission gap, and offering the button where it would do nothing is worse than not
+      offering it. */
+  elevate?: boolean;
+}) {
+  const [refusal, setRefusal] = useState<string | null>(null);
   if (state === "ok") return null;
   const key =
     state === "needsElevation"
@@ -213,11 +225,29 @@ export function AvailabilityNote({ state, t }: { state: Availability; t: Transla
       : state === "partial"
         ? "state.partial"
         : "state.unavailable";
+  const canAsk = elevate && (state === "needsElevation" || state === "partial") && ipc.enabled;
   return (
-    <p className="unavailable">
+    <div className="unavailable">
       <span className="dot" />
-      {t(key)}
-    </p>
+      <span className="unavailable-text">{t(key)}</span>
+      {canAsk && (
+        <span className="unavailable-action">
+          <button
+            className="chip"
+            onClick={() => {
+              void ipc.relaunchElevated().then((reason) => {
+                if (reason) setRefusal(reason === "cancelled" ? t("state.elevateCancelled") : reason);
+              });
+            }}
+          >
+            {t("action.elevateRestart")}
+          </button>
+          <span className="faint">
+            {refusal ?? t("state.elevateHelp")}
+          </span>
+        </span>
+      )}
+    </div>
   );
 }
 

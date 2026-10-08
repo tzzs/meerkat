@@ -99,7 +99,7 @@ function HistoryChart({ metric, range }: { metric: string; range: number }) {
       <Chart values={points.map((p) => p.value)} max={max} color={tone} height={110} />
       <div className="history-scale">
         <span className="faint">
-          {t("label.utilisation").trim()} {peak}
+          {t("label.peak")} {peak}
         </span>
         <span className="faint">{rangeLabel ? t(rangeLabel.key) : ""}</span>
       </div>
@@ -196,7 +196,11 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
       sub:
         snapshot.temperature.sensors.length > 0
           ? `${snapshot.temperature.sensors.length} ${t("label.sensors")}`
-          : t(`state.${snapshot.temperature.availability === "needsElevation" ? "needsElevation" : "unavailable"}` as "state.unavailable"),
+          : snapshot.temperature.availability === "needsElevation"
+            ? t("state.needsElevation")
+            : snapshot.temperature.availability === "partial"
+              ? t("state.partial")
+              : t("state.unavailable"),
       open: "battery",
     },
   ];
@@ -204,7 +208,9 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
   return (
     <div className="stack">
       <div className="metric-grid">
-        {cards.map((card) => (
+        {cards
+          .filter((card) => card.metric !== "battery" || snapshot.battery.hasBattery)
+          .map((card) => (
           <button
             key={card.metric}
             className={`metric-card ${card.metric}`}
@@ -634,8 +640,10 @@ export function BatteryTab() {
 
   return (
     <div className="stack">
-      <div className="hero-row">
-        {b.hasBattery ? (
+      {/* On a machine with no battery there is nothing to report here, and the empty card
+          would push the temperature panel the user can actually read below the fold. */}
+      {b.hasBattery && (
+        <div className="hero-row">
           <Card className="hero" tone={TONE.battery} title={t("battery.title")}>
             <div className="hero-figure">
               <Tween className="huge num" value={b.chargePercent} format={(n) => formatPercent(n, units.locale)} />
@@ -647,21 +655,17 @@ export function BatteryTab() {
               {b.powerWatts !== null && <span>{t("label.powerDraw")} {b.powerWatts?.toFixed(1)} W</span>}
             </div>
           </Card>
-        ) : (
-          <Card className="hero" tone={TONE.battery} title={t("battery.title")}>
-            <p className="empty">{t("battery.noBattery")}</p>
+          <Card title={t("label.health")} tone={TONE.battery}>
+            {b.healthPercent !== null && <Stat label={t("label.health")} value={formatPercent(b.healthPercent, units.locale)} />}
+            {b.cycleCount !== null && <Stat label={t("label.cycles")} value={String(b.cycleCount)} />}
+            {b.designCapacityWh !== null && <Stat label={t("label.designCapacity")} value={`${b.designCapacityWh.toFixed(0)} Wh`} />}
+            {b.fullChargeCapacityWh !== null && (
+              <Stat label={t("label.fullCharge")} value={`${b.fullChargeCapacityWh.toFixed(0)} Wh`} />
+            )}
+            <AvailabilityNote state={b.source} t={t} />
           </Card>
-        )}
-        <Card title={t("label.health")} tone={TONE.battery}>
-          {b.healthPercent !== null && <Stat label={t("label.health")} value={formatPercent(b.healthPercent, units.locale)} />}
-          {b.cycleCount !== null && <Stat label={t("label.cycles")} value={String(b.cycleCount)} />}
-          {b.designCapacityWh !== null && <Stat label={t("label.designCapacity")} value={`${b.designCapacityWh.toFixed(0)} Wh`} />}
-          {b.fullChargeCapacityWh !== null && (
-            <Stat label={t("label.fullCharge")} value={`${b.fullChargeCapacityWh.toFixed(0)} Wh`} />
-          )}
-          <AvailabilityNote state={b.source} t={t} />
-        </Card>
-      </div>
+        </div>
+      )}
 
       {sectionShown(shown, "power") && (
         <Card title={t("temperature.title")} tone={TONE.temperature}>
@@ -678,7 +682,7 @@ export function BatteryTab() {
               </div>
             ))}
           </div>
-          <AvailabilityNote state={temp.availability} t={t} />
+          <AvailabilityNote state={temp.availability} t={t} elevate />
         </Card>
       )}
 

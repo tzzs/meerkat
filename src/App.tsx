@@ -1,24 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { listenNavigate } from "./lib/ipc";
-import type { Key } from "./i18n/en";
+import { TAB_LABEL } from "./i18n";
 import { useStore } from "./lib/store";
-import type { TabId } from "./lib/types";
+import { powerTabMode, type TabId } from "./lib/types";
 import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab } from "./components/tabs";
 import { QuitDialog } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
-
-const TAB_LABEL: Record<string, Key> = {
-  overview: "tab.overview",
-  cpu: "tab.cpu",
-  memory: "tab.memory",
-  disk: "tab.disk",
-  network: "tab.network",
-  gpu: "tab.gpu",
-  battery: "tab.battery",
-  sound: "tab.sound",
-};
 
 export default function App() {
   const { snapshot, settings, t, units, connected, pendingQuit } = useStore();
@@ -27,6 +16,10 @@ export default function App() {
   );
   const [search, setSearch] = useState("");
   const [page, setPage] = useState<null | "general" | "layout" | "about">(null);
+
+  // A desktop has no battery; the power tab keeps its temperature content and is called
+  // Temperature instead, and only vanishes when there is neither.
+  const powerMode = powerTabMode(snapshot);
 
   useEffect(() => {
     document.documentElement.dataset.pulse = "window";
@@ -69,7 +62,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [settings.window.tabs, page, pendingQuit]);
 
-  const tabs = settings.window.tabs.filter((x) => x.visible);
+  useEffect(() => {
+    // Being left on a tab that the hardware just stopped justifying looks like a broken window.
+    if (powerMode === "hidden" && tab === "battery") setTab("overview");
+  }, [powerMode, tab]);
+
+  const tabs = settings.window.tabs.filter((x) => x.visible && !(x.id === "battery" && powerMode === "hidden"));
   const uptime = snapshot ? formatDuration(snapshot.machine.uptimeSeconds, units.locale, { short: true }) : "—";
 
   const summary = useMemo(() => {
@@ -126,7 +124,7 @@ export default function App() {
               setTab(x.id);
             }}
           >
-            {t(TAB_LABEL[x.id] ?? "tab.overview")}
+            {t(x.id === "battery" && powerMode === "thermal" ? "metric.temperature" : TAB_LABEL[x.id] ?? "tab.overview")}
           </button>
         ))}
         <span className="spacer" />

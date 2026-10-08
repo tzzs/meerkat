@@ -37,6 +37,18 @@ function lookup(lang: Lang, key: Key, params?: Params): string {
   return out;
 }
 
+/** The label each window tab carries. The power tab's real label depends on the hardware. */
+export const TAB_LABEL: Record<string, Key> = {
+  overview: "tab.overview",
+  cpu: "tab.cpu",
+  memory: "tab.memory",
+  disk: "tab.disk",
+  network: "tab.network",
+  gpu: "tab.gpu",
+  battery: "tab.battery",
+  sound: "tab.sound",
+};
+
 export type Translate = (key: Key, params?: Params) => string;
 
 export function makeT(lang: Lang): Translate {
