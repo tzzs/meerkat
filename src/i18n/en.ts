@@ -17,8 +17,7 @@ const en = {
   "sound.master": "Device volume",
   "sound.default": "Default device",
   "sound.muted": "Muted",
-  "sound.level": "Level",
-  "sound.volume": "Volume",
+  "sound.levelVolume": "Level · Volume",
   "sound.micHelp": "Windows reports which apps have a microphone open, not which ones are capturing sound at this instant. Per-app input volume is not exposed by the operating system.",
   "sound.persistHelp": "Windows restores an app's volume within a sign-in session by itself. Pulse keeps its own record so a setting survives a reboot or an audio-service restart.",
   "tab.settings": "Settings",
@@ -92,7 +91,7 @@ const en = {
   "label.sinceMidnight": "since midnight",
   "label.connections": "Connections",
   "label.ports": "Ports",
-  "label.utilisation": " Utilisation",
+  "label.peak": "Peak",
   "label.dedicated": "Dedicated memory",
   "label.shared": "Shared memory",
   "label.charge": "Charge",
@@ -122,6 +121,10 @@ const en = {
   "time.minutesAgo": "{count, plural, one {# minute ago} other {# minutes ago}}",
   "time.hoursAgo": "{count, plural, one {# hour ago} other {# hours ago}}",
   "time.daysAgo": "{count, plural, one {# day ago} other {# days ago}}",
+  "settings.noPowerHardware": "No battery and no readable temperature sensor on this machine.",
+  "action.elevateRestart": "Restart as administrator",
+  "state.elevateHelp": "Elevation opens the ACPI thermal zone and nothing else — CPU package temperature and fan speed need a kernel driver, so they stay out of reach either way.",
+  "state.elevateCancelled": "Cancelled. Pulse keeps running without elevation.",
   "list.sortBy": "Sort",
   "list.unreadable": "Processes Pulse cannot open",
   "list.unreadableHint":
@@ -163,7 +166,7 @@ const en = {
   "temperature.title": "Temperature",
 
   "state.unavailable": "Not available",
-  "state.needsElevation": "Needs elevated helper",
+  "state.needsElevation": "Needs administrator rights",
   "state.partial": "Partly available",
   "state.noData": "No data yet",
 
