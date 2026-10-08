@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cpuDisplay, formatBytes, formatPercent, formatTemp } from "../lib/format";
 import { ipc } from "../lib/ipc";
-import { QuitDialog } from "../components/ui";
+import { AppIcon, QuitDialog } from "../components/ui";
 import { useStore } from "../lib/store";
 import { headline, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
 
@@ -105,7 +105,7 @@ export function PanelApp() {
         <div className="panel-apps">
           {apps.slice(0, 6).map((app) => (
             <div className="panel-app" key={app.key} title={app.exePath}>
-              <span className="mono-avatar">{(app.name[0] ?? "?").toUpperCase()}</span>
+              <AppIcon name={app.name} seed={app.key} exePath={app.exePath || undefined} />
               <span className="panel-app-name">{app.name}</span>
               <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
               <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>

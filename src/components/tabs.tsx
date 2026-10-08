@@ -10,6 +10,7 @@ import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
 import {
+  AppIcon,
   AppTable,
   AvailabilityNote,
   Card,
@@ -600,7 +601,7 @@ export function GpuTab() {
               const name = owner?.name?.trim() || `pid ${row.pid}`;
               return (
                 <div key={row.pid} className="row">
-                  <span className="mono-avatar">{(name[0] ?? "?").toUpperCase()}</span>
+                  <AppIcon name={name} seed={String(row.pid)} exePath={owner?.exePath || undefined} />
                   <div className="row-main">
                     <span className="row-name">{name}</span>
                     <span className="row-sub faint">{owner ? `${t("metric.gpu")} · ${row.pid}` : "—"}</span>

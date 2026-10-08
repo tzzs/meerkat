@@ -3,6 +3,7 @@
 mod alerts;
 mod audio;
 mod history;
+mod icons;
 mod ipc;
 mod menu;
 mod metrics;
@@ -52,7 +53,8 @@ fn main() {
             ipc::app_version,
             ipc::audio_state,
             ipc::audio_set_volume,
-            ipc::audio_set_endpoint
+            ipc::audio_set_endpoint,
+            ipc::app_icon
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {

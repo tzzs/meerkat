@@ -185,6 +185,78 @@ export function Monogram({ name, seed }: { name: string; seed: string }) {
 
 export type AppMetric = "cpu" | "memory" | "disk" | "network" | "connections";
 
+/** The leading column of a row: 22 CSS px, whether it holds an icon or an initial. */
+export const AVATAR_PX = 22;
+
+const iconCache = new Map<string, string | null>();
+const iconRequests = new Map<string, Promise<string | null>>();
+
+/** One ask per executable per size, shared by every row that shows the same program. */
+function loadIcon(exePath: string, size: number): Promise<string | null> {
+  const key = `${exePath}@${size}`;
+  const running = iconRequests.get(key);
+  if (running) return running;
+  const request = ipc.appIcon(exePath, size).then((url) => {
+    iconCache.set(key, url);
+    iconRequests.delete(key);
+    return url;
+  });
+  iconRequests.set(key, request);
+  return request;
+}
+
+/**
+ * A program's own icon, with the initial behind it.
+ *
+ * The fallback is not decoration: a process whose executable cannot be read has no icon to
+ * ask for, and a row with an empty leading column reads as a row that failed to load.
+ */
+export function AppIcon({
+  name,
+  seed,
+  exePath,
+}: {
+  name: string;
+  seed: string;
+  exePath?: string;
+}) {
+  // Asked for at the device scale, or a 22px icon on a 150% display is resampled and soft.
+  const size = Math.max(AVATAR_PX, Math.round(AVATAR_PX * (window.devicePixelRatio || 1)));
+  const key = exePath ? `${exePath}@${size}` : "";
+  const [src, setSrc] = useState<string | null>(() => (key ? iconCache.get(key) ?? null : null));
+
+  useEffect(() => {
+    if (!key || !exePath) {
+      setSrc(null);
+      return;
+    }
+    const known = iconCache.get(key);
+    if (known !== undefined) {
+      setSrc(known);
+      return;
+    }
+    let current = true;
+    void loadIcon(exePath, size).then((url) => {
+      if (current) setSrc(url);
+    });
+    return () => {
+      current = false;
+    };
+  }, [key, exePath, size]);
+
+  if (!src) return <Monogram name={name} seed={seed} />;
+  return (
+    <img
+      className="app-icon"
+      src={src}
+      width={AVATAR_PX}
+      height={AVATAR_PX}
+      alt=""
+      draggable={false}
+    />
+  );
+}
+
 export function appValue(app: AppInfo, metric: AppMetric): number {
   switch (metric) {
     case "cpu":
@@ -382,7 +454,7 @@ export function AppTable({
                   : app.windows.map((w) => w.title).join("\u000a") || app.exePath
               }
             >
-              <Monogram name={label} seed={app.key} />
+              <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
               <div className="row-main">
                 <span className="row-name">{label}</span>
                 <span className={`row-sub ${KIND_TONE[app.kind]}`}>

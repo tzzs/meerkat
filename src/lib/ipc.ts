@@ -67,6 +67,12 @@ export const ipc = {
     call<string>("audio_set_volume", { role, id, pid, volume, muted }),
   audioSetEndpoint: (endpointId: string, volume: number, muted: boolean) =>
     call<string>("audio_set_endpoint", { endpointId, volume, muted }),
+  /**
+   * A real application icon as a data URL, or null when the executable has no readable icon.
+   * Callers cache per path: extraction makes the shell load the module, so the first ask for
+   * a given program is the expensive one.
+   */
+  appIcon: (exePath: string, size: number) => call<string | null>("app_icon", { exePath, size }),
 };
 
 export async function listenMetrics(handler: (snapshot: Snapshot) => void): Promise<() => void> {

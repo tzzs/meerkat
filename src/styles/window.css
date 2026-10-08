@@ -580,6 +580,17 @@
   flex: none;
 }
 
+/* Windows hands back a square bitmap that already carries its own padding and rounded
+   corners, so unlike the initial this is neither cropped nor rounded by us. */
+.app-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex: none;
+  user-select: none;
+  pointer-events: none;
+}
+
 .kind-dot {
   width: 8px;
   height: 8px;

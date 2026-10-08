@@ -269,6 +269,29 @@ pub fn snapshot_audio() -> Result<AudioState, String> {
     })
 }
 
+/// One application's real icon, as a data URL the row can drop straight into an `<img>`.
+///
+/// Async because extraction makes the shell load the executable's module, which costs tens
+/// of milliseconds the first time each file is touched; a synchronous command would pay that
+/// on the thread that paints the window. The work goes to `spawn_blocking` so even the async
+/// runtime's workers stay free for the sampler.
+#[tauri::command]
+pub async fn app_icon(exe_path: String, size: i32) -> Option<String> {
+    let image = tauri::async_runtime::spawn_blocking(move || crate::icons::icon_for(&exe_path, size))
+        .await
+        .ok()??;
+    png_data_url(&image)
+}
+
+fn png_data_url(image: &crate::icons::IconImage) -> Option<String> {
+    use base64::Engine;
+    let rgba = image::RgbaImage::from_raw(image.width, image.height, image.rgba.clone())?;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    rgba.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(cursor.into_inner());
+    Some(format!("data:image/png;base64,{encoded}"))
+}
+
 #[tauri::command]
 pub fn audio_state(state: State<'_, AppState>) -> Result<AudioState, String> {
     let snapshot = snapshot_audio()?;

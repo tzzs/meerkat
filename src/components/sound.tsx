@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ipc } from "../lib/ipc";
 import { useStore } from "../lib/store";
 import type { AudioEndpoint, AudioSession, AudioState } from "../lib/types";
-import { Card, Monogram, Pill } from "./ui";
+import { AppIcon, Card, Pill } from "./ui";
 
 /**
  * The mixer. Windows gives every application its own audio session, so this needs no
@@ -201,7 +201,7 @@ function SessionRow({
   const name = owner?.name?.trim() || session.displayName?.trim() || `pid ${session.pid}`;
   return (
     <div className={`mix-row ${session.active ? "" : "inactive"}`}>
-      <Monogram name={name} seed={String(session.pid)} />
+      <AppIcon name={name} seed={String(session.pid)} exePath={owner?.exePath || undefined} />
       <span className="mix-name">
         <span className="mix-label">{name}</span>
         {!session.active && <Pill>{t("label.standby")}</Pill>}

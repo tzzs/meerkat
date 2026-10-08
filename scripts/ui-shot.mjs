@@ -1,16 +1,31 @@
-// Screenshots the running UI through the probe window's DevTools session, so design work can
-// be checked against the real snapshot instead of against a description of it.
-//   node scripts/ui-shot.mjs http://localhost:1420/?tab=cpu shots/cpu.png
-import { mkdirSync } from "node:fs";
+// Screenshots a running Pulse webview through the DevTools protocol, so design work is
+// checked against the real window rather than against a description of it.
+//
+//   node scripts/ui-shot.mjs http://localhost:1420/?tab=cpu shots/browser.png
+//   PULSE_CDP=9334 node scripts/ui-shot.mjs same shots/app-cpu.png 2500 0 处理器
+//
+// Port 9333 is the plain-browser mirror started by scripts/open-probe.ps1; 9334 is the app's
+// own WebView2, which needs WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334
+// in the environment that launches `pnpm tauri dev`. Dev only: nothing ships with it.
+import { mkdirSync, writeFileSync } from "node:fs";
 
+const PORT = process.env.PULSE_CDP ?? "9333";
 const url = process.argv[2] ?? "http://localhost:1420/";
 const out = process.argv[3] ?? "shots/shot.png";
 const settleMs = Number(process.argv[4] ?? 2500);
+const scroll = process.argv[5] ?? "";
+const tabLabel = process.argv[6] ?? "";
 
-const list = await fetch("http://127.0.0.1:9333/json/list").then((r) => r.json());
-const page = list.find((t) => t.type === "page");
+const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`)
+  .then((r) => r.json())
+  .catch(() => null);
+if (!targets) {
+  console.log(`no DevTools endpoint on ${PORT}`);
+  process.exit(1);
+}
+const page = targets.find((t) => t.type === "page" && (out.includes("panel") ? t.url.includes("panel") : !t.url.includes("panel")));
 if (!page) {
-  console.log("no probe page; run scripts/open-probe.ps1 first");
+  console.log("no page target;", targets.map((t) => t.url).join(", "));
   process.exit(1);
 }
 
@@ -36,22 +51,33 @@ const send = (method, params = {}) => {
 };
 const evaluate = async (expression) => {
   const r = await send("Runtime.evaluate", { expression, returnByValue: true });
+  if (r.result?.exceptionDetails) return `EXCEPTION ${r.result.exceptionDetails.text}`;
   return r.result?.result?.value;
 };
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 await send("Page.enable");
-await send("Page.navigate", { url });
-await new Promise((resolve) => setTimeout(resolve, settleMs));
-
-// "bottom" is the interesting part of a long list: it is where a virtualised table either
-// shows the last row or shows a blank gap.
-const scroll = process.argv[5];
+// "same" keeps the window where the user left it; clicking a tab exercises the real control
+// instead of reloading the page and losing whatever state the tab holds.
+if (url !== "same" && url !== page.url) {
+  await send("Page.navigate", { url });
+  await wait(settleMs);
+}
+if (tabLabel) {
+  const clicked = await evaluate(
+    `(() => { const b = [...document.querySelectorAll(".tab")]
+        .find((n) => n.textContent.trim() === ${JSON.stringify(tabLabel)});
+      if (b) b.click(); return Boolean(b); })()`,
+  );
+  if (!clicked) console.log(`no tab labelled ${tabLabel}`);
+  await wait(settleMs);
+}
 if (scroll) {
   await evaluate(
     `(() => { const c = document.querySelector(".content");
       c.scrollTop = ${scroll === "bottom" ? "c.scrollHeight" : Number(scroll)}; return c.scrollTop; })()`,
   );
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await wait(700);
 }
 
 const shot = await send("Page.captureScreenshot", { format: "png" });
@@ -62,11 +88,15 @@ if (!base64) {
 }
 mkdirSync(out.slice(0, out.lastIndexOf("/")), { recursive: true });
 const bytes = Buffer.from(base64, "base64");
-await import("node:fs").then(({ writeFileSync }) => writeFileSync(out, bytes));
+writeFileSync(out, bytes);
 console.log(
   out,
   bytes.length,
   "bytes |",
-  await evaluate("JSON.stringify({w: innerWidth, h: innerHeight, rows: document.querySelectorAll('.row').length})"),
+  await evaluate(
+    `JSON.stringify({w: innerWidth, h: innerHeight, rows: document.querySelectorAll(".row").length,
+      icons: document.querySelectorAll("img.app-icon").length,
+      monograms: document.querySelectorAll(".mono-avatar").length})`,
+  ),
 );
 socket.close();
