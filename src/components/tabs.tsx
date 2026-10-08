@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   formatBytes,
   formatDuration,
+  formatLinkSpeed,
   formatPercent,
   formatRate,
   formatTemp,
@@ -257,6 +258,13 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
 
       {sectionShown(shown, "worthALook") && (
         <Card title={t("overview.worthALook")} right={<Pill>{insights.length}</Pill>}>
+          {/* The list is a log of things that are still true, not a feed of events, and that
+              distinction is the whole reason it confused the user who wrote this comment. */}
+          <p className="hint faint">
+            {t("overview.worthALookHelp", {
+              seconds: formatDuration(settings.alerts.sustainedSeconds, units.locale, { short: true }),
+            })}
+          </p>
           {insights.length === 0 ? (
             <p className="empty">{t("overview.worthALookEmpty")}</p>
           ) : (
@@ -444,12 +452,22 @@ export function DiskTab() {
           <div className="rate-pair">
             <div>
               <span className="rate-label">{t("label.read")}</span>
-              <Tween className="huge num" value={d.readBytesPerSecond} format={(n) => formatRate(n, units, "storage")} />
+              <Tween
+                className="huge num"
+                value={d.readBytesPerSecond}
+                ease={false}
+                format={(n) => formatRate(n, units, "storage")}
+              />
               <Chart values={d.historyRead} color={TONE.disk} height={54} />
             </div>
             <div>
               <span className="rate-label">{t("label.write")}</span>
-              <Tween className="huge num" value={d.writeBytesPerSecond} format={(n) => formatRate(n, units, "storage")} />
+              <Tween
+                className="huge num"
+                value={d.writeBytesPerSecond}
+                ease={false}
+                format={(n) => formatRate(n, units, "storage")}
+              />
               <Chart values={d.historyWrite} color={TONE.disk} variant="bars" height={54} />
             </div>
           </div>
@@ -499,12 +517,27 @@ export function NetworkTab() {
           <div className="rate-pair">
             <div>
               <span className="rate-label">{t("label.download")}</span>
-              <Tween className="huge num" value={n.downloadBytesPerSecond} format={(v) => formatRate(v, units, "network")} />
+              {/* A rate is shown as measured, not eased: the value between two one-second
+                  samples is a figure that never happened, so easing it manufactures motion
+                  out of noise. Pinning the unit to the window peak was tried and rejected —
+                  it left a 10 KB/s upload reading as "0.01 MB/s" for as long as an old spike
+                  stayed in the window, which trades a twitch for a loss of resolution. */}
+              <Tween
+                className="huge num"
+                value={n.downloadBytesPerSecond}
+                ease={false}
+                format={(v) => formatRate(v, units, "network")}
+              />
               <Chart values={n.historyDownload} color={TONE.network} height={54} />
             </div>
             <div>
               <span className="rate-label">{t("label.upload")}</span>
-              <Tween className="huge num" value={n.uploadBytesPerSecond} format={(v) => formatRate(v, units, "network")} />
+              <Tween
+                className="huge num"
+                value={n.uploadBytesPerSecond}
+                ease={false}
+                format={(v) => formatRate(v, units, "network")}
+              />
               <Chart values={n.historyUpload} color={TONE.network} variant="bars" height={54} />
             </div>
           </div>
@@ -521,15 +554,30 @@ export function NetworkTab() {
           <div className="breakdown">
             {n.adapters
               .filter((a) => !a.isLoopback)
-              .map((a) => (
-                <div key={a.name} className="break-row">
-                  <span className="break-label">{a.name}</span>
-                  <Pill tone={a.isUp ? "" : "faint"}>{a.isUp ? "up" : "down"}</Pill>
-                  <span className="break-value num">
-                    {formatRate(a.downloadBytesPerSecond, units, "network")}
-                  </span>
-                </div>
-              ))}
+              .map((a) => {
+                // One row per card: state, how fast the link is, and both directions. The
+                // shared break-row grid is three columns built for a meter, and dropping a
+                // status badge into that meter column stretched it into what looked like an
+                // empty progress bar.
+                return (
+                  <div key={a.name} className="adapter-row">
+                    <span className="break-label" title={a.name}>
+                      {a.name}
+                    </span>
+                    <Pill tone={a.isUp ? "" : "faint"}>{a.isUp ? t("network.linkUp") : t("network.linkDown")}</Pill>
+                    <span className="adapter-speed num faint">
+                      {a.linkSpeedBitsPerSecond ? formatLinkSpeed(a.linkSpeedBitsPerSecond, units.locale) : "—"}
+                    </span>
+                    <span className="adapter-rate num">
+                      ↓ {formatRate(a.downloadBytesPerSecond, units, "network")}
+                    </span>
+                    <span className="adapter-rate num">
+                      ↑ {formatRate(a.uploadBytesPerSecond, units, "network")}
+                    </span>
+                  </div>
+                );
+              })}
+            {n.adapters.filter((a) => !a.isLoopback).length === 0 && <p className="empty">{t("state.noData")}</p>}
           </div>
         </Card>
       )}
@@ -585,7 +633,11 @@ export function GpuTab() {
               {adapter.dedicatedTotalBytes ? (
                 <Meter ratio={(adapter.dedicatedUsedBytes ?? 0) / adapter.dedicatedTotalBytes} color={TONE.gpu} />
               ) : null}
-              {(adapter.temperatureC !== null || adapter.fanPercent !== null || adapter.powerWatts !== null) && (
+              {adapter.temperatureC === null && adapter.fanPercent === null && adapter.powerWatts === null ? (
+                // Silence reads as a missing feature; this says which numbers the hardware
+                // does not report and why, rather than showing nothing at all.
+                <p className="hint faint">{t("gpu.noSensors")}</p>
+              ) : (
                 <div className="legend">
                   {adapter.temperatureC !== null && (
                     <span>{t("metric.temperature")} {formatTemp(adapter.temperatureC, units)}</span>
@@ -740,19 +792,35 @@ function ago(atMs: number, t: Translate): string {
 }
 
 function InsightRows({ insights }: { insights: Insight[] }) {
-  const { t, units } = useStore();
-  const text = (insight: Insight) => {
+  const { t, units, settings } = useStore();
+  const a = settings.alerts;
+  // Each line states the measurement and the limit it crossed, because "CPU above 388%" read
+  // as though 388% were the threshold. The heat rule has no user-set limit, and it names the
+  // busiest application rather than the one heating the machine, so that one says so.
+  const detail = (insight: Insight) => {
     switch (insight.kind) {
       case "highCpu":
-        return `${insight.appName} ${t("settings.alertCpu").toLowerCase()} ${formatPercent(insight.value, units.locale)}`;
+        return t("alert.highCpu", {
+          value: formatPercent(insight.value, units.locale),
+          limit: formatPercent(a.cpuPercent, units.locale),
+        });
       case "growingMemory":
-        return `${insight.appName} +${formatBytes(insight.value, units)}`;
+        return t("alert.growingMemory", {
+          value: formatBytes(insight.value, units),
+          limit: formatBytes(a.memoryGrowBytes, units),
+        });
       case "heavyDisk":
-        return `${insight.appName} ${formatRate(insight.value, units, "storage")}`;
+        return t("alert.heavyDisk", {
+          value: formatRate(insight.value, units, "storage"),
+          limit: formatRate(a.diskBytesPerSecond, units, "storage"),
+        });
       case "heavyNetwork":
-        return `${insight.appName} ${formatRate(insight.value, units, "network")}`;
+        return t("alert.heavyNetwork", {
+          value: formatRate(insight.value, units, "network"),
+          limit: formatRate(a.networkBytesPerSecond, units, "network"),
+        });
       case "heat":
-        return `${t("label.hottest")} ${formatTemp(insight.value, units)}`;
+        return t("alert.heat", { value: formatTemp(insight.value, units) });
     }
   };
   return (
@@ -761,10 +829,21 @@ function InsightRows({ insights }: { insights: Insight[] }) {
         <div key={insight.id} className="row insight-row">
           <span className={`kind-dot ${insight.kind}`} />
           <div className="row-main">
-            <span className="row-name">{text(insight)}</span>
+            <span className="row-name">
+              {insight.kind === "heat" ? (
+                detail(insight)
+              ) : (
+                <>
+                  <strong>{insight.appName}</strong> {detail(insight)}
+                </>
+              )}
+            </span>
             <span className="row-sub faint" title={new Date(insight.atMs).toLocaleString(units.locale)}>
-              {ago(insight.atMs, t)}
-              {insight.repeatCount > 1 ? ` · ${insight.repeatCount}×` : ""}
+              {t("alert.for", {
+                duration: formatDuration(insight.sustainedSeconds, units.locale, { short: true }),
+              })}{" "}
+              · {t("alert.lastSeen", { when: ago(insight.atMs, t) })}
+              {insight.kind === "heat" ? ` · ${t("alert.busiest", { name: insight.appName })}` : ""}
             </span>
           </div>
           <button

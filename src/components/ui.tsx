@@ -56,6 +56,47 @@ export function Stat({
   );
 }
 
+/** Rounds up to the next 1/2/5 step, so an axis ceiling is a number a person can read. */
+function niceCeiling(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const base = 10 ** Math.floor(Math.log10(value));
+  const step = [1, 2, 5, 10].find((s) => value <= s * base) ?? 10;
+  return step * base;
+}
+
+/**
+ * A chart ceiling that rises at once and falls slowly.
+ *
+ * Rescaling to the visible maximum on every sample makes the entire curve change height each
+ * second even when the data did not move, which is what reads as the graph bouncing. Holding a
+ * rounded ceiling keeps the shape steady, and a new peak still raises it immediately because
+ * understating a spike would be a lie about the measurement.
+ */
+function useHeldCeiling(observed: number, holdSamples = 6): number {
+  const [ceiling, setCeiling] = useState(() => niceCeiling(observed));
+  const below = useRef(0);
+
+  useEffect(() => {
+    const next = niceCeiling(observed);
+    if (next > ceiling) {
+      below.current = 0;
+      setCeiling(next);
+      return;
+    }
+    if (next === ceiling) {
+      below.current = 0;
+      return;
+    }
+    below.current += 1;
+    if (below.current >= holdSamples) {
+      below.current = 0;
+      setCeiling(next);
+    }
+  }, [observed, ceiling, holdSamples]);
+
+  return ceiling;
+}
+
 export function Chart({
   values,
   max,
@@ -73,7 +114,7 @@ export function Chart({
 }) {
   const width = 240;
   const data = values.length > 0 ? values : [0];
-  const top = Math.max(max ?? 0, ...data, 1);
+  const top = useHeldCeiling(Math.max(max ?? 0, ...data));
   const normalized = data.map((v) => {
     const r = Math.min(1, v / top);
     return invertAxis ? 1 - r : r;
@@ -145,13 +186,13 @@ export function Pill({ children, tone }: { children: ReactNode; tone?: string })
  * hundred milliseconds from wherever the previous animation had got to, so a change that
  * arrives mid-flight stays smooth instead of restarting.
  */
-export function useTweenedNumber(value: number, ms = 420): number {
+export function useTweenedNumber(value: number, ms = 420, ease = true): number {
   const [shown, setShown] = useState(value);
   const position = useRef(value);
 
   useEffect(() => {
     if (value === position.current) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (!ease || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       position.current = value;
       setShown(value);
       return;
@@ -176,19 +217,26 @@ export function useTweenedNumber(value: number, ms = 420): number {
 /**
  * A headline figure that moves. `null` is the honest "no reading" case and stays a dash:
  * easing towards zero would claim the machine went quiet.
+ *
+ * `ease={false}` is for rates. A throughput has no continuous value to walk towards — the
+ * number between two one-second samples is a figure that was never measured — so easing it
+ * manufactures motion out of noise. State quantities (percentage, bytes in use, degrees) keep
+ * the easing because those really do change smoothly.
  */
 export function Tween({
   value,
   format,
   className,
   style,
+  ease = true,
 }: {
   value: number | null;
   format: (n: number) => string;
   className?: string;
   style?: CSSProperties;
+  ease?: boolean;
 }) {
-  const shown = useTweenedNumber(value ?? 0);
+  const shown = useTweenedNumber(value ?? 0, 420, ease);
   return (
     <span className={className} style={style}>
       {value === null ? "—" : format(shown)}

@@ -16,9 +16,15 @@ const settleMs = Number(process.argv[4] ?? 2500);
 const scroll = process.argv[5] ?? "";
 const tabLabel = process.argv[6] ?? "";
 
-const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`)
-  .then((r) => r.json())
-  .catch(() => null);
+// The endpoint is briefly unavailable while the app restarts after a Rust rebuild, so ask a
+// few times before giving up.
+let targets = null;
+for (let attempt = 0; attempt < 12 && !targets; attempt++) {
+  targets = await fetch(`http://127.0.0.1:${PORT}/json/list`)
+    .then((r) => r.json())
+    .catch(() => null);
+  if (!targets) await new Promise((resolve) => setTimeout(resolve, 1500));
+}
 if (!targets) {
   console.log(`no DevTools endpoint on ${PORT}`);
   process.exit(1);

@@ -26,34 +26,59 @@ function nf(locale: string, digits: number) {
   });
 }
 
-export function formatBytes(bytes: number, units: UnitPrefs, opts?: { digits?: number; unitOnly?: boolean }): string {
-  const scale = units.storage === "binary" ? 1024 : 1000;
-  const labels = units.storage === "binary" ? BINARY : DECIMAL;
-  const abs = Math.abs(bytes);
-  let i = 0;
-  let v = abs;
-  while (v >= scale && i < labels.length - 1) {
+function scaleFor(magnitude: number, scale: number, labels: string[]): { index: number; divisor: number } {
+  let index = 0;
+  let v = magnitude;
+  while (v >= scale && index < labels.length - 1) {
     v /= scale;
-    i++;
+    index++;
   }
-  const digits = opts?.digits ?? (v >= 100 ? 0 : v >= 10 ? 1 : 2);
-  const num = nf(units.locale, digits).format(v);
-  return `${num}\u00a0${labels[i]}`;
+  return { index, divisor: scale ** index };
 }
 
-export function formatRate(bytesPerSecond: number, units: UnitPrefs, kind: "storage" | "network"): string {
+function digits(v: number): number {
+  return v >= 100 ? 0 : v >= 10 ? 1 : 2;
+}
+
+export function formatBytes(
+  bytes: number,
+  units: UnitPrefs,
+  opts?: { digits?: number; unitOnly?: boolean },
+): string {
+  const scale = units.storage === "binary" ? 1024 : 1000;
+  const labels = units.storage === "binary" ? BINARY : DECIMAL;
+  const { index, divisor } = scaleFor(Math.abs(bytes), scale, labels);
+  const v = bytes / divisor;
+  const digits_ = opts?.digits ?? digits(v);
+  const num = nf(units.locale, digits_).format(v);
+  return `${num}\u00a0${labels[index]}`;
+}
+
+/**
+ * A link speed, in the abbreviations Windows itself uses ("1 Gbps", "2.5 Gbps"). Kept apart
+ * from `formatRate` because a capacity is a round marketing number while throughput is a
+ * measurement, and the two are read differently.
+ */
+export function formatLinkSpeed(bitsPerSecond: number, locale: string): string {
+  const labels = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+  const { index, divisor } = scaleFor(bitsPerSecond, 1000, labels);
+  const v = bitsPerSecond / divisor;
+  // Link speeds are round numbers a person recognises ("1 Gbps", "2.5 Gbps"), so trailing
+  // zeros would only add noise.
+  const num = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(v);
+  return `${num}\u00a0${labels[index]}`;
+}
+
+export function formatRate(
+  bytesPerSecond: number,
+  units: UnitPrefs,
+  kind: "storage" | "network",
+): string {
   if (kind === "network" && units.network === "bits") {
-    const bits = bytesPerSecond * 8;
-    const scale = 1000;
     const labels = ["bit/s", "kbit/s", "Mbit/s", "Gbit/s"];
-    let i = 0;
-    let v = Math.abs(bits);
-    while (v >= scale && i < labels.length - 1) {
-      v /= scale;
-      i++;
-    }
-    const digits = v >= 100 ? 0 : v >= 10 ? 1 : 2;
-    return `${nf(units.locale, digits).format(v)}\u00a0${labels[i]}`;
+    const { index, divisor } = scaleFor(Math.abs(bytesPerSecond) * 8, 1000, labels);
+    const v = (bytesPerSecond * 8) / divisor;
+    return `${nf(units.locale, digits(v)).format(v)}\u00a0${labels[index]}`;
   }
   return `${formatBytes(bytesPerSecond, units)}/s`;
 }
