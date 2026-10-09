@@ -2,6 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
 import { Badge, type BadgeProps } from "./ui/badge";
+import {
+  Dialog,
+  DialogActions,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { Card as UICard, CardHeader, CardTitle, CardTools } from "./ui/card";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
@@ -650,84 +659,45 @@ export function AppTable({
 }
 
 /**
- * Keeps a node mounted for one animation after it has been asked to go, which is the only way
- * an exit can be seen at all. `motion`'s AnimatePresence does the same job; this is the part
- * of that behaviour worth its weight in bytes.
- */
-function usePresence<T>(value: T | null, ms = 150): { shown: T | null; leaving: boolean } {
-  const [shown, setShown] = useState<T | null>(value);
-  const [leaving, setLeaving] = useState(false);
-
-  useEffect(() => {
-    if (value) {
-      setShown(value);
-      setLeaving(false);
-      return;
-    }
-    // Nothing to animate away if it was never on screen.
-    setShown((current) => {
-      if (!current) return null;
-      setLeaving(true);
-      return current;
-    });
-  }, [value]);
-
-  useEffect(() => {
-    if (!leaving) return;
-    const timer = window.setTimeout(() => {
-      setShown(null);
-      setLeaving(false);
-    }, ms);
-    return () => window.clearTimeout(timer);
-  }, [leaving, ms]);
-
-  return { shown, leaving };
-}
-
-/**
  * Nothing closes without being asked first, and force quit is offered separately rather
  * than taken for granted — the same two-step the Mac version uses.
+ *
+ * Radix owns the behaviour: focus moves in and back out, Escape and the backdrop dismiss,
+ * the rest of the page is inert while it is up, and the node stays mounted for the exit
+ * animation. That last part is why the previous value is kept in a ref — the store has
+ * already forgotten which app was asked about by the time the animation is halfway done,
+ * and a dialog that empties itself while sliding away is worse than no animation.
  */
 export function QuitDialog() {
   const { pendingQuit, clearQuit, t } = useStore();
-  const { shown, leaving } = usePresence(pendingQuit, 150);
-  const primary = useRef<HTMLButtonElement>(null);
-  const app = shown;
-
-  useEffect(() => {
-    if (!app || leaving) return;
-    // Focus lands on the safe action, and Escape dismisses without touching anything.
-    primary.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") clearQuit();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [app, leaving, clearQuit]);
-
+  const lastAskedAbout = useRef<AppInfo | null>(null);
+  if (pendingQuit) lastAskedAbout.current = pendingQuit;
+  const app = pendingQuit ?? lastAskedAbout.current;
   if (!app) return null;
+  const title = t("action.confirmQuit", { name: app.name });
   return (
-    <div
-      className={`overlay ${leaving ? "leaving" : ""}`}
-      onClick={leaving ? undefined : clearQuit}
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("action.confirmQuit", { name: app.name })}
-    >
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <h3>{t("action.confirmQuit", { name: app.name })}</h3>
-        <p className="muted">{t("action.confirmQuitBody", { count: app.processCount })}</p>
-        <p className="faint dialog-sub">
-          {app.windows
-            .filter((w) => w.visible)
-            .slice(0, 3)
-            .map((w) => w.title)
-            .join(" · ")}
-        </p>
-        <div className="dialog-actions">
-          <button className="chip" onClick={clearQuit}>
-            {t("action.cancel")}
-          </button>
+    <Dialog open={Boolean(pendingQuit)} onOpenChange={(next) => !next && clearQuit()}>
+      <DialogContent label={title}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="text-muted-foreground">
+            {t("action.confirmQuitBody", { count: app.processCount })}
+          </DialogDescription>
+          <DialogDescription className="mt-1.5 truncate text-[11.5px] text-ink-3">
+            {app.windows
+              .filter((w) => w.visible)
+              .slice(0, 3)
+              .map((w) => w.title)
+              .join(" · ")}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogActions>
+          {/* The safe action takes focus first, so Enter on an open dialog cancels it. */}
+          <DialogClose>
+            <button className="chip" data-autofocus>
+              {t("action.cancel")}
+            </button>
+          </DialogClose>
           <span className="spacer" />
           <button
             className="danger"
@@ -740,7 +710,6 @@ export function QuitDialog() {
           </button>
           <button
             className="primary"
-            ref={primary}
             onClick={() => {
               void ipc.quitApp(app.key, false);
               clearQuit();
@@ -748,8 +717,8 @@ export function QuitDialog() {
           >
             {t("action.quitApp")}
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogActions>
+      </DialogContent>
+    </Dialog>
   );
 }

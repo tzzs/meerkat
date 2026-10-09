@@ -40,6 +40,8 @@
      colour-mix formula as an arbitrary value. */
   --accent-tint: color-mix(in oklab, var(--accent) 18%, transparent);
   --danger-tint: color-mix(in oklab, var(--m-danger) 14%, transparent);
+  /* What sits behind a dialog: the page colour pushed most of the way opaque. */
+  --overlay: color-mix(in oklab, var(--bg-deep) 62%, transparent);
 }
 
 /* `inline` so the utilities resolve through the aliases at use time, which is what lets the
@@ -68,6 +70,7 @@
   --color-ring: var(--ring);
   --color-accent-tint: var(--accent-tint);
   --color-danger-tint: var(--danger-tint);
+  --color-overlay: var(--overlay);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-ink-2: var(--text-2);
