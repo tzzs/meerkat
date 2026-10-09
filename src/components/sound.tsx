@@ -4,6 +4,7 @@ import { useStore } from "../lib/store";
 import type { AudioEndpoint, AudioSession, AudioState } from "../lib/types";
 import { AppIcon, Card, Pill } from "./ui";
 import { Button } from "./ui/button";
+import { Hint } from "./ui/tooltip";
 import { Slider } from "./ui/slider";
 
 /** Pointer handlers that tell the poll to stand down while a fader is under the hand. */
@@ -250,16 +251,18 @@ function EndpointRow({
           send(next);
         }}
       />
-      <Button
-        variant="mute"
-        on={endpoint.muted}
-        title={endpoint.muted ? t("sound.muted") : t("sound.master")}
-        onClick={() => {
-          void ipc.audioSetEndpoint(endpoint.id, endpoint.volume, !endpoint.muted);
-        }}
-      >
-        {endpoint.muted ? "⊘" : "♪"}
-      </Button>
+      <Hint label={endpoint.muted ? t("sound.muted") : t("sound.master")}>
+        <Button
+          variant="mute"
+          on={endpoint.muted}
+          aria-label={endpoint.muted ? t("sound.muted") : t("sound.master")}
+          onClick={() => {
+            void ipc.audioSetEndpoint(endpoint.id, endpoint.volume, !endpoint.muted);
+          }}
+        >
+          {endpoint.muted ? "⊘" : "♪"}
+        </Button>
+      </Hint>
       <span className="mix-value num">{Math.round(shown * 100)}%</span>
     </div>
   );
@@ -298,16 +301,18 @@ function SessionRow({
           send(next);
         }}
       />
-      <Button
-        variant="mute"
-        on={session.muted}
-        title={session.muted ? t("sound.muted") : t("action.cancel")}
-        onClick={() => {
-          void ipc.audioSetVolume(session.role, session.id, session.pid, session.volume, !session.muted);
-        }}
-      >
-        {session.muted ? "⊘" : "♪"}
-      </Button>
+      <Hint label={session.muted ? t("sound.muted") : t("sound.unmute")}>
+        <Button
+          variant="mute"
+          on={session.muted}
+          aria-label={session.muted ? t("sound.muted") : t("sound.unmute")}
+          onClick={() => {
+            void ipc.audioSetVolume(session.role, session.id, session.pid, session.volume, !session.muted);
+          }}
+        >
+          {session.muted ? "⊘" : "♪"}
+        </Button>
+      </Hint>
       <span className="mix-value num">{Math.round(shown * 100)}%</span>
     </div>
   );

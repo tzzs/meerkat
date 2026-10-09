@@ -20,6 +20,7 @@ const zh: Record<Key, string> = {
   "sound.master": "设备音量",
   "sound.default": "默认设备",
   "sound.muted": "已静音",
+  "sound.unmute": "静音",
   "sound.levelVolume": "电平 · 音量",
   "sound.micHelp": "Windows 只能告诉你哪些应用打开了麦克风，不代表它此刻正在采集声音；系统也没有开放每应用输入音量。",
   "sound.persistHelp": "Windows 在同一次登录内会自己还原应用的音量。Pulse 另外存一份，是为了让它跨重启、跨音频服务重启后仍然生效。",

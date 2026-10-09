@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cpuDisplay, formatBytes, formatPercent, formatTemp } from "../lib/format";
 import { ipc } from "../lib/ipc";
 import { AppIcon, QuitDialog } from "../components/ui";
+import { Hint } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
 import { headline, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
 
@@ -73,20 +74,24 @@ export function PanelApp() {
             ? `${snapshot.machine.chipName.split(" ").slice(0, 3).join(" ")} · ${formatBytes(snapshot.memory.inUseBytes, units)}`
             : t("state.noData")}
         </span>
-        <button
-          className={`icon-btn ${pinned ? "on" : ""}`}
-          title={t("panel.pin")}
-          onClick={() => {
-            const next = !pinned;
-            setPinned(next);
-            ipc.setPanelPinned(next);
-          }}
-        >
-          ◎
-        </button>
-        <button className="icon-btn" title={t("panel.openWindow")} onClick={() => void ipc.showWindow()}>
-          ⤢
-        </button>
+        <Hint label={t("panel.pin")}>
+          <button
+            className={`icon-btn ${pinned ? "on" : ""}`}
+            aria-label={t("panel.pin")}
+            onClick={() => {
+              const next = !pinned;
+              setPinned(next);
+              ipc.setPanelPinned(next);
+            }}
+          >
+            ◎
+          </button>
+        </Hint>
+        <Hint label={t("panel.openWindow")}>
+          <button className="icon-btn" aria-label={t("panel.openWindow")} onClick={() => void ipc.showWindow()}>
+            ⤢
+          </button>
+        </Hint>
       </header>
 
       <div className={`panel-metrics ${settings.panel.layout}`}>
@@ -104,21 +109,25 @@ export function PanelApp() {
       {tab === "top" && (
         <div className="panel-apps">
           {apps.slice(0, 6).map((app) => (
-            <div className="panel-app" key={app.key} title={app.exePath}>
-              <AppIcon name={app.name} seed={app.key} exePath={app.exePath || undefined} />
-              <span className="panel-app-name">{app.name}</span>
-              <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
-              <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>
-              <button
-                className="row-quit"
-                onClick={() => {
-                  requestQuit(app);
-                }}
-                title={t("action.quitApp")}
-              >
-                ×
-              </button>
-            </div>
+            <Hint key={app.key} className="max-w-[320px] break-all" label={app.exePath}>
+              <div className="panel-app">
+                <AppIcon name={app.name} seed={app.key} exePath={app.exePath || undefined} />
+                <span className="panel-app-name">{app.name}</span>
+                <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
+                <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>
+                <Hint label={t("action.quitApp")}>
+                  <button
+                    className="row-quit"
+                    aria-label={t("action.quitApp")}
+                    onClick={() => {
+                      requestQuit(app);
+                    }}
+                  >
+                    ×
+                  </button>
+                </Hint>
+              </div>
+            </Hint>
           ))}
           {apps.length === 0 && <p className="empty faint">{connected ? "" : t("state.noData")}</p>}
         </div>

@@ -14,6 +14,7 @@ import {
 } from "./ui/dialog";
 import { Card as UICard, CardHeader, CardTitle, CardTools } from "./ui/card";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
+import { Hint } from "./ui/tooltip";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import type { UnitPrefs } from "../lib/format";
@@ -169,14 +170,16 @@ export function CoreGrid({ values, units }: { values: number[]; units: UnitPrefs
   return (
     <div className="core-grid">
       {values.map((value, i) => (
-        <div key={i} className="core" title={`${i}: ${Math.round(value)}%`}>
-          <div className="core-track">
+        <Hint key={i} label={`${i}: ${Math.round(value)}%`} delayDuration={0}>
+          <div className="core">
             {/* Height rather than a scale: twenty bars cost nothing to lay out, and scaling
                 one would squash its gradient along with it. */}
-            <div className="core-fill" style={{ height: `${Math.min(100, Math.max(0, value))}%` }} />
+            <div className="core-track">
+              <div className="core-fill" style={{ height: `${Math.min(100, Math.max(0, value))}%` }} />
+            </div>
+            <span className="core-index">{i}</span>
           </div>
-          <span className="core-index">{i}</span>
-        </div>
+        </Hint>
       ))}
       <p className="hint faint">
         {t("cpu.perCoreAverage", {
@@ -613,49 +616,53 @@ export function AppTable({
           const unreadable = app.key === UNREADABLE_GROUP;
           const label = unreadable ? t("list.unreadable") : app.name;
           return (
-            <div
+            <Hint
               key={app.key}
-              data-index={item.index}
-              ref={virtualizer.measureElement}
-              className={`row ${pinned.includes(app.key) ? "pinned" : ""}`}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                transform: `translateY(${item.start - scrollMargin}px)`,
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setPinned((p) => (p.includes(app.key) ? p.filter((k) => k !== app.key) : [...p, app.key]));
-              }}
-              title={
+              className="max-w-[420px] whitespace-pre-line text-left"
+              label={
                 unreadable
                   ? t("list.unreadableHint")
                   : app.windows.map((w) => w.title).join("\u000a") || app.exePath
               }
             >
-              <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
-              <div className="row-main">
-                <span className="row-name">{label}</span>
-                <span className={`row-sub ${KIND_TONE[app.kind]}`}>
-                  {t(`kind.${app.kind}`)}
-                  {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
-                  {app.listeningPorts.length > 0
-                    ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
-                    : ""}
-                </span>
+              <div
+                data-index={item.index}
+                ref={virtualizer.measureElement}
+                className={`row ${pinned.includes(app.key) ? "pinned" : ""}`}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  transform: `translateY(${item.start - scrollMargin}px)`,
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setPinned((p) => (p.includes(app.key) ? p.filter((k) => k !== app.key) : [...p, app.key]));
+                }}
+              >
+                <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
+                <div className="row-main">
+                  <span className="row-name">{label}</span>
+                  <span className={`row-sub ${KIND_TONE[app.kind]}`}>
+                    {t(`kind.${app.kind}`)}
+                    {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
+                    {app.listeningPorts.length > 0
+                      ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
+                      : ""}
+                  </span>
+                </div>
+                <div className="row-meter">
+                  <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
+                </div>
+                <span className="row-value num">{unreadable ? "—" : format(app)}</span>
+                {!unreadable && (
+                  <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
+                    ×
+                  </button>
+                )}
               </div>
-              <div className="row-meter">
-                <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
-              </div>
-              <span className="row-value num">{unreadable ? "—" : format(app)}</span>
-              {!unreadable && (
-                <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
-                  ×
-                </button>
-              )}
-            </div>
+            </Hint>
           );
         })}
         {filtered.length === 0 && <p className="empty faint">{t("state.noData")}</p>}

@@ -4,6 +4,7 @@ import { ipc, listenNavigate } from "./lib/ipc";
 import { TAB_LABEL } from "./i18n";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { useStore } from "./lib/store";
 import { powerTabMode, type TabId } from "./lib/types";
 import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab } from "./components/tabs";
@@ -144,35 +145,51 @@ export default function App() {
             }
           }}
         />
-        <Button variant="tool" onClick={() => setPage(page === "layout" ? null : "layout")} title={t("action.arrange")}>
-          ▦
-        </Button>
-        <Button variant="tool" onClick={() => setPage(page === "general" ? null : "general")} title={t("action.settings")}>
-          ⚙
-        </Button>
+        <Hint label={t("action.arrange")}>
+          <Button
+            variant="tool"
+            aria-label={t("action.arrange")}
+            onClick={() => setPage(page === "layout" ? null : "layout")}
+          >
+            ▦
+          </Button>
+        </Hint>
+        <Hint label={t("action.settings")}>
+          <Button
+            variant="tool"
+            aria-label={t("action.settings")}
+            onClick={() => setPage(page === "general" ? null : "general")}
+          >
+            ⚙
+          </Button>
+        </Hint>
         {ipc.enabled && (
           <span className="winctls">
-            <button className="winctl" onClick={() => void ipc.minimize()} aria-label={t("action.minimize")} title={t("action.minimize")}>
-              ─
-            </button>
-            <button
-              className="winctl"
-              onClick={() => void ipc.toggleMaximize()}
-              aria-label={maximized ? t("action.restore") : t("action.maximize")}
-              title={maximized ? t("action.restore") : t("action.maximize")}
-            >
-              ▢
-            </button>
+            <Hint label={t("action.minimize")}>
+              <button className="winctl" onClick={() => void ipc.minimize()} aria-label={t("action.minimize")}>
+                ─
+              </button>
+            </Hint>
+            <Hint label={maximized ? t("action.restore") : t("action.maximize")}>
+              <button
+                className="winctl"
+                onClick={() => void ipc.toggleMaximize()}
+                aria-label={maximized ? t("action.restore") : t("action.maximize")}
+              >
+                ▢
+              </button>
+            </Hint>
             {/* Closing hides the window; Pulse keeps watching from the tray. The button says
                 so rather than implying it ends the program. */}
-            <button
-              className="winctl close"
-              onClick={() => void ipc.closeWindow()}
-              aria-label={t("action.hideToTray")}
-              title={t("action.hideToTray")}
-            >
-              ✕
-            </button>
+            <Hint label={t("action.hideToTray")}>
+              <button
+                className="winctl close"
+                onClick={() => void ipc.closeWindow()}
+                aria-label={t("action.hideToTray")}
+              >
+                ✕
+              </button>
+            </Hint>
           </span>
         )}
       </header>
