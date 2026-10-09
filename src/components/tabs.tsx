@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   formatBytes,
   formatDuration,
@@ -120,6 +120,30 @@ function useApps(sort: AppMetric, hideSystem: boolean): AppInfo[] {
   }, [snapshot, sort, hideSystem, settings.showSystemAppsInLists]);
 }
 
+/**
+ * Per-tab UI state that survives leaving the tab.
+ *
+ * Tabs unmount on purpose: eight tabs each re-rendering on every sample would cost far more
+ * than the memory they would save. The price is that anything a tab keeps in useState is gone
+ * when you come back, and the range picker is exactly what people notice — choose "last 7
+ * days" on CPU, glance at Memory, return, and it is an hour again. This keeps that state in a
+ * map keyed by tab and field, which lives exactly as long as the session does.
+ */
+const tabMemory = new Map<string, unknown>();
+
+function useTabState<T>(tab: string, field: string, initial: T): [T, (next: T) => void] {
+  const id = `${tab}.${field}`;
+  const [value, setValue] = useState<T>(() => (tabMemory.has(id) ? (tabMemory.get(id) as T) : initial));
+  const set = useCallback(
+    (next: T) => {
+      tabMemory.set(id, next);
+      setValue(next);
+    },
+    [id],
+  );
+  return [value, set];
+}
+
 function useInsights(): Insight[] {
   const [list, setList] = useState<Insight[]>([]);
   useEffect(() => {
@@ -138,8 +162,8 @@ function useInsights(): Insight[] {
 export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void }) {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "overview");
-  const [range, setRange] = useState(3600);
-  const [metric, setMetric] = useState<AppMetric>("memory");
+  const [range, setRange] = useTabState("overview", "range", 3600);
+  const [metric, setMetric] = useTabState<AppMetric>("overview", "metric", "memory");
   const apps = useApps(metric, false);
   const insights = useInsights().filter((i) => !i.resolved);
   if (!snapshot) return <Missing />;
@@ -305,8 +329,8 @@ function historyFor(snapshot: NonNullable<ReturnType<typeof useStore>["snapshot"
 export function CpuTab() {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "cpu");
-  const [range, setRange] = useState(3600);
-  const [metric, setMetric] = useState<AppMetric>("cpu");
+  const [range, setRange] = useTabState("cpu", "range", 3600);
+  const [metric, setMetric] = useTabState<AppMetric>("cpu", "metric", "cpu");
   const apps = useApps("cpu", false);
   if (!snapshot) return <Missing />;
   const totalBusy = snapshot.cpu.userPercent + snapshot.cpu.privilegedPercent;
@@ -359,8 +383,8 @@ export function CpuTab() {
 export function MemoryTab({ search }: { search?: string }) {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "memory");
-  const [range, setRange] = useState(3600);
-  const [metric, setMetric] = useState<AppMetric>("memory");
+  const [range, setRange] = useTabState("memory", "range", 3600);
+  const [metric, setMetric] = useTabState<AppMetric>("memory", "metric", "memory");
   const apps = useApps("memory", false);
   if (!snapshot) return <Missing />;
   const m = snapshot.memory;
@@ -440,8 +464,8 @@ export function MemoryTab({ search }: { search?: string }) {
 export function DiskTab() {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "disk");
-  const [range, setRange] = useState(3600);
-  const [metric, setMetric] = useState<AppMetric>("disk");
+  const [range, setRange] = useTabState("disk", "range", 3600);
+  const [metric, setMetric] = useTabState<AppMetric>("disk", "metric", "disk");
   const apps = useApps("disk", false);
   if (!snapshot) return <Missing />;
   const d = snapshot.disk;
@@ -505,8 +529,8 @@ export function DiskTab() {
 export function NetworkTab() {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "network");
-  const [range, setRange] = useState(3600);
-  const [metric, setMetric] = useState<AppMetric>("connections");
+  const [range, setRange] = useTabState("network", "range", 3600);
+  const [metric, setMetric] = useTabState<AppMetric>("network", "metric", "connections");
   const apps = useApps("connections", false);
   if (!snapshot) return <Missing />;
   const n = snapshot.network;
@@ -601,7 +625,7 @@ export function NetworkTab() {
 export function GpuTab() {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "gpu");
-  const [range, setRange] = useState(3600);
+  const [range, setRange] = useTabState("gpu", "range", 3600);
   if (!snapshot) return <Missing />;
   const g = snapshot.gpu;
   const appFor = (pid: number) => snapshot.apps.find((a) => a.pids.includes(pid));
@@ -685,7 +709,7 @@ export function GpuTab() {
 
 export function BatteryTab() {
   const { snapshot, settings, units, t } = useStore();
-  const [range, setRange] = useState(3600);
+  const [range, setRange] = useTabState("battery", "range", 3600);
   const shown = visibleSections(settings, "battery");
   if (!snapshot) return <Missing />;
   const b = snapshot.battery;

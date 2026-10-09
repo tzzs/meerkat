@@ -77,9 +77,14 @@ if (url !== "same" && url !== page.url) {
 }
 if (tabLabel) {
   const clicked = await evaluate(
-    `(() => { const b = [...document.querySelectorAll(".tab")]
+    `(() => { const b = [...document.querySelectorAll('[role="tab"], .tab')]
         .find((n) => n.textContent.trim() === ${JSON.stringify(tabLabel)});
-      if (b) b.click(); return Boolean(b); })()`,
+      if (b) {
+        // Radix selects a tab on mousedown, so a bare click() would not switch it.
+        b.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        b.click();
+      }
+      return Boolean(b); })()`,
   );
   if (!clicked) console.log(`no tab labelled ${tabLabel}`);
   await wait(settleMs);

@@ -156,28 +156,9 @@
   display: none;
 }
 
-.tab {
-  position: relative;
-  padding: 6px 12px;
-  border-radius: var(--r-sm);
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-2);
-  white-space: nowrap;
-  transition: background var(--t-fast), color var(--t-fast);
-}
-.tab:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-.tab[aria-selected="true"] {
-  background: var(--surface-3);
-  color: var(--text);
-  font-weight: 600;
-}
-/* The selection also draws itself in, so switching tabs has a beginning rather than only a
-   result. Scaled from the centre so it grows outwards under the label. */
-.tab::after {
+/* The selection draws itself in, so switching tabs has a beginning rather than only a
+   result. Keyed on Radix's data-state, scaled from the centre under the label. */
+[role="tab"]::after {
   content: "";
   position: absolute;
   left: 10px;
@@ -190,7 +171,7 @@
   transform-origin: center;
   transition: transform var(--t-med);
 }
-.tab[aria-selected="true"]::after {
+[role="tab"][data-state="active"]::after {
   transform: scaleX(1);
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { ipc, listenNavigate } from "./lib/ipc";
 import { TAB_LABEL } from "./i18n";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Button } from "./components/ui/button";
 import { useStore } from "./lib/store";
 import { powerTabMode, type TabId } from "./lib/types";
@@ -64,7 +65,9 @@ export default function App() {
       }
       const digits = "1234567";
       if ((event.ctrlKey || event.metaKey) && digits.includes(event.key)) {
-        const visible = settings.window.tabs.filter((x) => x.visible);
+        const visible = settings.window.tabs.filter(
+          (x) => x.visible && !(x.id === "battery" && powerMode === "hidden"),
+        );
         const target = visible[Number(event.key) - 1];
         if (target) {
           event.preventDefault();
@@ -99,7 +102,17 @@ export default function App() {
   }, [snapshot, units, uptime]);
 
   return (
-    <div className="shell">
+    <Tabs
+      className="shell"
+      // Nothing is selected while a Settings page is up; that is what the old
+      // aria-selected={!page && ...} meant, and a tab that looks active while it is not
+      // on screen is a lie the keyboard will repeat back to you.
+      value={page ? "" : tab}
+      onValueChange={(next: string) => {
+        setPage(null);
+        setTab(next as TabId);
+      }}
+    >
       <header
         className="titlebar"
         data-tauri-drag-region
@@ -164,40 +177,48 @@ export default function App() {
         )}
       </header>
 
-      <nav className="tabbar" role="tablist">
-        {tabs.map((x) => (
-          <button
-            key={x.id}
-            role="tab"
-            className="tab"
-            aria-selected={!page && tab === x.id}
-            onClick={() => {
-              setPage(null);
-              setTab(x.id);
-            }}
-          >
-            {t(x.id === "battery" && powerMode === "thermal" ? "metric.temperature" : TAB_LABEL[x.id] ?? "tab.overview")}
-          </button>
-        ))}
-        <span className="spacer" />
+      <div className="tabbar">
+        <TabsList>
+          {tabs.map((x) => (
+            <TabsTrigger key={x.id} value={x.id}>
+              {t(x.id === "battery" && powerMode === "thermal" ? "metric.temperature" : TAB_LABEL[x.id] ?? "tab.overview")}
+            </TabsTrigger>
+          ))}
+        </TabsList>
         <span className={`status ${connected ? "live" : "off"}`}>
           {connected ? t("app.name") : t("state.noData")}
         </span>
-      </nav>
+      </div>
 
       <main className="content">
         {page ? (
           <SettingsPages page={page} setPage={setPage} />
         ) : (
           <>
-            {tab === "overview" && <OverviewTab onOpenTab={(next) => setTab(next as TabId)} />}
-            {tab === "cpu" && <CpuTab />}
-            {tab === "memory" && <MemoryTab search={search} />}
-            {tab === "disk" && <DiskTab />}
-            {tab === "network" && <NetworkTab />}
-            {tab === "gpu" && <GpuTab />}
-            {tab === "battery" && <BatteryTab />}
-            {tab === "sound" && <SoundTab />}
+            <TabsContent value="overview">
+              <OverviewTab onOpenTab={(next) => setTab(next as TabId)} />
+            </TabsContent>
+            <TabsContent value="cpu">
+              <CpuTab />
+            </TabsContent>
+            <TabsContent value="memory">
+              <MemoryTab search={search} />
+            </TabsContent>
+            <TabsContent value="disk">
+              <DiskTab />
+            </TabsContent>
+            <TabsContent value="network">
+              <NetworkTab />
+            </TabsContent>
+            <TabsContent value="gpu">
+              <GpuTab />
+            </TabsContent>
+            <TabsContent value="battery">
+              <BatteryTab />
+            </TabsContent>
+            <TabsContent value="sound">
+              <SoundTab />
+            </TabsContent>
           </>
         )}
       </main>
@@ -214,6 +235,6 @@ export default function App() {
         </span>
       </footer>
       <QuitDialog />
-    </div>
+    </Tabs>
   );
 }
