@@ -564,7 +564,7 @@ export function NetworkTab() {
                     <span className="break-label" title={a.name}>
                       {a.name}
                     </span>
-                    <Pill tone={a.isUp ? "" : "faint"}>{a.isUp ? t("network.linkUp") : t("network.linkDown")}</Pill>
+                    <Pill className="justify-self-start" tone={a.isUp ? "" : "faint"}>{a.isUp ? t("network.linkUp") : t("network.linkDown")}</Pill>
                     <span className="adapter-speed num faint">
                       {a.linkSpeedBitsPerSecond ? formatLinkSpeed(a.linkSpeedBitsPerSecond, units.locale) : "—"}
                     </span>

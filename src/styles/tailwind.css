@@ -36,6 +36,10 @@
   --input: var(--hairline-strong);
   --ring: var(--accent);
   --radius: var(--r-md);
+  /* Tinted fills, named once so a component says "accent tint" instead of repeating a
+     colour-mix formula as an arbitrary value. */
+  --accent-tint: color-mix(in oklab, var(--accent) 18%, transparent);
+  --danger-tint: color-mix(in oklab, var(--m-danger) 14%, transparent);
 }
 
 /* `inline` so the utilities resolve through the aliases at use time, which is what lets the
@@ -62,6 +66,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-accent-tint: var(--accent-tint);
+  --color-danger-tint: var(--danger-tint);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-ink-2: var(--text-2);

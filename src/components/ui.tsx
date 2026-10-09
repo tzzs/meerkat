@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
+import { Badge, type BadgeProps } from "./ui/badge";
+import { Card as UICard, CardHeader, CardTitle, CardTools } from "./ui/card";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import type { UnitPrefs } from "../lib/format";
@@ -8,11 +10,16 @@ import type { Translate } from "../i18n";
 import type { AppInfo, Availability } from "../lib/types";
 import { UNREADABLE_GROUP } from "../lib/types";
 
+/**
+ * The card every tab is built from. Its parts are the shadcn primitives in ./ui/card; this
+ * is the short form the tabs use, because 36 call sites pass a title and an optional control
+ * strip rather than composing the header themselves.
+ */
 export function Card({
   title,
   right,
   children,
-  className = "",
+  className,
   tone,
 }: {
   title?: ReactNode;
@@ -22,15 +29,15 @@ export function Card({
   tone?: string;
 }) {
   return (
-    <section className={`card ${className}`} style={tone ? { ["--tone" as string]: tone } : undefined}>
+    <UICard className={className} tone={tone}>
       {(title || right) && (
-        <header className="card-head">
-          {title && <h3>{title}</h3>}
-          {right && <div className="card-tools">{right}</div>}
-        </header>
+        <CardHeader>
+          {title && <CardTitle>{title}</CardTitle>}
+          {right && <CardTools>{right}</CardTools>}
+        </CardHeader>
       )}
       {children}
-    </section>
+    </UICard>
   );
 }
 
@@ -174,8 +181,27 @@ export function CoreGrid({ values, units }: { values: number[]; units: UnitPrefs
   );
 }
 
-export function Pill({ children, tone }: { children: ReactNode; tone?: string }) {
-  return <span className={`pill ${tone ?? ""}`}>{children}</span>;
+const PILL_VARIANT: Record<string, NonNullable<BadgeProps["variant"]>> = {
+  "": "default",
+  accent: "accent",
+  faint: "faint",
+  danger: "danger",
+};
+
+export function Pill({
+  children,
+  tone,
+  className,
+}: {
+  children: ReactNode;
+  tone?: string;
+  className?: string;
+}) {
+  return (
+    <Badge variant={PILL_VARIANT[tone ?? ""]} className={className}>
+      {children}
+    </Badge>
+  );
 }
 
 /**
