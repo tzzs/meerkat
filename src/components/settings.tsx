@@ -4,6 +4,7 @@ import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
 import { METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
 import { Button } from "./ui/button";
+import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { TAB_LABEL } from "../i18n";
 import type { Key } from "../i18n/en";
 
@@ -305,26 +306,27 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
           (v) => save({ ...settings, panel: { ...settings.panel, layout: v } }),
         )}
       </Row>
-      <div className="tile-row">
+      <ToggleGroup
+        type="multiple"
+        className="mb-[var(--sp-3)]"
+        value={settings.panel.tiles.filter((tile) => tile.visible).map((tile) => tile.id)}
+        onValueChange={(next) =>
+          save({
+            ...settings,
+            panel: {
+              ...settings.panel,
+              tiles: settings.panel.tiles.map((tile) => ({ ...tile, visible: next.includes(tile.id) })),
+            },
+          })
+        }
+        aria-label={t("settings.visibleTiles")}
+      >
         {settings.panel.tiles.map((tile) => (
-          <Button
-            key={tile.id}
-            variant="chip"
-            on={tile.visible}
-            onClick={() =>
-              save({
-                ...settings,
-                panel: {
-                  ...settings.panel,
-                  tiles: settings.panel.tiles.map((x) => (x.id === tile.id ? { ...x, visible: !x.visible } : x)),
-                },
-              })
-            }
-          >
+          <ToggleChip key={tile.id} value={tile.id}>
             {t(TRAY_METRICS[tile.id as MetricKind] ?? "metric.cpu")}
-          </Button>
+          </ToggleChip>
         ))}
-      </div>
+      </ToggleGroup>
 
       <h4 className="section-title">{t("settings.windowTabs")}</h4>
       {settings.window.tabs.map((tab, index) => {

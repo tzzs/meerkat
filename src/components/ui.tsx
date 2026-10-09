@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Card as UICard, CardHeader, CardTitle, CardTools } from "./ui/card";
+import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import type { UnitPrefs } from "../lib/format";
@@ -582,19 +583,21 @@ export function AppTable({
           onChange={(e) => setQuery(e.target.value)}
           spellCheck={false}
         />
-        <div className="sort-group" role="group" aria-label={t("list.sortBy")}>
+        <ToggleGroup
+          type="single"
+          className="ml-auto"
+          value={metric}
+          onValueChange={(next) => {
+            if (next) onMetricChange(next as AppMetric);
+          }}
+          aria-label={t("list.sortBy")}
+        >
           {(["cpu", "memory", "disk", "connections"] as AppMetric[]).map((key) => (
-            <Button
-              key={key}
-              variant="chip"
-              on={metric === key}
-              aria-pressed={metric === key}
-              onClick={() => onMetricChange(key)}
-            >
+            <ToggleChip key={key} value={key}>
               {t(`list.${key === "connections" ? "network" : key}`)}
-            </Button>
+            </ToggleChip>
           ))}
-        </div>
+        </ToggleGroup>
       </div>
       <div
         className="rows"

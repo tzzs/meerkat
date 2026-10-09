@@ -439,11 +439,6 @@
   gap: var(--sp-3);
   margin-bottom: var(--sp-3);
 }
-.sort-group {
-  display: flex;
-  gap: 3px;
-  margin-left: auto;
-}
 .find {
   padding: 5px 9px;
   border-radius: var(--r-sm);
@@ -578,12 +573,6 @@
   border-radius: 50%;
   background: var(--m-warn);
   flex: none;
-}
-
-.range-picker {
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
 }
 
 /* ---------- settings ---------- */
@@ -735,12 +724,6 @@
   margin: var(--sp-2) 0 var(--sp-4);
   font-size: 12px;
   color: var(--text-2);
-}
-.tile-row {
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
-  margin-bottom: var(--sp-3);
 }
 .reset {
   margin-top: var(--sp-4);

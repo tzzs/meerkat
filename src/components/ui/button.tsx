@@ -9,9 +9,10 @@ import { cn } from "@/lib/utils";
  * invisible; what changes is that a new control now says `variant="chip"` and gets every
  * state the others have, instead of copying a rule and forgetting a hover.
  *
- * `on` is a separate dimension because two families are toggles: a chip marks the active
- * range or sort, a mute marks a muted channel. Passing it as a prop keeps the state in the
- * markup instead of in string concatenation at the call site.
+ * `on` is a separate dimension because a mute is a toggle: it marks a muted channel. Passing
+ * it as a prop keeps the state in the markup instead of in string concatenation at the call
+ * site. The pickers (range, sort, panel tiles) are not buttons at all any more — they are a
+ * ToggleGroup, because "exactly one of these" and "any of these" are not what aria-pressed says.
  *
  * Three affordances deliberately stay in CSS: `.row-quit` (revealed by hovering its row),
  * `.winctl` (the frameless window's own buttons) and `.icon-btn` (the tray panel's pin and
@@ -36,11 +37,6 @@ const buttonVariants = cva(
       },
     },
     compoundVariants: [
-      {
-        variant: "chip",
-        on: true,
-        className: "border-input bg-surface-3 font-semibold text-foreground",
-      },
       {
         variant: "mute",
         on: true,

@@ -11,7 +11,7 @@ import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
 import type { Translate } from "../i18n";
-import { Button } from "./ui/button";
+import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import {
   AppIcon,
   AppTable,
@@ -62,19 +62,20 @@ function useSeries(metric: string, rangeSeconds: number): HistorySeries | null {
 export function RangePicker({ value, onChange }: { value: number; onChange: (seconds: number) => void }) {
   const { t } = useStore();
   return (
-    <div className="range-picker" role="tablist">
+    <ToggleGroup
+      type="single"
+      value={String(value)}
+      onValueChange={(next) => {
+        if (next) onChange(Number(next));
+      }}
+      aria-label={t("label.range")}
+    >
       {RANGES.map((range) => (
-        <Button
-          key={range.seconds}
-          variant="chip"
-          on={value === range.seconds}
-          aria-pressed={value === range.seconds}
-          onClick={() => onChange(range.seconds)}
-        >
+        <ToggleChip key={range.seconds} value={String(range.seconds)}>
           {t(range.key)}
-        </Button>
+        </ToggleChip>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
