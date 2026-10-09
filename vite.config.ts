@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve, join, basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 
@@ -32,7 +33,10 @@ function pulseFixtures(): Plugin {
 
 export default defineConfig({
   base: "./",
-  plugins: [react(), pulseFixtures()],
+  plugins: [tailwindcss(), react(), pulseFixtures()],
+  resolve: {
+    alias: { "@": resolve(__dirname, "src") },
+  },
   clearScreen: false,
   server: {
     port: 1420,

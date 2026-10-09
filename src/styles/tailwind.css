@@ -1,0 +1,89 @@
+/* Tailwind's theme values and utilities — deliberately **not** the whole of Tailwind.
+ *
+ * `tailwindcss/preflight` is left out on purpose. The app has its own reset in base.css and
+ * a thousand lines of laid-out, measured styling; preflight would reset every button,
+ * heading, list and border in it, and the resulting damage would be indistinguishable from
+ * the migration itself. Utilities are also layered, so a rule in our own stylesheet still
+ * wins over a utility on the same element — which is what lets a component be converted and
+ * its old CSS deleted in one step rather than one giant swap.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme" layer(theme);
+@import "tailwindcss/utilities" layer(utilities);
+@import "tw-animate-css";
+
+/* shadcn's components are written against a fixed set of variable names. They are declared
+   here as aliases of the tokens in tokens.css, so there is still exactly one place where a
+   colour or a radius is decided, and the light/dark switch keeps working unchanged. */
+:root {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-ink);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-3);
+  --accent-soft: var(--surface-3);
+  --accent-foreground: var(--text);
+  --destructive: var(--m-danger);
+  --destructive-foreground: #ffffff;
+  --border: var(--hairline);
+  --input: var(--hairline-strong);
+  --ring: var(--accent);
+  --radius: var(--r-md);
+}
+
+/* `inline` so the utilities resolve through the aliases at use time, which is what lets the
+   themes in tokens.css restyle a Tailwind component without rebuilding anything. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-m-cpu: var(--m-cpu);
+  --color-m-memory: var(--m-memory);
+  --color-m-disk: var(--m-disk);
+  --color-m-network: var(--m-network);
+  --color-m-gpu: var(--m-gpu);
+  --color-m-battery: var(--m-battery);
+  --color-m-temp: var(--m-temp);
+  --color-m-warn: var(--m-warn);
+  --color-m-danger: var(--m-danger);
+
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+
+  --font-ui: var(--font-ui);
+  --font-display: var(--font-display);
+  --font-num: var(--font-num);
+
+  --shadow-card: var(--shadow);
+}
