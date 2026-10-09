@@ -1,0 +1,128 @@
+import { describe, expect, it } from "vitest";
+import {
+  cpuDisplay,
+  defaultUnits,
+  formatBytes,
+  formatClock,
+  formatDuration,
+  formatLinkSpeed,
+  formatPercent,
+  formatRate,
+  formatTemp,
+  setCores,
+  type UnitPrefs,
+} from "./format";
+
+const NBSP = " ";
+
+const units = (over: Partial<UnitPrefs> = {}): UnitPrefs => ({ ...defaultUnits, ...over });
+
+describe("formatBytes", () => {
+  it("separates the number from the unit with a non-breaking space", () => {
+    expect(formatBytes(21_300_000_000, units())).toBe(`21.3${NBSP}GB`);
+  });
+
+  it("counts thousands as decimal and 1024s as binary", () => {
+    expect(formatBytes(1000, units())).toBe(`1.00${NBSP}KB`);
+    expect(formatBytes(1024, units({ storage: "binary" }))).toBe(`1.00${NBSP}KiB`);
+    expect(formatBytes(1024 * 1024, units({ storage: "binary" }))).toBe(`1.00${NBSP}MiB`);
+  });
+
+  it("keeps three significant figures rather than three decimals", () => {
+    expect(formatBytes(999, units())).toBe(`999${NBSP}B`);
+    expect(formatBytes(10_000_000, units())).toBe(`10.0${NBSP}MB`);
+    expect(formatBytes(1_000_000_000, units())).toBe(`1.00${NBSP}GB`);
+  });
+});
+
+describe("formatRate", () => {
+  // The unit is chosen by the value itself. An earlier attempt to "stabilise" the display by
+  // pinning it to a reference figure made a 10 KB/s rate read 0.01 MB/s, which is a worse lie
+  // than a changing unit.
+  it("does not borrow a larger unit from a nearby figure", () => {
+    expect(formatRate(10_240, units(), "storage")).toBe(`10.2${NBSP}KB/s`);
+    expect(formatRate(0.5, units(), "storage")).toBe(`0.50${NBSP}B/s`);
+  });
+
+  it("multiplies by eight and switches to bit labels for network rates", () => {
+    expect(formatRate(1_000_000, units({ network: "bits" }), "network")).toBe(`8.00${NBSP}Mbit/s`);
+    expect(formatRate(1_000_000, units({ network: "bytes" }), "network")).toBe(`1.00${NBSP}MB/s`);
+  });
+});
+
+describe("formatLinkSpeed", () => {
+  it("writes capacities the way Windows labels them", () => {
+    expect(formatLinkSpeed(1_000_000_000, "en-US")).toBe(`1${NBSP}Gbps`);
+    expect(formatLinkSpeed(2_500_000_000, "en-US")).toBe(`2.5${NBSP}Gbps`);
+    expect(formatLinkSpeed(1_000_000_000_000, "en-US")).toBe(`1${NBSP}Tbps`);
+  });
+
+  it("carries no fraction for a zero link rather than reporting 0 KB/s", () => {
+    expect(formatLinkSpeed(0, "en-US")).toBe(`0${NBSP}bps`);
+  });
+
+  it("rounds a measured speed to two decimals at most", () => {
+    expect(formatLinkSpeed(1_234_567, "en-US")).toBe(`1.23${NBSP}Mbps`);
+  });
+});
+
+describe("formatTemp", () => {
+  it("converts to Fahrenheit and back", () => {
+    expect(formatTemp(37, units())).toBe("37°C");
+    expect(formatTemp(0, units({ temperature: "fahrenheit" }))).toBe("32°F");
+    expect(formatTemp(37, units({ temperature: "fahrenheit" }))).toBe("99°F");
+  });
+
+  it("can leave the unit off for a label that carries it", () => {
+    expect(formatTemp(37, units({ temperature: "fahrenheit" }), false)).toBe("99");
+  });
+});
+
+describe("formatDuration", () => {
+  it("speaks the locale it is given", () => {
+    expect(formatDuration(3725, "en-US")).toBe("1h 2m");
+    expect(formatDuration(3725, "zh-CN")).toBe("1 小时 2 分");
+    expect(formatDuration(90061, "zh-CN")).toBe("1 天 1 小时");
+  });
+
+  it("has a short form for the status bar", () => {
+    // The day unit used to be dropped here, so a machine three days old read "3 5h".
+    expect(formatDuration(90061, "en-US", { short: true })).toBe("1d 1h");
+    expect(formatDuration(87000, "en-US", { short: true })).toBe("1d");
+    expect(formatDuration(3725, "en-US", { short: true })).toBe("1h 2m");
+  });
+
+  it("never counts backwards", () => {
+    expect(formatDuration(-5, "en-US")).toBe("0s");
+    expect(formatDuration(-5, "zh-CN")).toBe("0 秒");
+  });
+});
+
+describe("formatClock", () => {
+  it("shows an em dash for a sleep that never happened", () => {
+    expect(formatClock(null)).toBe("—");
+    expect(formatClock(-1)).toBe("—");
+    expect(formatClock(Number.NaN)).toBe("—");
+  });
+
+  it("pads the minutes but not the hours", () => {
+    expect(formatClock(0)).toBe("0:00");
+    expect(formatClock(3725)).toBe("1:02");
+    expect(formatClock(9 * 3600)).toBe("9:00");
+  });
+});
+
+describe("cpuDisplay", () => {
+  it("divides by the core count only when the whole machine is the scale", () => {
+    setCores(20);
+    expect(cpuDisplay(100, units())).toBe(5);
+    expect(cpuDisplay(100, units({ cpuScale: "perCore" }))).toBe(100);
+  });
+});
+
+describe("formatPercent", () => {
+  it("adds the decimals the figure needs", () => {
+    expect(formatPercent(17, "en-US")).toBe("17%");
+    expect(formatPercent(2.34, "en-US", 1)).toBe("2.3%");
+  });
+});

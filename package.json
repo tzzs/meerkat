@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite dev",
     "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portable.ps1",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -39,7 +41,8 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.9.3",
-    "vite": "^7.1.0"
+    "vite": "^7.1.0",
+    "vitest": "^5.0.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

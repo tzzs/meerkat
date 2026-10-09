@@ -104,7 +104,7 @@ export function formatDuration(seconds: number, locale: string, opts?: { short?:
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   const zh = locale.startsWith("zh");
-  if (d > 0) return opts?.short ? `${d}${h ? ` ${h}h` : ""}` : zh ? `${d} 天 ${h} 小时` : `${d}d ${h}h`;
+  if (d > 0) return opts?.short ? `${d}d${h ? ` ${h}h` : ""}` : zh ? `${d} 天 ${h} 小时` : `${d}d ${h}h`;
   if (h > 0) return opts?.short ? `${h}h ${m}m` : zh ? `${h} 小时 ${m} 分` : `${h}h ${m}m`;
   if (m > 0) return zh ? `${m} 分 ${s % 60} 秒` : `${m}m ${s % 60}s`;
   return zh ? `${s} 秒` : `${s}s`;
