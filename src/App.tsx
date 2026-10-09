@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
-import { listenNavigate } from "./lib/ipc";
+import { ipc, listenNavigate } from "./lib/ipc";
 import { TAB_LABEL } from "./i18n";
 import { useStore } from "./lib/store";
 import { powerTabMode, type TabId } from "./lib/types";
@@ -16,6 +16,20 @@ export default function App() {
   );
   const [search, setSearch] = useState("");
   const [page, setPage] = useState<null | "general" | "layout" | "about">(null);
+  const [maximized, setMaximized] = useState(false);
+
+  // The window has no frame, so its own buttons have to show the real state.
+  useEffect(() => {
+    if (!ipc.enabled) return;
+    let alive = true;
+    const sync = () => void ipc.isMaximized().then((value) => alive && setMaximized(value));
+    sync();
+    window.addEventListener("resize", sync);
+    return () => {
+      alive = false;
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
 
   // A desktop has no battery; the power tab keeps its temperature content and is called
   // Temperature instead, and only vanishes when there is neither.
@@ -85,13 +99,25 @@ export default function App() {
 
   return (
     <div className="shell">
-      <header className="titlebar">
+      <header
+        className="titlebar"
+        data-tauri-drag-region
+        onDoubleClick={(event) => {
+          // Only the draggable strip maximises; a double click in the search box is a
+          // person selecting a word.
+          if ((event.target as HTMLElement).hasAttribute("data-tauri-drag-region")) {
+            void ipc.toggleMaximize();
+          }
+        }}
+      >
         <span className="brand">
           <span className="brand-dot" />
           Pulse
         </span>
-        <span className="machine">{summary}</span>
-        <span className="spacer" />
+        <span className="machine" data-tauri-drag-region>
+          {summary}
+        </span>
+        <span className="spacer" data-tauri-drag-region />
         <input
           className="find"
           placeholder={`${t("action.search")} (Ctrl+F)`}
@@ -110,6 +136,31 @@ export default function App() {
         <button className="tool" onClick={() => setPage(page === "general" ? null : "general")} title={t("action.settings")}>
           ⚙
         </button>
+        {ipc.enabled && (
+          <span className="winctls">
+            <button className="winctl" onClick={() => void ipc.minimize()} aria-label={t("action.minimize")} title={t("action.minimize")}>
+              ─
+            </button>
+            <button
+              className="winctl"
+              onClick={() => void ipc.toggleMaximize()}
+              aria-label={maximized ? t("action.restore") : t("action.maximize")}
+              title={maximized ? t("action.restore") : t("action.maximize")}
+            >
+              ▢
+            </button>
+            {/* Closing hides the window; Pulse keeps watching from the tray. The button says
+                so rather than implying it ends the program. */}
+            <button
+              className="winctl close"
+              onClick={() => void ipc.closeWindow()}
+              aria-label={t("action.hideToTray")}
+              title={t("action.hideToTray")}
+            >
+              ✕
+            </button>
+          </span>
+        )}
       </header>
 
       <nav className="tabbar" role="tablist">

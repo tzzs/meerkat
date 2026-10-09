@@ -27,6 +27,10 @@ const zh: Record<Key, string> = {
 
   "action.open": "打开 Pulse",
   "action.quit": "退出 Pulse",
+  "action.minimize": "最小化",
+  "action.maximize": "最大化",
+  "action.restore": "向下还原",
+  "action.hideToTray": "隐藏到托盘（Pulse 继续监控）",
   "action.settings": "设置",
   "action.arrange": "排列",
   "action.reset": "恢复默认",

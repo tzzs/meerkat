@@ -87,6 +87,25 @@ export const ipc = {
       return typeof error === "string" ? error : String(error);
     }
   },
+  /**
+   * Window management for the frameless main window. No-ops outside Tauri so a plain
+   * browser mirror of the UI still renders.
+   */
+  minimize: async () => {
+    if (inTauri) (await import("@tauri-apps/api/window")).getCurrentWindow().minimize();
+  },
+  toggleMaximize: async () => {
+    if (inTauri) (await import("@tauri-apps/api/window")).getCurrentWindow().toggleMaximize();
+  },
+  /** Close, which the app intercepts to hide to the tray rather than quit. */
+  closeWindow: async () => {
+    if (inTauri) (await import("@tauri-apps/api/window")).getCurrentWindow().close();
+  },
+  isMaximized: async () => {
+    if (!inTauri) return false;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    return getCurrentWindow().isMaximized();
+  },
 };
 
 export async function listenMetrics(handler: (snapshot: Snapshot) => void): Promise<() => void> {

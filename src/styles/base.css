@@ -93,6 +93,31 @@ button {
   background: var(--bg);
 }
 
+/* The window has no frame, so these stand in for the system buttons. Same 46px height as
+   the strip they sit in, and the close button tints on hover the way Windows' does. */
+.winctls {
+  display: flex;
+  align-items: stretch;
+  margin: 0 calc(var(--sp-5) * -1) 0 var(--sp-2);
+  height: 100%;
+  flex: none;
+}
+.winctl {
+  width: 46px;
+  border-radius: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.winctl:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.winctl.close:hover {
+  background: var(--m-danger);
+  color: #fff;
+}
+
 .titlebar .machine {
   font-size: 11.5px;
   color: var(--text-3);

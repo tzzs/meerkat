@@ -14,6 +14,7 @@
       {
         "label": "main",
         "title": "Pulse",
+        "decorations": false,
         "width": 1120,
         "height": 740,
         "minWidth": 880,

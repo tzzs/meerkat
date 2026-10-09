@@ -24,6 +24,10 @@ const en = {
 
   "action.open": "Open Pulse",
   "action.quit": "Quit Pulse",
+  "action.minimize": "Minimise",
+  "action.maximize": "Maximise",
+  "action.restore": "Restore down",
+  "action.hideToTray": "Hide to tray (Pulse keeps monitoring)",
   "action.settings": "Settings",
   "action.arrange": "Arrange",
   "action.reset": "Reset to default",
