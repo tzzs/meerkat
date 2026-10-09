@@ -1,4 +1,5 @@
 import * as SelectPrimitive from "@radix-ui/react-select";
+import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,17 +29,9 @@ export function SelectTrigger({
       {...props}
     >
       {children}
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 10 6"
-        className="size-[10px] shrink-0 text-ink-3"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      >
-        <path d="M1 1l4 4 4-4" />
-      </svg>
+      {/* 12px rather than the 16px the registry ships: this is upstream's icon set at the size
+          the rest of the dense controls are drawn at. */}
+      <ChevronDown aria-hidden="true" className="size-3 shrink-0 text-ink-3" />
     </SelectPrimitive.Trigger>
   );
 }
@@ -87,17 +80,7 @@ export function SelectItem({
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
       <span className="absolute right-2 flex size-3.5 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 10 10"
-            className="size-[10px] text-accent"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          >
-            <path d="M1.5 5.5l2.5 2.5 4.5-6" />
-          </svg>
+          <Check aria-hidden="true" className="size-3 text-accent" />
         </SelectPrimitive.ItemIndicator>
       </span>
     </SelectPrimitive.Item>
