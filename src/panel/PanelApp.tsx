@@ -142,7 +142,7 @@ export function PanelApp() {
         </button>
         {(["cpu", "memory", "disk", "network", "gpu", "battery"] as MetricKind[]).map((metric) => (
           <button key={metric} className={tab === metric ? "on" : ""} onClick={() => setTab(metric)}>
-            {t(`metric.${metric}` as "metric.cpu")}
+            {t(`metric.${metric}`)}
           </button>
         ))}
       </nav>
@@ -166,7 +166,7 @@ function Tile({
   const series = seriesFor(metric, snapshot);
   return (
     <div className="tile" style={{ ["--hue" as string]: HUES[metric] }}>
-      <span className="tile-label">{t(`metric.${metric}` as "metric.cpu")}</span>
+      <span className="tile-label">{t(`metric.${metric}`)}</span>
       <span className="tile-value num">{value}</span>
       <svg className="tile-spark" viewBox="0 0 100 22" preserveAspectRatio="none">
         <polyline
@@ -194,7 +194,7 @@ function ListRow({
 }) {
   return (
     <div className="list-row" style={{ ["--hue" as string]: HUES[metric] }}>
-      <span className="list-label">{t(`metric.${metric}` as "metric.cpu")}</span>
+      <span className="list-label">{t(`metric.${metric}`)}</span>
       <span className="list-value num">{textFor(metric, snapshot, units)}</span>
       <svg className="list-spark" viewBox="0 0 100 14" preserveAspectRatio="none">
         <polyline points={spark(seriesFor(metric, snapshot), 100, 14)} fill="none" stroke={HUES[metric]} strokeWidth={1} vectorEffect="non-scaling-stroke" />

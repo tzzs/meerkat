@@ -96,7 +96,7 @@ fn main() {
                 .state::<AppState>()
                 .tray
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .rebuild(&handle, &initial);
 
             if let Some(window) = handle.get_webview_window("main") {
@@ -167,7 +167,7 @@ fn spawn_sampler(app: AppHandle) {
                 state
                     .tray
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|p| p.into_inner())
                     .update(&app, &snapshot, &settings);
 
                 if state.visible() {

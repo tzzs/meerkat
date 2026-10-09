@@ -265,7 +265,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
               updateTray(settings.tray.map((r) => (r.id === readout.id ? { ...r, enabled: e.target.checked } : r)))
             }
           />
-          <span className="tray-name">{t(TRAY_METRICS[readout.metric] as "metric.cpu")}</span>
+          <span className="tray-name">{t(TRAY_METRICS[readout.metric])}</span>
           {select(
             readout.style,
             [
@@ -276,7 +276,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
             (v) => updateTray(settings.tray.map((r) => (r.id === readout.id ? { ...r, style: v } : r))),
             {
               className: "min-w-0 rounded-xs px-1.5 py-[3px] text-[11.5px]",
-              label: t(TRAY_METRICS[readout.metric] as "metric.cpu"),
+              label: t(TRAY_METRICS[readout.metric]),
             },
           )}
           {readout.metric === "memory" && (
@@ -311,7 +311,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
         <span>{t("settings.addReadout")}</span>
         {METRIC_ORDER.filter((m) => !usedMetrics.has(m) && (m !== "battery" || snapshot?.battery.hasBattery)).map((metric) => (
           <Button key={metric} variant="chip" onClick={() => addReadout(metric)}>
-            {t(TRAY_METRICS[metric] as "metric.cpu")}
+            {t(TRAY_METRICS[metric])}
           </Button>
         ))}
       </div>
