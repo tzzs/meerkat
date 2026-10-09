@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
 import { Badge, type BadgeProps } from "./ui/badge";
+import { Button } from "./ui/button";
 import {
   Dialog,
   DialogActions,
@@ -315,8 +316,8 @@ export function AvailabilityNote({
       <span className="unavailable-text">{t(key)}</span>
       {canAsk && (
         <span className="unavailable-action">
-          <button
-            className="chip"
+          <Button
+            variant="chip"
             onClick={() => {
               void ipc.relaunchElevated().then((reason) => {
                 if (reason) setRefusal(reason === "cancelled" ? t("state.elevateCancelled") : reason);
@@ -324,7 +325,7 @@ export function AvailabilityNote({
             }}
           >
             {t("action.elevateRestart")}
-          </button>
+          </Button>
           <span className="faint">
             {refusal ?? t("state.elevateHelp")}
           </span>
@@ -583,13 +584,15 @@ export function AppTable({
         />
         <div className="sort-group" role="group" aria-label={t("list.sortBy")}>
           {(["cpu", "memory", "disk", "connections"] as AppMetric[]).map((key) => (
-            <button
+            <Button
               key={key}
-              className={`chip ${metric === key ? "on" : ""}`}
+              variant="chip"
+              on={metric === key}
+              aria-pressed={metric === key}
               onClick={() => onMetricChange(key)}
             >
               {t(`list.${key === "connections" ? "network" : key}`)}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -694,29 +697,29 @@ export function QuitDialog() {
         <DialogActions>
           {/* The safe action takes focus first, so Enter on an open dialog cancels it. */}
           <DialogClose>
-            <button className="chip" data-autofocus>
+            <Button variant="chip" data-autofocus>
               {t("action.cancel")}
-            </button>
+            </Button>
           </DialogClose>
           <span className="spacer" />
-          <button
-            className="danger"
+          <Button
+            variant="danger"
             onClick={() => {
               void ipc.quitApp(app.key, true);
               clearQuit();
             }}
           >
             {t("action.forceQuit")}
-          </button>
-          <button
-            className="primary"
+          </Button>
+          <Button
+            variant="primary"
             onClick={() => {
               void ipc.quitApp(app.key, false);
               clearQuit();
             }}
           >
             {t("action.quitApp")}
-          </button>
+          </Button>
         </DialogActions>
       </DialogContent>
     </Dialog>

@@ -1,55 +1,61 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+/* Element resets live in the base layer so that Tailwind utilities can override them.
+   Unlayered component CSS still wins over utilities, which is what keeps the migration
+   incremental: a converted element only changes once its old rule is deleted. */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 1.45;
-  -webkit-font-smoothing: antialiased;
-  overflow: hidden;
-  user-select: none;
-}
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
 
-.panel-body {
-  background: transparent;
-}
+  .panel-body {
+    background: transparent;
+  }
 
-button {
-  font: inherit;
-  color: inherit;
-  border: 0;
-  background: none;
-  cursor: default;
-}
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+    cursor: default;
+  }
 
-::-webkit-scrollbar {
-  width: 11px;
-  height: 11px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--hairline-strong);
-  border: 3px solid transparent;
-  background-clip: content-box;
-  border-radius: 8px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-3);
-  background-clip: content-box;
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--hairline-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-3);
+    background-clip: content-box;
+  }
+
 }
 
 .num {

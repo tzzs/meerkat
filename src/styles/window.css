@@ -36,19 +36,6 @@
   background: var(--surface);
 }
 
-.tool {
-  width: 28px;
-  height: 26px;
-  border-radius: var(--r-sm);
-  color: var(--text-2);
-  font-size: 14px;
-  transition: background var(--t-fast), color var(--t-fast);
-}
-.tool:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
 .status {
   font-size: 11px;
   color: var(--text-3);
@@ -457,25 +444,6 @@
   gap: 3px;
   margin-left: auto;
 }
-.chip {
-  padding: 4px 9px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  color: var(--text-2);
-  border: 1px solid transparent;
-  /* Named properties: `all` also animates transform and opacity, which is exactly what a
-     motion library or a row transform wants to own. */
-  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
-}
-.chip:hover {
-  background: var(--surface-2);
-}
-.chip.on {
-  background: var(--surface-3);
-  color: var(--text);
-  border-color: var(--hairline-strong);
-  font-weight: 600;
-}
 .find {
   padding: 5px 9px;
   border-radius: var(--r-sm);
@@ -787,28 +755,6 @@
   color: var(--text);
   background: var(--surface-2);
 }
-.primary {
-  align-self: flex-start;
-  padding: 7px 14px;
-  border-radius: var(--r-sm);
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
-  font-size: 12.5px;
-}
-
-.danger {
-  padding: 7px 14px;
-  border-radius: var(--r-sm);
-  border: 1px solid color-mix(in oklab, var(--m-danger) 45%, var(--hairline));
-  color: var(--m-danger);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.danger:hover {
-  background: color-mix(in oklab, var(--m-danger) 14%, transparent);
-}
-
 /* ---------- sound mixer ---------- */
 
 .mix-list {
@@ -939,18 +885,3 @@
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 30%, transparent);
 }
 
-.mute {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--r-xs);
-  color: var(--text-3);
-  font-size: 13px;
-}
-.mute:hover {
-  background: var(--surface-3);
-  color: var(--text);
-}
-.mute.on {
-  color: var(--m-danger);
-  background: color-mix(in oklab, var(--m-danger) 14%, transparent);
-}

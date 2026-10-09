@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { ipc, listenNavigate } from "./lib/ipc";
 import { TAB_LABEL } from "./i18n";
+import { Button } from "./components/ui/button";
 import { useStore } from "./lib/store";
 import { powerTabMode, type TabId } from "./lib/types";
 import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab } from "./components/tabs";
@@ -130,12 +131,12 @@ export default function App() {
             }
           }}
         />
-        <button className="tool" onClick={() => setPage(page === "layout" ? null : "layout")} title={t("action.arrange")}>
+        <Button variant="tool" onClick={() => setPage(page === "layout" ? null : "layout")} title={t("action.arrange")}>
           ▦
-        </button>
-        <button className="tool" onClick={() => setPage(page === "general" ? null : "general")} title={t("action.settings")}>
+        </Button>
+        <Button variant="tool" onClick={() => setPage(page === "general" ? null : "general")} title={t("action.settings")}>
           ⚙
-        </button>
+        </Button>
         {ipc.enabled && (
           <span className="winctls">
             <button className="winctl" onClick={() => void ipc.minimize()} aria-label={t("action.minimize")} title={t("action.minimize")}>

@@ -63,6 +63,12 @@ const evaluate = async (expression) => {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 await send("Page.enable");
+// A failed HMR update can leave the webview with an unmounted tree and no way back; when the
+// body is empty, reload once rather than screenshotting a blank window and calling it a bug.
+if ((await evaluate("document.body.innerText.trim().length")) < 4) {
+  await send("Page.reload", { ignoreCache: true });
+  await wait(settleMs);
+}
 // "same" keeps the window where the user left it; clicking a tab exercises the real control
 // instead of reloading the page and losing whatever state the tab holds.
 if (url !== "same" && url !== page.url) {

@@ -3,6 +3,7 @@ import { ipc } from "../lib/ipc";
 import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
 import { METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
+import { Button } from "./ui/button";
 import { TAB_LABEL } from "../i18n";
 import type { Key } from "../i18n/en";
 
@@ -287,9 +288,9 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
       <div className="add-row">
         <span>{t("settings.addReadout")}</span>
         {METRIC_ORDER.filter((m) => !usedMetrics.has(m) && (m !== "battery" || snapshot?.battery.hasBattery)).map((metric) => (
-          <button key={metric} className="chip" onClick={() => addReadout(metric)}>
+          <Button key={metric} variant="chip" onClick={() => addReadout(metric)}>
             {t(TRAY_METRICS[metric] as "metric.cpu")}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -306,9 +307,10 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
       </Row>
       <div className="tile-row">
         {settings.panel.tiles.map((tile) => (
-          <button
+          <Button
             key={tile.id}
-            className={`chip ${tile.visible ? "on" : ""}`}
+            variant="chip"
+            on={tile.visible}
             onClick={() =>
               save({
                 ...settings,
@@ -320,7 +322,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
             }
           >
             {t(TRAY_METRICS[tile.id as MetricKind] ?? "metric.cpu")}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -420,8 +422,8 @@ function About() {
         <span className="num">{snapshot ? `${(snapshot.samplerCostMicroseconds / 1000).toFixed(1)} ms` : "—"}</span>
       </Row>
       <Row label={t("settings.privacy")} />
-      <button
-        className="primary"
+      <Button
+        variant="primary"
         onClick={async () => {
           const report = await ipc.copyReport();
           await navigator.clipboard.writeText(report).catch(() => undefined);
@@ -430,7 +432,7 @@ function About() {
         }}
       >
         {copied ? t("action.done") : t("settings.aboutCopyReport")}
-      </button>
+      </Button>
       <p className="hint faint">{t("settings.aboutReportHelp")}</p>
       <p className="hint faint">{JSON.stringify(settings.alerts)}</p>
     </div>

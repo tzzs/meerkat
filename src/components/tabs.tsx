@@ -11,6 +11,7 @@ import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
 import type { Translate } from "../i18n";
+import { Button } from "./ui/button";
 import {
   AppIcon,
   AppTable,
@@ -63,15 +64,15 @@ export function RangePicker({ value, onChange }: { value: number; onChange: (sec
   return (
     <div className="range-picker" role="tablist">
       {RANGES.map((range) => (
-        <button
+        <Button
           key={range.seconds}
-          role="tab"
-          aria-selected={value === range.seconds}
-          className={`chip ${value === range.seconds ? "on" : ""}`}
+          variant="chip"
+          on={value === range.seconds}
+          aria-pressed={value === range.seconds}
           onClick={() => onChange(range.seconds)}
         >
           {t(range.key)}
-        </button>
+        </Button>
       ))}
     </div>
   );

@@ -3,6 +3,7 @@ import { ipc } from "../lib/ipc";
 import { useStore } from "../lib/store";
 import type { AudioEndpoint, AudioSession, AudioState } from "../lib/types";
 import { AppIcon, Card, Pill } from "./ui";
+import { Button } from "./ui/button";
 
 /**
  * The mixer. Windows gives every application its own audio session, so this needs no
@@ -243,15 +244,16 @@ function EndpointRow({
           send(next);
         }}
       />
-      <button
-        className={`mute ${endpoint.muted ? "on" : ""}`}
+      <Button
+        variant="mute"
+        on={endpoint.muted}
         title={endpoint.muted ? t("sound.muted") : t("sound.master")}
         onClick={() => {
           void ipc.audioSetEndpoint(endpoint.id, endpoint.volume, !endpoint.muted);
         }}
       >
         {endpoint.muted ? "⊘" : "♪"}
-      </button>
+      </Button>
       <span className="mix-value num">{Math.round(shown * 100)}%</span>
     </div>
   );
@@ -290,15 +292,16 @@ function SessionRow({
           send(next);
         }}
       />
-      <button
-        className={`mute ${session.muted ? "on" : ""}`}
+      <Button
+        variant="mute"
+        on={session.muted}
         title={session.muted ? t("sound.muted") : t("action.cancel")}
         onClick={() => {
           void ipc.audioSetVolume(session.role, session.id, session.pid, session.volume, !session.muted);
         }}
       >
         {session.muted ? "⊘" : "♪"}
-      </button>
+      </Button>
       <span className="mix-value num">{Math.round(shown * 100)}%</span>
     </div>
   );
