@@ -259,3 +259,94 @@ impl SettingsStore {
         Ok(next)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Settings has no PartialEq on purpose (it is a wire shape), so equality is compared on the
+    // bytes that would actually be written to disk.
+    fn raw(s: &Settings) -> String {
+        serde_json::to_string(s).expect("settings always serialize")
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("pulse-settings-{tag}-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("a temp dir to test against");
+        dir
+    }
+
+    // The panel's default tiles were once built from TAB_IDS, which put "sound" among the
+    // metrics. The panel then asked for a series that does not exist, threw during render, and
+    // came up blank with nothing on screen to explain itself.
+    #[test]
+    fn every_default_panel_tile_is_a_metric() {
+        let metrics: Vec<String> = [
+            MetricKind::Cpu,
+            MetricKind::Memory,
+            MetricKind::Disk,
+            MetricKind::Network,
+            MetricKind::Gpu,
+            MetricKind::Battery,
+            MetricKind::Temperature,
+        ]
+        .iter()
+        .map(|m| m.key().to_string())
+        .collect();
+        let tiles = Settings::default().panel.tiles;
+        assert!(!tiles.is_empty());
+        for tile in &tiles {
+            assert!(metrics.contains(&tile.id), "{} is a tab, not a metric", tile.id);
+        }
+        assert!(!tiles.iter().any(|t| t.id == "sound" || t.id == "overview"));
+    }
+
+    #[test]
+    fn every_default_tab_exists_and_has_sections() {
+        let window = Settings::default().window;
+        let ids: Vec<&str> = window.tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, TAB_IDS.to_vec(), "the tab list and its defaults may not drift apart");
+        for tab in &window.tabs {
+            assert!(!tab.sections.is_empty(), "{} opens with nothing to show", tab.id);
+        }
+    }
+
+    #[test]
+    fn an_unknown_tab_has_no_sections_rather_than_someones_else() {
+        assert!(default_sections("nope").is_empty());
+        let sound: Vec<String> = default_sections("sound").iter().map(|s| s.id.clone()).collect();
+        assert_eq!(sound, vec!["output", "apps", "input"]);
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_falls_back_without_losing_it() {
+        let dir = temp_dir("corrupt");
+        let path = dir.join("settings.json");
+        fs::write(&path, b"{ \"theme\": broken mid-write").unwrap();
+        let loaded = SettingsStore::read(&path);
+        assert_eq!(raw(&loaded), raw(&Settings::default()), "defaults win");
+        assert!(dir.join("settings.json.bad").exists(), "the unreadable file is kept for a look");
+        assert_eq!(fs::read_to_string(dir.join("settings.json.bad")).unwrap(), "{ \"theme\": broken mid-write");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn what_is_saved_is_what_is_read_back() {
+        let dir = temp_dir("roundtrip");
+        let store = SettingsStore::open(&dir);
+        let mut next = store.get();
+        next.theme = Theme::Dark;
+        next.panel.layout = PanelLayout::List;
+        next.tray.retain(|r| r.metric != MetricKind::Network);
+        let saved = store.set(next).expect("saving to a directory that exists");
+
+        let back = SettingsStore::read(&dir.join("settings.json"));
+        assert_eq!(raw(&back), raw(&saved), "what comes off the disk is what set() reported");
+        assert!(!dir.join("settings.json.tmp").exists(), "the write is a rename, not a truncate");
+        assert!(dir.join("settings.json").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+}
