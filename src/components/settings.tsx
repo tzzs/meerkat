@@ -5,6 +5,7 @@ import { formatBytes, formatRate, formatTemp } from "../lib/format";
 import { METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { TAB_LABEL } from "../i18n";
 import type { Key } from "../i18n/en";
 
@@ -58,15 +59,27 @@ function Row({ label, children, hint }: { label: string; children?: ReactNode; h
   );
 }
 
-function select<T extends string>(value: T, options: [T, string][], onChange: (v: T) => void) {
+function select<T extends string>(
+  value: T,
+  options: [T, string][],
+  onChange: (v: T) => void,
+  opts?: { className?: string; label?: string },
+) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value as T)}>
-      {options.map(([v, label]) => (
-        <option key={v} value={v}>
-          {label}
-        </option>
-      ))}
-    </select>
+    <Select value={value} onValueChange={(next) => onChange(next as T)}>
+      {/* Inside a row the label element names it; in a tray row there is no label to borrow,
+          so the readout's own name is passed along. */}
+      <SelectTrigger className={opts?.className} aria-label={opts?.label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map(([v, label]) => (
+          <SelectItem key={v} value={v}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -133,15 +146,19 @@ function General({ settings, save }: { settings: Settings; save: (s: Settings) =
       </Row>
       <Row label={t("settings.showSystemApps")}>{toggle(settings.showSystemAppsInLists, (v) => set("showSystemAppsInLists", v))}</Row>
       <Row label={t("settings.openWindowOn")}>
-        <select value={settings.openWindowOn} onChange={(e) => set("openWindowOn", e.target.value)}>
-          <option value="overview">{t("tab.overview")}</option>
-          <option value="last">{t("settings.openWindowLast")}</option>
-          {settings.window.tabs.filter((x) => x.visible).map((x) => (
-            <option key={x.id} value={x.id}>
-              {x.id}
-            </option>
-          ))}
-        </select>
+        {select(
+          settings.openWindowOn,
+          [
+            ["overview", t("tab.overview")],
+            ["last", t("settings.openWindowLast")],
+            // Radix rejects two items with the same value where a native select just showed the
+            // first of them, so the tab list stops repeating overview.
+            ...settings.window.tabs
+              .filter((x) => x.visible && x.id !== "overview")
+              .map((x) => [x.id, t(TAB_LABEL[x.id] ?? "tab.overview")] as [string, string]),
+          ],
+          (v) => set("openWindowOn", v),
+        )}
       </Row>
       <Row label={t("settings.startAtLogin")}>{toggle(settings.startAtLogin, (v) => set("startAtLogin", v))}</Row>
       <Row label={t("settings.showInTaskbar")}>{toggle(settings.showInTaskbar, (v) => set("showInTaskbar", v))}</Row>
@@ -257,6 +274,10 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
               ["both", t("settings.styleBoth")],
             ] as [TrayStyle, string][],
             (v) => updateTray(settings.tray.map((r) => (r.id === readout.id ? { ...r, style: v } : r))),
+            {
+              className: "min-w-0 rounded-xs px-1.5 py-[3px] text-[11.5px]",
+              label: t(TRAY_METRICS[readout.metric] as "metric.cpu"),
+            },
           )}
           {readout.metric === "memory" && (
             <label className="inline-check">

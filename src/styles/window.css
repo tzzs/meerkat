@@ -635,18 +635,6 @@
   grid-column: 2;
   font-size: 11px;
 }
-.row-setting select,
-.row-setting input[type="checkbox"] {
-  font: inherit;
-}
-.row-setting select {
-  padding: 5px 8px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  color: var(--text);
-  min-width: 150px;
-}
 .row-setting input[type="checkbox"] {
   width: 16px;
   height: 16px;
@@ -679,14 +667,6 @@
 }
 .tray-row input[type="checkbox"] {
   accent-color: var(--accent);
-}
-.tray-row select {
-  padding: 3px 6px;
-  border-radius: var(--r-xs);
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  color: var(--text);
-  font-size: 11.5px;
 }
 .tray-row button {
   color: var(--text-3);
