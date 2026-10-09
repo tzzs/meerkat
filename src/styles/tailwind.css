@@ -39,6 +39,9 @@
   /* Tinted fills, named once so a component says "accent tint" instead of repeating a
      colour-mix formula as an arbitrary value. */
   --accent-tint: color-mix(in oklab, var(--accent) 18%, transparent);
+  /* The filled part of a slider: strong enough to read as "this much is set", weak enough that
+     the live level drawn inside it is still the brighter of the two. */
+  --accent-fill: color-mix(in oklab, var(--accent) 34%, transparent);
   --danger-tint: color-mix(in oklab, var(--m-danger) 14%, transparent);
   --danger-edge: color-mix(in oklab, var(--m-danger) 45%, var(--hairline));
   /* What sits behind a dialog: the page colour pushed most of the way opaque. */
@@ -70,9 +73,11 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-accent-tint: var(--accent-tint);
+  --color-accent-fill: var(--accent-fill);
   --color-danger-tint: var(--danger-tint);
   --color-danger-edge: var(--danger-edge);
   --color-overlay: var(--overlay);
+  --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
   --color-ink-2: var(--text-2);

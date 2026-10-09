@@ -4,6 +4,13 @@ import { useStore } from "../lib/store";
 import type { AudioEndpoint, AudioSession, AudioState } from "../lib/types";
 import { AppIcon, Card, Pill } from "./ui";
 import { Button } from "./ui/button";
+import { Slider } from "./ui/slider";
+
+/** Pointer handlers that tell the poll to stand down while a fader is under the hand. */
+type Hold = Pick<
+  React.ComponentProps<typeof Slider>,
+  "onPointerDown" | "onPointerUp" | "onPointerCancel"
+>;
 
 /**
  * The mixer. Windows gives every application its own audio session, so this needs no
@@ -181,7 +188,7 @@ function Fader({
   value: number;
   peak: number;
   label: string;
-  hold: Record<string, () => void>;
+  hold: Hold;
   onInput: (next: number) => void;
 }) {
   // Square-rooted because dB is logarithmic: a linear meter reads silent most of the day.
@@ -190,23 +197,22 @@ function Fader({
   // thumb, which reads as a control that is lying about its value.
   const level = Math.min(1, Math.sqrt(Math.max(0, peak))) * Math.min(1, Math.max(0, value));
   return (
-    <span className="fader">
-      <span className="fader-track" aria-hidden="true">
-        <span className="fader-fill" style={{ transform: `scaleX(${Math.min(1, Math.max(0, value))})` }} />
-        <span className="fader-peak" style={{ transform: `scaleX(${level})` }} />
-      </span>
-      <input
-        className="fader-input"
-        type="range"
-        min={0}
-        max={100}
-        step={1}
-        value={Math.round(value * 100)}
-        aria-label={label}
-        {...hold}
-        onChange={(event) => onInput(Number(event.target.value) / 100)}
-      />
-    </span>
+    <Slider
+      label={label}
+      min={0}
+      max={100}
+      step={1}
+      value={[Math.round(value * 100)]}
+      onValueChange={([next]) => onInput(next / 100)}
+      overlay={
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 origin-left bg-accent transition-transform duration-[90ms] ease-linear"
+          style={{ transform: `scaleX(${level})` }}
+        />
+      }
+      {...hold}
+    />
   );
 }
 
@@ -215,7 +221,7 @@ function EndpointRow({
   hold,
 }: {
   endpoint: AudioEndpoint;
-  hold: Record<string, () => void>;
+  hold: Hold;
 }) {
   const { t } = useStore();
   const { shown, setLocal } = useOptimisticVolume(endpoint.volume);
@@ -264,7 +270,7 @@ function SessionRow({
   hold,
 }: {
   session: AudioSession;
-  hold: Record<string, () => void>;
+  hold: Hold;
 }) {
   const { t, snapshot } = useStore();
   // Core Audio names a session after its executable; the grouping already knows the app
