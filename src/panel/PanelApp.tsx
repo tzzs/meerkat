@@ -4,7 +4,7 @@ import { ipc } from "../lib/ipc";
 import { AppIcon, QuitDialog } from "../components/ui";
 import { Hint } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
-import { headline, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
+import { headline, isMetricKind, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
 
 const HUES: Record<MetricKind, string> = {
   cpu: "#5ecb8f",
@@ -59,7 +59,10 @@ export function PanelApp() {
     return [...list].sort((a, b) => b.memoryBytes - a.memoryBytes);
   }, [snapshot]);
 
-  const tiles = settings.panel.tiles.filter((x) => x.visible).map((x) => x.id as MetricKind);
+  const tiles = settings.panel.tiles
+    .filter((x) => x.visible)
+    .map((x) => x.id)
+    .filter(isMetricKind);
   const shown = tab === "top" ? [] : [tab];
 
   return (

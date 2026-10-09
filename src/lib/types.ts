@@ -295,6 +295,15 @@ export const TAB_ORDER = ["overview", "cpu", "memory", "disk", "network", "gpu",
 export type TabId = (typeof TAB_ORDER)[number];
 
 /**
+ * A persisted id that the panel can actually draw. Tabs and metrics share six of their names, so
+ * a settings file written by an older default can carry "sound" where a tile should be — and a
+ * tile with no series behind it does not render empty, it takes the whole panel down.
+ */
+export function isMetricKind(id: string): id is MetricKind {
+  return (METRIC_ORDER as string[]).includes(id);
+}
+
+/**
  * The grouping engine folds every process it cannot open into one row under this key. Its
  * `name` arrives empty, so the label comes from the translation rather than from Windows.
  */

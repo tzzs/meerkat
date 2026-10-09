@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ipc } from "../lib/ipc";
 import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
-import { METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
+import { isMetricKind, METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -342,7 +342,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
         }
         aria-label={t("settings.visibleTiles")}
       >
-        {settings.panel.tiles.map((tile) => (
+        {settings.panel.tiles.filter((tile) => isMetricKind(tile.id)).map((tile) => (
           <ToggleChip key={tile.id} value={tile.id}>
             {t(TRAY_METRICS[tile.id as MetricKind] ?? "metric.cpu")}
           </ToggleChip>

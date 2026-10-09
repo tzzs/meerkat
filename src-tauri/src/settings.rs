@@ -140,6 +140,18 @@ pub struct Settings {
 
 pub const TAB_IDS: [&str; 8] = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"];
 
+/// What the dropdown panel can draw. These are metrics, not tabs: the default used to be built
+/// from `TAB_IDS`, which handed the panel "sound" — a tab with no series behind it — and one
+/// tile that cannot be drawn takes the whole panel down.
+pub const PANEL_METRICS: [MetricKind; 6] = [
+    MetricKind::Cpu,
+    MetricKind::Memory,
+    MetricKind::Disk,
+    MetricKind::Network,
+    MetricKind::Gpu,
+    MetricKind::Battery,
+];
+
 pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
     let ids: Vec<&str> = match tab {
         "overview" => vec!["summary", "charts", "topApps", "worthALook", "storage", "insights"],
@@ -178,10 +190,9 @@ impl Default for Settings {
             ],
             panel: PanelConfig {
                 layout: PanelLayout::Tiles,
-                tiles: TAB_IDS
+                tiles: PANEL_METRICS
                     .iter()
-                    .filter(|t| **t != "overview")
-                    .map(|id| SectionConfig { id: id.to_string(), visible: true })
+                    .map(|m| SectionConfig { id: m.key().to_string(), visible: true })
                     .collect(),
             },
             window: WindowConfig {
