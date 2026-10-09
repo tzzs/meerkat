@@ -12,6 +12,11 @@
 @import "tailwindcss/utilities" layer(utilities);
 @import "tw-animate-css";
 
+/* A component copied from the registry writes `dark:bg-x`, and Tailwind v4's default answer to
+   that is the operating system. Here the theme is a setting the user can override, so the class
+   decides it — store.tsx keeps `.dark` on <html> in step with `data-theme`. */
+@custom-variant dark (&:is(.dark *));
+
 /* shadcn's components are written against a fixed set of variable names. They are declared
    here as aliases of the tokens in tokens.css, so there is still exactly one place where a
    colour or a radius is decided, and the light/dark switch keeps working unchanged. */

@@ -121,6 +121,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     if (settings.theme === "auto") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", settings.theme);
+    // shadcn's components carry `dark:` utilities. Tailwind v4 resolves that variant against the
+    // operating system unless a class decides it, and here the theme is decided by a setting —
+    // so the class is written from the same reading Windows would otherwise disagree with.
+    const light = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      const dark = settings.theme === "dark" || (settings.theme === "auto" && !light.matches);
+      root.classList.toggle("dark", dark);
+    };
+    apply();
+    if (settings.theme !== "auto") return;
+    light.addEventListener("change", apply);
+    return () => light.removeEventListener("change", apply);
   }, [settings.theme]);
 
   const requestQuit = useCallback((app: AppInfo) => setPendingQuit(app), []);
