@@ -56,7 +56,20 @@ await send("Page.reload", { ignoreCache: true });
 await wait(3000);
 
 const tabs = await run(() => [...document.querySelectorAll('[role="tab"]')].map((t) => t.textContent.trim()));
-const walk = only.length ? tabs.filter((t) => only.includes(t)) : tabs;
+if (!tabs.length) {
+  // A sweep that walks nothing finds nothing to complain about. This printed "no problems
+  // found" while the window was showing Edge's connection-refused page, which is the one
+  // thing a regression harness must never do.
+  const why = await run(() => `${document.title} :: ${document.body.innerText.trim().slice(0, 120)}`);
+  console.log(`no tabs at all — the window is not showing the app.\n  ${why}`);
+  process.exit(1);
+}
+const only2 = only.filter((t) => tabs.includes(t));
+if (only.length && !only2.length) {
+  console.log(`none of the requested tabs are on screen; found: ${tabs.join(" ")}`);
+  process.exit(1);
+}
+const walk = only2.length ? only2 : tabs;
 console.log("tabs:", walk.join(" "));
 
 const read = () => {
@@ -139,4 +152,4 @@ if (scrolled) {
 }
 
 console.log(problems.length ? `PROBLEMS:\n- ${problems.join("\n- ")}` : "no problems found");
-process.exit(0);
+process.exit(problems.length ? 1 : 0);
