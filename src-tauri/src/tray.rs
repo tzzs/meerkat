@@ -14,9 +14,10 @@
 //! `set_icon` while `settings_set`, which Tauri ran on the main thread, waited for the mutex.
 //!
 //! So the manager's mutex is taken **on the main thread only**, inside the closures this module
-//! posts (`reconcile` and `paint`), where the calls into the shell run inline and never wait for
-//! anybody. Nothing waits for the main thread while holding any lock: the sampler posts its
-//! frames and moves on, and `rebuild` waits for the main thread but holds nothing while it does.
+//! posts (`reconcile` and `paint`), and even there only to decide and to record: it is released
+//! before each call into the shell. Nothing waits for the main thread while holding any lock: the
+//! sampler posts its frames and moves on, and `rebuild` waits for the main thread but holds
+//! nothing while it does.
 
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -244,35 +245,46 @@ fn frames_for(snapshot: &Snapshot, settings: &Settings) -> Vec<IconFrame> {
 }
 
 /// Main thread only: creates, removes and re-menus icons until they are the ones wanted.
+///
+/// The manager's lock is held to decide and to record, never across a call into the shell.
 fn reconcile(app: &AppHandle, settings: &Settings) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
     let lang = i18n::resolve(settings.language);
     let wanted = wanted_ids(settings);
 
-    match manager.plan(&wanted, lang) {
+    let (plan, retired, live) = {
+        let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
+        let plan = manager.plan(&wanted, lang);
+        let retired = if plan == Plan::Recreate { manager.retire_all() } else { Vec::new() };
+        (plan, retired, manager.live.clone())
+    };
+
+    match plan {
         Plan::Keep => {}
         Plan::Recreate => {
-            for id in manager.retire_all() {
+            for id in retired {
                 app.remove_tray_by_id(&id);
             }
+            let mut created = Vec::with_capacity(wanted.len());
             for id in &wanted {
                 let tip = match readout_for(settings, id) {
                     Some(readout) => format!("{} {ABSENT}", i18n::metric(lang, readout.metric)),
                     None => i18n::text(lang, Text::Pulse).to_string(),
                 };
                 match build_icon(app, id, &tip, lang) {
-                    Ok(()) => manager.live.push(id.clone()),
+                    Ok(()) => created.push(id.clone()),
                     Err(error) => crate::diag::error(format!("tray {id}: {error}")),
                 }
             }
+            let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
+            manager.live = created;
             manager.lang = lang;
         }
         Plan::Menus => {
             // The menus are built once per icon, so a language change has to replace them.
-            for id in &manager.live {
+            for id in &live {
                 let Some(tray) = app.tray_by_id(id) else { continue };
                 match crate::menu::tray_menu(app, lang) {
                     Ok(menu) => {
@@ -281,45 +293,55 @@ fn reconcile(app: &AppHandle, settings: &Settings) {
                     Err(error) => crate::diag::warn(format!("tray menu {id}: {error}")),
                 }
             }
-            manager.lang = lang;
+            state.tray.lock().unwrap_or_else(|p| p.into_inner()).lang = lang;
         }
     }
 }
 
-/// Main thread only: hands the shell what it does not already show.
+/// Main thread only: hands the shell what it does not already show. As in `reconcile`, the lock
+/// is held to decide what to write and to take back what was refused, not while writing.
 fn paint(app: &AppHandle, frames: Vec<IconFrame>) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
-    for write in manager.select_writes(frames) {
-        let Some(tray) = app.tray_by_id(&write.id) else {
-            manager.rejected(&write.id);
+    let writes = state.tray.lock().unwrap_or_else(|p| p.into_inner()).select_writes(frames);
+
+    let mut refused: Vec<String> = Vec::new();
+    for IconWrite { id, tooltip, image } in writes {
+        let Some(tray) = app.tray_by_id(&id) else {
+            refused.push(id);
             continue;
         };
-        let mut refused = false;
-        if let Some(tooltip) = write.tooltip {
+        let mut failed = false;
+        if let Some(tooltip) = tooltip {
             if let Err(error) = tray.set_tooltip(Some(tooltip)) {
-                crate::diag::warn(format!("tray tooltip {}: {error}", write.id));
-                refused = true;
+                crate::diag::warn(format!("tray tooltip {id}: {error}"));
+                failed = true;
             }
         }
-        if let Some((rgba, width, height)) = write.image {
+        if let Some((rgba, width, height)) = image {
             // What the taskbar was given, for looking at without a screenshot of the shell.
             #[cfg(debug_assertions)]
             crate::devmirror::publish_bytes(
                 &state.data_dir.join("dev"),
-                &format!("{}.rgba", write.id),
+                &format!("{id}.rgba"),
                 crate::devmirror::LATEST_EVERY,
                 || Some(rgba.clone()),
             );
             if let Err(error) = tray.set_icon(Some(Image::new_owned(rgba, width, height))) {
-                crate::diag::warn(format!("tray icon {}: {error}", write.id));
-                refused = true;
+                crate::diag::warn(format!("tray icon {id}: {error}"));
+                failed = true;
             }
         }
-        if refused {
-            manager.rejected(&write.id);
+        if failed {
+            refused.push(id);
+        }
+    }
+
+    if !refused.is_empty() {
+        let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
+        for id in &refused {
+            manager.rejected(id);
         }
     }
 }
