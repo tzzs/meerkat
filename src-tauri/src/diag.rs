@@ -361,15 +361,26 @@ fn install_panic_hook() {
                 &name,
                 &format!("panic: {message} at {location}\n{backtrace}"),
             );
-            // `try_lock`: the thread that panicked may be the one holding the log.
-            match LOGGER.try_lock() {
-                Ok(mut logger) => logger.emit(&line),
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner().emit(&line),
-                Err(std::sync::TryLockError::WouldBlock) => stderr(&line),
-            }
+            emit_from_panic(&line);
             previous(info);
         }));
     });
+}
+
+/// Writes a panic's line without ever waiting for the log: the thread that panicked may be the one
+/// holding it. Another thread holding it is given a moment (a write takes microseconds).
+fn emit_from_panic(line: &str) {
+    for attempt in 0..50 {
+        match LOGGER.try_lock() {
+            Ok(mut logger) => return logger.emit(line),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return poisoned.into_inner().emit(line),
+            Err(std::sync::TryLockError::WouldBlock) if attempt < 49 => {
+                std::thread::sleep(std::time::Duration::from_millis(4));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+    }
+    stderr(line);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -692,6 +703,31 @@ mod tests {
         assert_eq!(redact("nothing personal here", &needles), "nothing personal here");
         // A non-ASCII line passes through whole.
         assert_eq!(redact("\u{5185}\u{5b58} 38%", &needles), "\u{5185}\u{5b58} 38%");
+    }
+
+    // The hook runs on the thread that panicked, which may be the one holding the log, so it can
+    // neither wait for it for good nor give up at the first busy answer.
+    #[test]
+    fn a_panic_waits_a_moment_for_a_busy_log_and_never_for_good() {
+        use std::time::{Duration, Instant};
+
+        // Held briefly by somebody else: the line still gets in.
+        let holder = std::thread::spawn(|| {
+            let _busy = logger();
+            std::thread::sleep(Duration::from_millis(30));
+        });
+        std::thread::sleep(Duration::from_millis(5));
+        let started = Instant::now();
+        emit_from_panic("2026-01-01T00:00:00.000Z ERROR [t] panic: first");
+        holder.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(tail(500).iter().any(|l| l.ends_with("panic: first")), "written once the log was free");
+
+        // Held for good by this very thread: it gives up and still returns.
+        let _mine = logger();
+        let started = Instant::now();
+        emit_from_panic("2026-01-01T00:00:00.000Z ERROR [t] panic: second");
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     }
 
     #[test]
