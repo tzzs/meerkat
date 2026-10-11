@@ -126,6 +126,33 @@ describe("formatDuration", () => {
     expect(formatDuration(-5, "en-US")).toBe("0s");
     expect(formatDuration(-5, "zh-CN")).toBe("0 秒");
   });
+
+  // The short form was English letters in every locale, so a Chinese status bar read "3d 5h".
+  it("writes the short form in the language's own units", () => {
+    expect(formatDuration(90061, "zh-CN", { short: true })).toBe("1 天 1 小时");
+    expect(formatDuration(3725, "zh-CN", { short: true })).toBe("1 小时 2 分");
+    expect(formatDuration(125, "zh-CN", { short: true })).toBe("2 分 5 秒");
+    expect(formatDuration(45, "zh-CN", { short: true })).toBe("45 秒");
+    for (const seconds of [45, 125, 3725, 90061]) {
+      expect(formatDuration(seconds, "zh-CN", { short: true })).not.toMatch(/[dhms]\b/);
+    }
+  });
+
+  it("leaves out a part that is exactly zero in the short form only", () => {
+    expect(formatDuration(1200, "en-US", { short: true })).toBe("20m");
+    expect(formatDuration(1200, "zh-CN", { short: true })).toBe("20 分钟");
+    expect(formatDuration(7200, "en-US", { short: true })).toBe("2h");
+    expect(formatDuration(7200, "zh-CN", { short: true })).toBe("2 小时");
+    expect(formatDuration(87000, "zh-CN", { short: true })).toBe("1 天");
+    // The long form keeps both parts, as the battery's remaining time always has.
+    expect(formatDuration(1200, "en-US")).toBe("20m 0s");
+    expect(formatDuration(87000, "zh-CN")).toBe("1 天 0 小时");
+  });
+
+  it("rounds to whole seconds before it splits", () => {
+    expect(formatDuration(59.6, "en-US")).toBe("1m 0s");
+    expect(formatDuration(0.4, "en-US")).toBe("0s");
+  });
 });
 
 describe("formatClock", () => {

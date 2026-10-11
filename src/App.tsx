@@ -122,11 +122,11 @@ export default function App() {
       m.chipName,
       `${m.physicalCores ?? "?"}/${m.logicalCores}`,
       formatBytes(m.totalMemoryBytes, units),
-      `up ${uptime}`,
+      t("machine.up", { duration: uptime }),
     ]
       .filter(Boolean)
       .join("  ·  ");
-  }, [snapshot, units, uptime]);
+  }, [snapshot, units, uptime, t]);
 
   return (
     <Tabs
@@ -229,7 +229,7 @@ export default function App() {
           ))}
         </TabsList>
         <span className={`status ${connected ? "live" : "off"}`}>
-          {connected ? t("app.name") : t("state.noData")}
+          {connected ? t("status.live") : t("status.waiting")}
         </span>
       </div>
 
@@ -274,7 +274,7 @@ export default function App() {
         </span>
         <span className="spacer" />
         <span className="faint num">
-          {snapshot ? `${(snapshot.samplerCostMicroseconds / 1000).toFixed(1)} ms/tick` : ""}
+          {snapshot ? t("status.samplerCost", { ms: (snapshot.samplerCostMicroseconds / 1000).toFixed(1) }) : ""}
         </span>
       </footer>
       <QuitDialog />

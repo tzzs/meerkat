@@ -290,7 +290,7 @@ function SessionRow({
   // Core Audio names a session after its executable; the grouping already knows the app
   // the user actually sees, so prefer that over `deltaforceclient-win64-shipping.exe`.
   const owner = snapshot?.apps.find((app) => app.pids.includes(session.pid));
-  const name = owner?.name?.trim() || session.displayName?.trim() || `pid ${session.pid}`;
+  const name = owner?.name?.trim() || session.displayName?.trim() || t("label.pidName", { pid: session.pid });
   const { shown, setLocal } = useOptimisticVolume(session.volume);
   const send = useWriteCoalescer((next) =>
     ipc.audioSetVolume(session.role, session.id, session.pid, next, session.muted),

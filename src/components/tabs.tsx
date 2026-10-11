@@ -362,7 +362,11 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
     {
       metric: "battery",
       label: t("metric.battery"),
-      value: snapshot.battery.hasBattery ? `${Math.round(snapshot.battery.chargePercent ?? 0)}%` : "—",
+      // A battery that has not reported a charge is a dash, not a confident 0%.
+      value:
+        snapshot.battery.hasBattery && snapshot.battery.chargePercent !== null
+          ? `${Math.round(snapshot.battery.chargePercent)}%`
+          : "—",
       sub: snapshot.battery.hasBattery
         ? snapshot.battery.isCharging
           ? t("label.charging")
@@ -866,7 +870,7 @@ export function GpuTab() {
               <div className="rows">
                 {g.perProcess.slice(0, 20).map((row) => {
                   const owner = appFor(row.pid);
-                  const name = owner?.name?.trim() || `pid ${row.pid}`;
+                  const name = owner?.name?.trim() || t("label.pidName", { pid: row.pid });
                   return (
                     <div key={row.pid} className="row">
                       <AppIcon name={name} seed={String(row.pid)} exePath={owner?.exePath || undefined} />
@@ -976,9 +980,14 @@ function VolumeList() {
           <div className="volume-head">
             <strong>{volume.mountPoint}</strong>
             <span className="faint">
-              {volume.name} · {volume.fileSystem}
-              {volume.isSolidState ? " · SSD" : ""}
-              {volume.isRemovable ? " · removable" : ""}
+              {[
+                volume.name,
+                volume.fileSystem,
+                volume.isSolidState ? t("label.ssd") : null,
+                volume.isRemovable ? t("label.removable") : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </span>
             <span className="num volume-value">
               {formatBytes(volume.freeBytes, units)} {t("label.free")}

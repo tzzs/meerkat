@@ -125,15 +125,33 @@ export function formatTemp(celsius: number, units: UnitPrefs, withUnit = true): 
   return withUnit ? `${text}\u00b0${f ? "F" : "C"}` : text;
 }
 
+/**
+ * "1h 2m" or "1 小时 2 分": the two largest units that are not zero. The short form is for
+ * places with little room (the status bar, "held for", a battery's remaining time) and also
+ * leaves out a part that is exactly zero, so twenty minutes is "20m" rather than "20m 0s".
+ * It used to be written in English letters in every locale, which put "3d 5h" in a Chinese
+ * window; both forms now use the language's own units.
+ */
 export function formatDuration(seconds: number, locale: string, opts?: { short?: boolean }): string {
   const s = Math.max(0, Math.round(seconds));
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
+  const rest = s % 60;
+  const short = opts?.short === true;
   const zh = locale.startsWith("zh");
-  if (d > 0) return opts?.short ? `${d}d${h ? ` ${h}h` : ""}` : zh ? `${d} 天 ${h} 小时` : `${d}d ${h}h`;
-  if (h > 0) return opts?.short ? `${h}h ${m}m` : zh ? `${h} 小时 ${m} 分` : `${h}h ${m}m`;
-  if (m > 0) return zh ? `${m} 分 ${s % 60} 秒` : `${m}m ${s % 60}s`;
+  if (d > 0) {
+    if (short && h === 0) return zh ? `${d} 天` : `${d}d`;
+    return zh ? `${d} 天 ${h} 小时` : `${d}d ${h}h`;
+  }
+  if (h > 0) {
+    if (short && m === 0) return zh ? `${h} 小时` : `${h}h`;
+    return zh ? `${h} 小时 ${m} 分` : `${h}h ${m}m`;
+  }
+  if (m > 0) {
+    if (short && rest === 0) return zh ? `${m} 分钟` : `${m}m`;
+    return zh ? `${m} 分 ${rest} 秒` : `${m}m ${rest}s`;
+  }
   return zh ? `${s} 秒` : `${s}s`;
 }
 

@@ -34,6 +34,26 @@ describe("plurals", () => {
 });
 
 describe("the dictionaries", () => {
+  // A translation that forgets {duration} renders without a brace and without an error, and
+  // simply says less than the English did.
+  it("use the same placeholders in both languages", () => {
+    // Top-level `{name}` and `{name, plural, ...}` only: the forms inside a plural are text.
+    const names = (template: string) => {
+      const found = new Set<string>();
+      let depth = 0;
+      for (let i = 0; i < template.length; i++) {
+        if (template[i] === "{") {
+          if (depth === 0) found.add(/^\w+/.exec(template.slice(i + 1))?.[0] ?? "");
+          depth++;
+        } else if (template[i] === "}") depth--;
+      }
+      return [...found].sort();
+    };
+    for (const key of Object.keys(en) as (keyof typeof en)[]) {
+      expect(names(zh[key]), key).toEqual(names(en[key]));
+    }
+  });
+
   // tsc already proves both tables have the same keys; this proves they all render.
   it("fill every placeholder in both languages", () => {
     const params = new Proxy({}, { get: () => 2 }) as Record<string, number>;
