@@ -18,6 +18,17 @@ import { Hint } from "./ui/tooltip";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import { holdCeiling, niceCeiling, type HeldCeiling } from "../lib/spark";
+import {
+  appLabel,
+  appValue,
+  canQuit,
+  holdOrder,
+  orderApps,
+  visibleWindowTitles,
+  type AppMetric,
+} from "../lib/apps";
+import { usePins } from "../lib/pins";
+import { AppMenu, isMenuKey, menuTarget, type AppMenuTarget } from "./AppMenu";
 import type { UnitPrefs } from "../lib/format";
 import type { Translate } from "../i18n";
 import type { AppInfo, Availability } from "../lib/types";
@@ -342,7 +353,8 @@ export function Monogram({ name, seed }: { name: string; seed: string }) {
   );
 }
 
-export type AppMetric = "cpu" | "memory" | "disk" | "network" | "connections";
+export type { AppMetric } from "../lib/apps";
+export { appValue } from "../lib/apps";
 
 /** The leading column of a row: 22 CSS px, whether it holds an icon or an initial. */
 export const AVATAR_PX = 22;
@@ -416,19 +428,69 @@ export function AppIcon({
   );
 }
 
-export function appValue(app: AppInfo, metric: AppMetric): number {
-  switch (metric) {
-    case "cpu":
-      return app.cpuPercent;
-    case "memory":
-      return app.memoryBytes;
-    case "disk":
-      return app.readBytesPerSecond + app.writeBytesPerSecond;
-    case "network":
-      return app.connections;
-    case "connections":
-      return app.connections;
-  }
+interface RowProps {
+  app: AppInfo;
+  index: number;
+  offset: number;
+  label: string;
+  value: string;
+  ratio: number;
+  pinned: boolean;
+  t: Translate;
+  measure: (node: Element | null) => void;
+  onMenu: (app: AppInfo, label: string, element: HTMLElement, event?: React.MouseEvent<HTMLElement>) => void;
+  onQuit: (app: AppInfo) => void;
+}
+
+/**
+ * One application. The row itself takes focus, so the keyboard reaches the same menu the
+ * pointer does (ContextMenu key or Shift+F10); the × stays a pointer shortcut out of the tab
+ * order, since the menu's Quit… covers it.
+ */
+function AppRow({ app, index, offset, label, value, ratio, pinned, t, measure, onMenu, onQuit }: RowProps) {
+  // The synthetic row is a count of processes that need administrative rights to open, not an
+  // application: it has no figures, and it must never offer to close anything.
+  const unreadable = app.key === UNREADABLE_GROUP;
+  const hint = unreadable ? t("list.unreadableHint") : visibleWindowTitles(app).join("\u000a") || app.exePath || label;
+  return (
+    <Hint className="max-w-[420px] whitespace-pre-line text-left" label={hint}>
+      <div
+        data-index={index}
+        ref={measure}
+        tabIndex={0}
+        className={`row ${pinned ? "pinned" : ""}`}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${offset}px)` }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onMenu(app, label, event.currentTarget, event);
+        }}
+        onKeyDown={(event) => {
+          if (!isMenuKey(event)) return;
+          event.preventDefault();
+          onMenu(app, label, event.currentTarget);
+        }}
+      >
+        <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
+        <div className="row-main">
+          <span className="row-name">{label}</span>
+          <span className={`row-sub ${KIND_TONE[app.kind]}`}>
+            {t(`kind.${app.kind}`)}
+            {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
+            {app.listeningPorts.length > 0 ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}` : ""}
+          </span>
+        </div>
+        <div className="row-meter">
+          <Meter ratio={unreadable ? 0 : ratio} color="var(--accent)" />
+        </div>
+        <span className="row-value num">{unreadable ? "—" : value}</span>
+        {canQuit(app) && (
+          <button className="row-quit" tabIndex={-1} onClick={() => onQuit(app)} aria-label={t("action.quitApp")}>
+            ×
+          </button>
+        )}
+      </div>
+    </Hint>
+  );
 }
 
 export function AppTable({
@@ -449,31 +511,68 @@ export function AppTable({
   seedQuery?: string;
 }) {
   const { requestQuit } = useStore();
+  const [pins, togglePin] = usePins();
   const [query, setQuery] = useState(seedQuery ?? "");
-  const [pinned, setPinned] = useState<string[]>([]);
+  const [held, setHeld] = useState<string[] | null>(null);
+  const [menu, setMenu] = useState<AppMenuTarget | null>(null);
+  const pointerInside = useRef(false);
   useEffect(() => {
     if (seedQuery !== undefined) setQuery(seedQuery);
   }, [seedQuery]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const list = apps.filter(
+    if (!needle) return apps;
+    return apps.filter(
       (a) =>
-        !needle ||
+        appLabel(a, t).toLowerCase().includes(needle) ||
         a.name.toLowerCase().includes(needle) ||
         a.exePath.toLowerCase().includes(needle) ||
         a.pids.some((p) => String(p) === needle),
     );
-    const sorted = [...list].sort((a, b) => {
-      const pa = pinned.indexOf(a.key);
-      const pb = pinned.indexOf(b.key);
-      if (pa !== -1 || pb !== -1) return (pa === -1 ? 1 : pa) - (pb === -1 ? 1 : pb);
-      return appValue(b, metric) - appValue(a, metric);
-    });
-    return cap ? sorted.slice(0, cap) : sorted;
-  }, [apps, query, metric, cap, pinned]);
+  }, [apps, query, t]);
 
-  const peak = Math.max(1, ...filtered.map((a) => appValue(a, metric)));
+  const ordered = useMemo(() => orderApps(filtered, pins, metric), [filtered, pins, metric]);
+  const latest = useRef(ordered);
+  latest.current = ordered;
+
+  // The cap comes after the hold, so a held list keeps the same rows, not just the same order.
+  const rows = useMemo(() => {
+    const shown = holdOrder(ordered, held);
+    return cap ? shown.slice(0, cap) : shown;
+  }, [ordered, held, cap]);
+
+  const hold = useCallback(() => setHeld((current) => current ?? latest.current.map((a) => a.key)), []);
+
+  // A pin, a new sort or a new search is the user's own doing: show its result at once, and
+  // keep holding that order if the list was being held.
+  const pinsKey = pins.join("\u000a");
+  useEffect(() => {
+    setHeld((current) => (current ? latest.current.map((a) => a.key) : null));
+  }, [pinsKey, metric, query]);
+
+  useEffect(() => {
+    if (!held) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setHeld(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [held]);
+
+  const openMenu = useCallback(
+    (app: AppInfo, label: string, element: HTMLElement, event?: React.MouseEvent<HTMLElement>) => {
+      hold();
+      setMenu(menuTarget(app, label, element, event));
+    },
+    [hold],
+  );
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    if (!pointerInside.current) setHeld(null);
+  }, []);
+
+  const peak = Math.max(1, ...rows.map((a) => appValue(a, metric)));
 
   // The list scrolls with the page rather than in its own box, so the virtualiser needs
   // the distance between the scroller's top and the list's top. That distance is only
@@ -531,7 +630,7 @@ export function AppTable({
   useEffect(measure);
 
   const virtualizer = useVirtualizer({
-    count: filtered.length,
+    count: rows.length,
     getScrollElement: () => scrollEl,
     // Measured in the browser: an application row is 47px tall (7px of padding twice over
     // two lines of text). The estimate is what sizes the scrollbar before the first row is
@@ -584,68 +683,43 @@ export function AppTable({
       <div
         className="rows"
         ref={listRef}
-        data-count={filtered.length}
-        style={filtered.length > 0 ? { position: "relative", height: virtualizer.getTotalSize() } : undefined}
+        data-count={rows.length}
+        data-held={held ? "" : undefined}
+        style={rows.length > 0 ? { position: "relative", height: virtualizer.getTotalSize() } : undefined}
+        onPointerEnter={() => {
+          pointerInside.current = true;
+          hold();
+        }}
+        onPointerLeave={() => {
+          pointerInside.current = false;
+          if (!menu) setHeld(null);
+        }}
       >
         {virtualizer.getVirtualItems().map((item) => {
-          const app = filtered[item.index];
+          const app = rows[item.index];
           if (!app) return null;
-          // The synthetic row is a count of processes that need administrative rights to open,
-          // not an application: it has no figures, and it must never offer to close anything.
-          const unreadable = app.key === UNREADABLE_GROUP;
-          const label = unreadable ? t("list.unreadable") : app.name;
           return (
-            <Hint
+            <AppRow
               key={app.key}
-              className="max-w-[420px] whitespace-pre-line text-left"
-              label={
-                unreadable
-                  ? t("list.unreadableHint")
-                  : app.windows.map((w) => w.title).join("\u000a") || app.exePath
-              }
-            >
-              <div
-                data-index={item.index}
-                ref={virtualizer.measureElement}
-                className={`row ${pinned.includes(app.key) ? "pinned" : ""}`}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  transform: `translateY(${item.start - scrollMargin}px)`,
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setPinned((p) => (p.includes(app.key) ? p.filter((k) => k !== app.key) : [...p, app.key]));
-                }}
-              >
-                <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
-                <div className="row-main">
-                  <span className="row-name">{label}</span>
-                  <span className={`row-sub ${KIND_TONE[app.kind]}`}>
-                    {t(`kind.${app.kind}`)}
-                    {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
-                    {app.listeningPorts.length > 0
-                      ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
-                      : ""}
-                  </span>
-                </div>
-                <div className="row-meter">
-                  <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
-                </div>
-                <span className="row-value num">{unreadable ? "—" : format(app)}</span>
-                {!unreadable && (
-                  <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
-                    ×
-                  </button>
-                )}
-              </div>
-            </Hint>
+              app={app}
+              index={item.index}
+              offset={item.start - scrollMargin}
+              label={appLabel(app, t)}
+              value={format(app)}
+              ratio={appValue(app, metric) / peak}
+              pinned={pins.includes(app.key)}
+              t={t}
+              measure={virtualizer.measureElement}
+              onMenu={openMenu}
+              onQuit={requestQuit}
+            />
           );
         })}
-        {filtered.length === 0 && <p className="empty faint">{t("state.noData")}</p>}
+        {rows.length === 0 && <p className="empty faint">{t("state.noData")}</p>}
       </div>
+      {menu && (
+        <AppMenu target={menu} pinned={pins.includes(menu.app.key)} onTogglePin={togglePin} onClose={closeMenu} />
+      )}
     </div>
   );
 }

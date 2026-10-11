@@ -181,6 +181,18 @@
 .panel-app:hover {
   background: var(--surface-2);
 }
+.panel-app.pinned {
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+}
+.panel-app:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline-offset: -2px;
+}
+/* The × used to stay at opacity 0 here: the reveal rule only matched the window's .row. */
+.panel-app:hover .row-quit,
+.panel-app:focus-visible .row-quit {
+  opacity: 1;
+}
 .panel-app-name {
   overflow: hidden;
   white-space: nowrap;

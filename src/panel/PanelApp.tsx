@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppMenu, isMenuKey, menuTarget, type AppMenuTarget } from "../components/AppMenu";
+import { appLabel, canQuit, forLists, holdOrder, orderApps } from "../lib/apps";
+import { usePins } from "../lib/pins";
 import { cleanChipName, cpuDisplay, formatBytes, formatPercent, formatRateShort, formatTemp } from "../lib/format";
 import { ipc, listenEvent } from "../lib/ipc";
 import { AppIcon, QuitDialog, useHeldCeiling } from "../components/ui";
@@ -88,7 +91,12 @@ export function PanelApp() {
   // The panel is hidden, never unmounted, so whatever tooltip was up when it lost focus would
   // otherwise greet the next opening. Close them on the way out and again on the way in.
   useEffect(() => {
-    const reset = () => setTooltipReset((n) => n + 1);
+    const reset = () => {
+      setTooltipReset((n) => n + 1);
+      // A hidden window gets no pointerleave, so the held order would outlive the visit.
+      pointerInside.current = false;
+      setHeld(null);
+    };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") reset();
     };
@@ -102,10 +110,29 @@ export function PanelApp() {
     };
   }, []);
 
-  const apps = useMemo(() => {
-    const list = snapshot?.apps ?? [];
-    return [...list].sort((a, b) => b.memoryBytes - a.memoryBytes);
-  }, [snapshot]);
+  // The same rules as the window's lists: the setting decides whether Windows' own processes
+  // appear, pins come first, and the order holds while the pointer is over the rows so the ×
+  // does not slide to another app between two samples.
+  const [pins, togglePin] = usePins();
+  const [held, setHeld] = useState<string[] | null>(null);
+  const [menu, setMenu] = useState<AppMenuTarget | null>(null);
+  const pointerInside = useRef(false);
+  const ordered = useMemo(
+    () => orderApps(forLists(snapshot?.apps ?? [], settings.showSystemAppsInLists), pins, "memory"),
+    [snapshot, settings.showSystemAppsInLists, pins],
+  );
+  const latest = useRef(ordered);
+  latest.current = ordered;
+  const apps = useMemo(() => holdOrder(ordered, held).slice(0, 6), [ordered, held]);
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    if (!pointerInside.current) setHeld(null);
+  }, []);
+  // A pin is the user's own doing: show it at the top at once, even while the order is held.
+  const pinsKey = pins.join("\u000a");
+  useEffect(() => {
+    setHeld((current) => (current ? latest.current.map((a) => a.key) : null));
+  }, [pinsKey]);
 
   const tiles = snapshot ? panelTiles(settings.panel.tiles, snapshot) : [];
   const shown: MetricKind[] = tab === "top" ? tiles : [tab];
@@ -164,30 +191,66 @@ export function PanelApp() {
       </div>
 
       {tab === "top" && (
-        <div className="panel-apps">
-          {apps.slice(0, 6).map((app) => (
-            <Hint key={app.key} className="max-w-[320px] break-all" label={app.exePath}>
-              <div className="panel-app">
-                <AppIcon name={app.name} seed={app.key} exePath={app.exePath || undefined} />
-                <span className="panel-app-name">{app.name}</span>
-                <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
-                <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>
-                <Hint label={t("action.quitApp")}>
-                  <button
-                    className="row-quit"
-                    aria-label={t("action.quitApp")}
-                    onClick={() => {
-                      requestQuit(app);
-                    }}
-                  >
-                    ×
-                  </button>
-                </Hint>
-              </div>
-            </Hint>
-          ))}
+        <div
+          className="panel-apps"
+          onPointerEnter={() => {
+            pointerInside.current = true;
+            setHeld((current) => current ?? latest.current.map((a) => a.key));
+          }}
+          onPointerLeave={() => {
+            pointerInside.current = false;
+            if (!menu) setHeld(null);
+          }}
+        >
+          {apps.map((app) => {
+            const label = appLabel(app, t);
+            return (
+              <Hint key={app.key} className="max-w-[320px] break-all" label={app.exePath || label}>
+                <div
+                  className={`panel-app ${pins.includes(app.key) ? "pinned" : ""}`}
+                  tabIndex={0}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setMenu(menuTarget(app, label, event.currentTarget, event));
+                  }}
+                  onKeyDown={(event) => {
+                    if (!isMenuKey(event)) return;
+                    event.preventDefault();
+                    setMenu(menuTarget(app, label, event.currentTarget));
+                  }}
+                >
+                  <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
+                  <span className="panel-app-name">{label}</span>
+                  <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
+                  <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>
+                  {canQuit(app) && (
+                    <Hint label={t("action.quitApp")}>
+                      <button
+                        className="row-quit"
+                        tabIndex={-1}
+                        aria-label={t("action.quitApp")}
+                        onClick={() => {
+                          requestQuit(app);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </Hint>
+                  )}
+                </div>
+              </Hint>
+            );
+          })}
           {apps.length === 0 && <p className="empty faint">{connected ? "" : t("state.noData")}</p>}
         </div>
+      )}
+      {menu && (
+        <AppMenu
+          target={menu}
+          pinned={pins.includes(menu.app.key)}
+          onTogglePin={togglePin}
+          onClose={closeMenu}
+        />
       )}
 
       <nav className="panel-tabs">

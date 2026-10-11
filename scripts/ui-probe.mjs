@@ -117,10 +117,19 @@ const result = await evaluate(`async () => {
   // from the middle would unmount the very row the test is looking for.
   content.scrollTop = 0;
   await sleep(450);
-  const clicked = (el) =>
-    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+  // Right click opens the row menu; its first item is Pin / Unpin. Pins persist in
+  // localStorage now, so whatever this pins it also unpins before returning.
+  const clicked = async (el) => {
+    el.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40, button: 2 }),
+    );
+    await sleep(80);
+    const item = document.querySelector('[role="menu"] [role="menuitem"]');
+    if (item) item.click();
+    return Boolean(item);
+  };
   // Anything a previous run left pinned would confuse the ordering check below.
-  for (const row of [...document.querySelectorAll(".row.pinned")]) clicked(row);
+  for (const row of [...document.querySelectorAll(".row.pinned")]) await clicked(row);
   await sleep(400);
 
   const rows2 = [...rowsEl.querySelectorAll(":scope > .row")];
@@ -128,18 +137,19 @@ const result = await evaluate(`async () => {
   const name = target ? target.querySelector(".row-name").textContent : null;
   let interaction = { skipped: "no rows mounted" };
   if (target) {
-    clicked(target);
+    const menuOpened = await clicked(target);
     await sleep(450);
     const after = [...rowsEl.querySelectorAll(":scope > .row")];
     interaction = {
       target: name,
+      menuOpened,
       pinnedNames: after.filter((r) => r.classList.contains("pinned")).map((r) => r.querySelector(".row-name").textContent),
       movedToFront: after[0] ? after[0].querySelector(".row-name").textContent === name : false,
       hasQuitButton: Boolean(target.querySelector(".row-quit")),
       hasMeter: Boolean(target.querySelector(".row-meter")),
       tooltip: Boolean(target.getAttribute("title")),
     };
-    for (const row of [...document.querySelectorAll(".row.pinned")]) clicked(row);
+    for (const row of [...document.querySelectorAll(".row.pinned")]) await clicked(row);
     await sleep(400);
     interaction.pinnedCleared = document.querySelectorAll(".row.pinned").length === 0;
   }

@@ -37,6 +37,7 @@ const en = {
   "action.copyName": "Copy name",
   "action.copyProcessName": "Copy process name",
   "action.copyProcessPath": "Copy process path",
+  "action.quitMenu": "Quit…",
   "action.pin": "Pin to top",
   "action.unpin": "Unpin",
   "action.done": "Done",
@@ -119,6 +120,7 @@ const en = {
   "label.sensors": "Sensors",
   "label.charging": "Charging",
   "label.onAc": "Plugged in",
+  "label.serviceHost": "Service host",
 
   "list.app": "App",
   "list.cpu": "CPU",

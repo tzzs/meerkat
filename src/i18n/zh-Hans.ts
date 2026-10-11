@@ -40,6 +40,7 @@ const zh: Record<Key, string> = {
   "action.copyName": "复制名称",
   "action.copyProcessName": "复制进程名",
   "action.copyProcessPath": "复制进程路径",
+  "action.quitMenu": "结束任务…",
   "action.pin": "置顶",
   "action.unpin": "取消置顶",
   "action.done": "完成",
@@ -122,6 +123,7 @@ const zh: Record<Key, string> = {
   "label.sensors": "传感器",
   "label.charging": "正在充电",
   "label.onAc": "已接电源",
+  "label.serviceHost": "服务主机",
 
   "list.app": "应用",
   "list.cpu": "处理器",

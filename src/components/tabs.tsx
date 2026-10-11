@@ -7,6 +7,7 @@ import {
   formatRate,
   formatTemp,
 } from "../lib/format";
+import { forLists } from "../lib/apps";
 import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
@@ -110,15 +111,17 @@ function HistoryChart({ metric, range }: { metric: string; range: number }) {
   );
 }
 
-function useApps(sort: AppMetric, hideSystem: boolean): AppInfo[] {
+/**
+ * The apps a list may show. Every caller used to pass `hideSystem = false`, which made
+ * "Show Windows in lists" a switch connected to nothing; the setting now decides. The order is
+ * the table's business (pins first, then its own sort), so none is imposed here.
+ */
+function useApps(): AppInfo[] {
   const { snapshot, settings } = useStore();
-  return useMemo(() => {
-    const apps = snapshot?.apps ?? [];
-    const pool = settings.showSystemAppsInLists || !hideSystem ? apps : apps.filter((a) => a.kind !== "system" && a.kind !== "service");
-    const weight = (a: AppInfo) =>
-      sort === "cpu" ? a.cpuPercent : sort === "disk" ? a.readBytesPerSecond + a.writeBytesPerSecond : a.memoryBytes;
-    return [...pool].sort((a, b) => weight(b) - weight(a));
-  }, [snapshot, sort, hideSystem, settings.showSystemAppsInLists]);
+  return useMemo(
+    () => forLists(snapshot?.apps ?? [], settings.showSystemAppsInLists),
+    [snapshot, settings.showSystemAppsInLists],
+  );
 }
 
 /**
@@ -165,7 +168,7 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
   const shown = visibleSections(settings, "overview");
   const [range, setRange] = useTabState("overview", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("overview", "metric", "memory");
-  const apps = useApps(metric, false);
+  const apps = useApps();
   const insights = useInsights().filter((i) => !i.resolved);
   if (!snapshot) return <Missing />;
 
@@ -332,7 +335,7 @@ export function CpuTab() {
   const shown = visibleSections(settings, "cpu");
   const [range, setRange] = useTabState("cpu", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("cpu", "metric", "cpu");
-  const apps = useApps("cpu", false);
+  const apps = useApps();
   if (!snapshot) return <Missing />;
   const totalBusy = snapshot.cpu.userPercent + snapshot.cpu.privilegedPercent;
 
@@ -386,7 +389,7 @@ export function MemoryTab({ search }: { search?: string }) {
   const shown = visibleSections(settings, "memory");
   const [range, setRange] = useTabState("memory", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("memory", "metric", "memory");
-  const apps = useApps("memory", false);
+  const apps = useApps();
   if (!snapshot) return <Missing />;
   const m = snapshot.memory;
   const rows: [string, number, number][] = [
@@ -467,7 +470,7 @@ export function DiskTab() {
   const shown = visibleSections(settings, "disk");
   const [range, setRange] = useTabState("disk", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("disk", "metric", "disk");
-  const apps = useApps("disk", false);
+  const apps = useApps();
   if (!snapshot) return <Missing />;
   const d = snapshot.disk;
 
@@ -532,7 +535,7 @@ export function NetworkTab() {
   const shown = visibleSections(settings, "network");
   const [range, setRange] = useTabState("network", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("network", "metric", "connections");
-  const apps = useApps("connections", false);
+  const apps = useApps();
   if (!snapshot) return <Missing />;
   const n = snapshot.network;
 
