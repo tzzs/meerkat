@@ -305,10 +305,14 @@ fn paint(app: &AppHandle, frames: Vec<IconFrame>) {
             }
         }
         if let Some((rgba, width, height)) = write.image {
+            // What the taskbar was given, for looking at without a screenshot of the shell.
             #[cfg(debug_assertions)]
-            if let Ok(dir) = app.path().app_data_dir() {
-                tray_render::dump_debug(&write.id, &rgba, &dir.join("dev"));
-            }
+            crate::devmirror::publish_bytes(
+                &state.data_dir.join("dev"),
+                &format!("{}.rgba", write.id),
+                crate::devmirror::LATEST_EVERY,
+                || Some(rgba.clone()),
+            );
             if let Err(error) = tray.set_icon(Some(Image::new_owned(rgba, width, height))) {
                 crate::diag::warn(format!("tray icon {}: {error}", write.id));
                 refused = true;

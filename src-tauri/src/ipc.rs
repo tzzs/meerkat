@@ -408,15 +408,13 @@ fn png_data_url(image: &crate::icons::IconImage) -> Option<String> {
     Some(format!("data:image/png;base64,{encoded}"))
 }
 
+/// The mixer's state. The Sound tab polls this four times a second.
+// `_state` is only read by the dev mirror, which a release build does not have.
 #[tauri::command(async)]
-pub fn audio_state(state: State<'_, AppState>) -> Result<AudioState, String> {
+pub fn audio_state(_state: State<'_, AppState>) -> Result<AudioState, String> {
     let snapshot = snapshot_audio()?;
     #[cfg(debug_assertions)]
-    if let Ok(raw) = serde_json::to_string(&snapshot) {
-        let dir = state.data_dir.join("dev");
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join("audio.json"), raw);
-    }
+    crate::devmirror::audio(&_state);
     Ok(snapshot)
 }
 

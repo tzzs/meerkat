@@ -207,10 +207,9 @@ impl History {
     }
 
     /// Stores the minute and the hour collected so far and writes the file before returning.
-    /// For app exit: whatever was recorded since the last save would otherwise be lost. A run
-    /// that starts again inside the same minute or hour merges into what this stored.
-    // Called from the app's exit path in main.rs; until that hook lands nothing else calls it.
-    #[allow(dead_code)]
+    /// For app exit (`on_exit` in main.rs): whatever was recorded since the last save would
+    /// otherwise be lost. A run that starts again inside the same minute or hour merges into what
+    /// this stored.
     pub fn flush(&mut self) {
         self.close_minute();
         self.close_hour();

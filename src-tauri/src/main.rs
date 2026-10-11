@@ -2,6 +2,8 @@
 
 mod alerts;
 mod audio;
+#[cfg(debug_assertions)]
+mod devmirror;
 mod diag;
 mod history;
 mod i18n;
@@ -194,9 +196,18 @@ fn run() -> tauri::Result<()> {
 }
 
 /// The last thing that runs, on the main thread, once the event loop has stopped: every
-/// clean way out (the tray menu, `quit_pulse`, a relaunch) passes through here.
-fn on_exit(_app: &AppHandle) {
-    crate::diag::info("exit");
+/// clean way out (the tray menu, `quit_pulse`, a relaunch) passes through here, because each of
+/// them is `AppHandle::exit`, which ends the event loop and then reports `RunEvent::Exit`.
+///
+/// The history is written out here. It is otherwise saved on a timer, so without this the minute
+/// and the hour in progress, and everything since the last save, went with the process.
+fn on_exit(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        // A poisoned lock is still the data: losing the history because a thread panicked
+        // while it held it would be the worse outcome.
+        state.history.lock().unwrap_or_else(|p| p.into_inner()).flush();
+    }
+    diag::info("exit");
 }
 
 fn panel_pinned(window: &tauri::Window) -> bool {
@@ -246,7 +257,7 @@ fn spawn_sampler(app: AppHandle) {
 
                 ipc::publish_metrics(&app, &state, &snapshot);
                 #[cfg(debug_assertions)]
-                dump_for_dev_browser(&state, &snapshot);
+                devmirror::tick(&state, &snapshot);
 
                 std::thread::sleep(std::time::Duration::from_millis(tick_ms(
                     state.visible(),
@@ -265,45 +276,6 @@ fn tick_ms(visible: bool, on_ac: bool) -> u64 {
         base
     } else {
         base * 2
-    }
-}
-
-/// Dev-only: mirror the state to disk so `pnpm dev` in a plain browser shows the same
-/// real figures as the app window. Debug builds only.
-#[cfg(debug_assertions)]
-fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
-    use std::sync::atomic::AtomicU64;
-    static TICK: AtomicU64 = AtomicU64::new(0);
-    let dir = state.data_dir.join("dev");
-    let _ = std::fs::create_dir_all(&dir);
-    let tick = TICK.fetch_add(1, Ordering::Relaxed);
-    if let Ok(raw) = serde_json::to_string(snapshot) {
-        let _ = std::fs::write(dir.join("latest.json"), raw);
-    }
-    if tick % 20 != 0 {
-        return;
-    }
-    if let Ok(raw) = serde_json::to_string(&state.watcher.lock().unwrap_or_else(|p| p.into_inner()).list()) {
-        let _ = std::fs::write(dir.join("insights.json"), raw);
-    }
-    // Runs on the sampler thread on purpose: Core Audio needs COM, and this is the only
-    // place that proves it initialises correctly away from the main thread.
-    match ipc::snapshot_audio() {
-        Ok(snapshot) => {
-            if let Ok(raw) = serde_json::to_string(&snapshot) {
-                let _ = std::fs::write(dir.join("audio.json"), raw);
-            }
-        }
-        Err(error) => crate::diag::warn(format!("audio snapshot: {error}")),
-    }
-    let now = history::now_seconds();
-    let store = state.history.lock().unwrap_or_else(|p| p.into_inner());
-    for range in [3600u64, 43200, 86400, 604800, 2592000] {
-        for metric in ["cpu", "memory", "diskWrite", "download", "gpu", "battery", "temp"] {
-            if let Ok(raw) = serde_json::to_string(&store.series(metric, range, now)) {
-                let _ = std::fs::write(dir.join(format!("series-{metric}-{range}.json")), raw);
-            }
-        }
     }
 }
 
