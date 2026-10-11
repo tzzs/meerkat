@@ -184,63 +184,33 @@ pub fn insight_dismiss(state: State<'_, AppState>, id: String) {
     state.watcher.lock().unwrap_or_else(|p| p.into_inner()).dismiss(&id);
 }
 
+/// Closes an application's windows, or ends its processes. What may be touched, and how a process
+/// is recognised again before it is ended, is `quit`'s business; this only looks the row up and
+/// answers with a code (`QuitError::code`) the frontend turns into words.
 #[tauri::command(async)]
 pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitResult {
-    let Some(snapshot) = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone() else {
-        return QuitResult { asked: 0, force_used: force, error: Some("no reading yet".into()) };
-    };
-    let Some(app) = snapshot.apps.into_iter().find(|a| a.key == key) else {
-        return QuitResult { asked: 0, force_used: force, error: Some("that app is gone".into()) };
-    };
+    use crate::quit::{self, QuitError};
 
-    // The synthetic row is a count, not an application: its pids are the system processes this
-    // user cannot even open, so refusing is better than presenting them as something to kill.
-    if app.key == crate::metrics::grouping::UNREADABLE_KEY {
-        return QuitResult {
-            asked: 0,
-            force_used: false,
-            error: Some("not an application".into()),
+    // One row is copied out of the snapshot, not the snapshot.
+    let (taken_at_ms, app) = {
+        let latest = state.latest.read().unwrap_or_else(|p| p.into_inner());
+        let Some(snapshot) = latest.as_ref() else {
+            return QuitError::NoReading.refusal(force);
         };
-    }
+        (snapshot.taken_at_ms, snapshot.apps.iter().find(|a| a.key == key).cloned())
+    };
+    let Some(app) = app else {
+        return QuitError::Gone.refusal(force);
+    };
 
+    let family = quit::own_family();
+    if let Err(why) = quit::quit_policy(&app, &family).permits(force) {
+        return why.refusal(force);
+    }
     if force {
-        let pids: Vec<sysinfo::Pid> = app.pids.iter().map(|p| sysinfo::Pid::from(*p as usize)).collect();
-        let mut system = sysinfo::System::new();
-        system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids), false);
-        let mut killed = 0usize;
-        for pid in &pids {
-            if let Some(process) = system.process(*pid) {
-                if process.kill() {
-                    killed += 1;
-                }
-            }
-        }
-        return QuitResult { asked: killed, force_used: true, error: None };
-    }
-
-    let mut asked = 0usize;
-    for window in app.windows.iter().filter(|w| w.visible) {
-        let hwnd = windows::Win32::Foundation::HWND(window.hwnd as *mut core::ffi::c_void);
-        let posted = unsafe {
-            windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                Some(hwnd),
-                windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
-                windows::Win32::Foundation::WPARAM(0),
-                windows::Win32::Foundation::LPARAM(0),
-            )
-        };
-        if posted.is_ok() {
-            asked += 1;
-        }
-    }
-    QuitResult {
-        asked,
-        force_used: false,
-        error: if asked == 0 {
-            Some("no window to close; use force quit".into())
-        } else {
-            None
-        },
+        quit::force_quit(&app, taken_at_ms, &family)
+    } else {
+        quit::ask_to_close(&app, taken_at_ms)
     }
 }
 

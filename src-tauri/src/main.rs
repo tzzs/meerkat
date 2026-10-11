@@ -10,6 +10,7 @@ mod menu;
 mod metrics;
 mod models;
 mod nvml;
+mod quit;
 mod settings;
 mod toast;
 mod tray;
