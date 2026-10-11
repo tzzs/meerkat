@@ -6,6 +6,11 @@
 //! `msedge.exe --type=utility` fold into the app the user can see. Where Windows itself
 //! splits one executable into many roles (`svchost.exe -k NetworkService`), the role is
 //! part of the key instead.
+//!
+//! Same directory is evidence of one application only where the directory is the application's
+//! own. The Windows directory is shared by hundreds of unrelated programs, and the processes
+//! that start them (the session manager, the service controller, the shell) are never the
+//! application: see [`is_host`].
 
 use std::collections::HashMap;
 
@@ -460,6 +465,43 @@ pub fn group(
     out
 }
 
+/// The lower-cased image name: the file name of the path, or the snapshot's name for a process
+/// whose path could not be read.
+fn image_name(p: &ProcSample) -> String {
+    let from_path = p.exe.rsplit(['\\', '/']).next().unwrap_or("");
+    let name = if from_path.is_empty() { p.name.as_str() } else { from_path };
+    name.to_lowercase()
+}
+
+/// A process that starts programs which have nothing to do with it: the session manager and
+/// the processes it starts, the service controller and its service hosts, the logon and
+/// security processes, and the shell. They live in the Windows directory next to every other
+/// tool, so "same directory as the parent" says nothing there. Elevated, `svchost.exe` →
+/// `services.exe` → `wininit.exe` is a chain of System32 images, and folding it by directory
+/// turned every service host, and every System32 helper started by one, into a single
+/// "wininit" app and wiped out the per-role split of `svchost.exe`.
+fn is_host(p: &ProcSample) -> bool {
+    let image = image_name(p);
+    PIDDEN_EXES.contains(&image.as_str()) || matches!(image.as_str(), "explorer.exe" | "lsm.exe")
+}
+
+/// Whether `child` is part of the application `parent` anchors: they live in the same directory,
+/// neither is a host, and the parent did not start after the child — a parent id can have been
+/// reused by an unrelated process once the real parent exited, and such a "parent" is younger
+/// than the child it claims.
+fn folds_into(child: &ProcSample, parent: &ProcSample) -> bool {
+    if child.dir.is_empty() || parent.dir.is_empty() || child.dir != parent.dir {
+        return false;
+    }
+    if is_host(child) || is_host(parent) {
+        return false;
+    }
+    match (child.started_at_ms, parent.started_at_ms) {
+        (Some(child_start), Some(parent_start)) => parent_start <= child_start,
+        _ => true,
+    }
+}
+
 fn resolve_anchor(
     p: &ProcSample,
     by_pid: &HashMap<u32, &ProcSample>,
@@ -469,7 +511,7 @@ fn resolve_anchor(
     for _ in 0..16 {
         let Some(ppid) = current.ppid else { break };
         let Some(parent) = by_pid.get(&ppid) else { break };
-        if current.dir.is_empty() || parent.dir.is_empty() || parent.dir != current.dir {
+        if !folds_into(current, parent) {
             break;
         }
         current = parent;
@@ -647,6 +689,121 @@ mod tests {
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].name, "protected");
         assert_eq!(apps[0].windows[0].title, "Something");
+    }
+
+    const SYSTEM32: &str = "C:\\Windows\\System32\\";
+
+    /// A process of `exe` started by `ppid`, at `started` seconds since the epoch.
+    fn child(pid: u32, ppid: u32, exe: &str, started: u64) -> ProcSample {
+        let image = exe.rsplit(['\\', '/']).next().unwrap_or(exe);
+        let mut p = proc(pid, exe, image, true);
+        p.ppid = Some(ppid);
+        p.started_at_ms = Some(started * 1000);
+        p
+    }
+
+    fn with_args(mut p: ProcSample, args: &[&str]) -> ProcSample {
+        p.args = args.iter().map(|a| a.to_string()).collect();
+        p
+    }
+
+    fn keys(apps: &[AppInfo]) -> Vec<String> {
+        let mut keys: Vec<String> = apps.iter().map(|a| a.key.clone()).collect();
+        keys.sort();
+        keys
+    }
+
+    /// Elevated, every System32 image can be read, and they all share one directory. This chain
+    /// used to fold into a single app named after its root.
+    #[test]
+    fn the_windows_service_chain_stays_apart() {
+        let procs = vec![
+            child(300, 4, &format!("{SYSTEM32}smss.exe"), 100),
+            child(400, 300, &format!("{SYSTEM32}wininit.exe"), 101),
+            child(410, 400, &format!("{SYSTEM32}lsass.exe"), 102),
+            child(500, 400, &format!("{SYSTEM32}services.exe"), 102),
+            with_args(child(600, 500, &format!("{SYSTEM32}svchost.exe"), 103), &["-k", "netsvcs"]),
+            with_args(child(610, 500, &format!("{SYSTEM32}svchost.exe"), 103), &["-k", "DcomLaunch"]),
+            // Started by a service host, in the same directory: its own program.
+            child(700, 610, &format!("{SYSTEM32}RuntimeBroker.exe"), 200),
+        ];
+
+        let apps = group_of(&procs, empty_tcp(), &[]);
+
+        assert_eq!(
+            keys(&apps),
+            vec![
+                "c:\\windows\\system32\\lsass.exe",
+                "c:\\windows\\system32\\runtimebroker.exe",
+                "c:\\windows\\system32\\services.exe",
+                "c:\\windows\\system32\\smss.exe",
+                "c:\\windows\\system32\\svchost.exe|DcomLaunch",
+                "c:\\windows\\system32\\svchost.exe|netsvcs",
+                "c:\\windows\\system32\\wininit.exe",
+            ]
+        );
+        assert!(apps.iter().all(|a| a.process_count == 1), "nothing was folded into anything");
+    }
+
+    #[test]
+    fn a_browser_and_its_helpers_are_one_app() {
+        let chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+        let procs = vec![
+            child(900, 1, "C:\\Windows\\explorer.exe", 50),
+            child(1000, 900, chrome, 100),
+            with_args(child(1001, 1000, chrome, 101), &["--type=renderer"]),
+            with_args(child(1002, 1000, chrome, 101), &["--type=renderer"]),
+            with_args(child(1003, 1000, chrome, 102), &["--type=gpu-process"]),
+            // A helper that has its own executable in the same directory.
+            child(1004, 1000, "C:\\Program Files\\Google\\Chrome\\Application\\chrome_proxy.exe", 103),
+        ];
+
+        let apps = group_of(&procs, empty_tcp(), &[]);
+
+        assert_eq!(apps.len(), 2, "the browser and the shell that started it");
+        let browser = apps.iter().find(|a| a.exe_path == chrome).expect("the browser group");
+        assert_eq!(browser.process_count, 5);
+        let mut pids = browser.pids.clone();
+        pids.sort_unstable();
+        assert_eq!(pids, vec![1000, 1001, 1002, 1003, 1004]);
+    }
+
+    /// The shell is a host: a tool that happens to sit in the Windows directory is its own
+    /// app when started from it, not part of "Windows Explorer".
+    #[test]
+    fn what_the_shell_starts_from_its_own_directory_is_not_the_shell() {
+        let procs = vec![
+            child(900, 1, "C:\\Windows\\explorer.exe", 50),
+            child(901, 900, "C:\\Windows\\regedit.exe", 400),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(keys(&apps), vec!["c:\\windows\\explorer.exe", "c:\\windows\\regedit.exe"]);
+    }
+
+    /// Once its real parent has exited, a process id can be handed to anything. A "parent"
+    /// that started after the child cannot be its parent.
+    #[test]
+    fn a_reused_parent_id_is_not_a_parent() {
+        let launcher = "C:\\Apps\\Studio\\launcher.exe";
+        let worker = "C:\\Apps\\Studio\\worker.exe";
+
+        let genuine = vec![child(50, 1, launcher, 1_000), child(60, 50, worker, 1_005)];
+        assert_eq!(group_of(&genuine, empty_tcp(), &[]).len(), 1, "an older parent folds");
+
+        let same_second = vec![child(50, 1, launcher, 1_000), child(60, 50, worker, 1_000)];
+        assert_eq!(group_of(&same_second, empty_tcp(), &[]).len(), 1, "the clock has one-second steps");
+
+        let reused = vec![child(50, 1, launcher, 2_000), child(60, 50, worker, 1_000)];
+        assert_eq!(group_of(&reused, empty_tcp(), &[]).len(), 2, "this 'parent' is younger");
+    }
+
+    /// An unknown start time proves nothing either way, so it does not block the fold.
+    #[test]
+    fn an_unknown_start_time_does_not_stop_a_fold() {
+        let mut parent = child(50, 1, "C:\\Apps\\Studio\\launcher.exe", 1_000);
+        parent.started_at_ms = None;
+        let worker = child(60, 50, "C:\\Apps\\Studio\\worker.exe", 1_000);
+        assert_eq!(group_of(&[parent, worker], empty_tcp(), &[]).len(), 1);
     }
 
     /// sysinfo reports the start time as seconds since the epoch. It was once read as seconds
