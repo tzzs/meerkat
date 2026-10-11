@@ -12,7 +12,7 @@ pub mod pdh;
 pub mod wins;
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sysinfo::{Components, Disks, Networks, System};
 use windows::core::PCWSTR;
@@ -78,6 +78,7 @@ pub struct Sampler {
     pdh: Option<PdhQuery>,
     pdh_index: HashMap<String, usize>,
     gpu_probe: Option<EngineProbe>,
+    sensors_asked_at: Option<Instant>,
     io: grouping::IoRates,
     names: NameCache,
     previous_network: HashMap<String, (u64, u64)>,
@@ -133,6 +134,7 @@ impl Sampler {
             pdh,
             pdh_index,
             gpu_probe: EngineProbe::new(),
+            sensors_asked_at: None,
             io: grouping::IoRates::default(),
             names: NameCache::default(),
             previous_network: HashMap::new(),
@@ -536,13 +538,20 @@ impl Sampler {
     }
 
     fn temperature(&mut self) -> TemperatureMetric {
-        self.components.refresh(true);
+        let have_sensors = self.components.iter().next().is_some();
+        let waited = self.sensors_asked_at.map(|at| at.elapsed());
+        if should_ask_sensors(have_sensors, waited) {
+            self.components.refresh(true);
+            self.sensors_asked_at = Some(Instant::now());
+        }
         let mut sensors: Vec<SensorReading> = Vec::new();
         for component in self.components.iter() {
             let Some(reading) = component.temperature() else {
                 continue;
             };
-            if reading <= 0.0 {
+            // A reading that is not a number, or is at or below zero, is a sensor with nothing to
+            // say; it is left out rather than reported as a temperature.
+            if !reading.is_finite() || reading <= 0.0 {
                 continue;
             }
             sensors.push(SensorReading {
@@ -551,26 +560,108 @@ impl Sampler {
                 celsius: reading as f64,
             });
         }
-        let find = |needle: &str| {
+        summarize_temperature(sensors)
+    }
+}
+
+/// How often WMI is asked again while it has not produced a single sensor. An unprivileged
+/// process is refused every time — measured at 3 ms of COM per call, on the sampler thread, once
+/// a second, for nothing — and the answer only changes when Pulse is restarted elevated.
+const SENSOR_RETRY: Duration = Duration::from_secs(60);
+
+/// Sensors that exist are read every tick; none yet means a retry once per [`SENSOR_RETRY`].
+fn should_ask_sensors(have_sensors: bool, since_last_ask: Option<Duration>) -> bool {
+    have_sensors || since_last_ask.map_or(true, |waited| waited >= SENSOR_RETRY)
+}
+
+/// What a temperature sensor measures, judged by its name alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SensorKind {
+    /// A CPU sensor that is the whole package's: "CPU Package", AMD's Tctl/Tdie.
+    CpuPackage,
+    /// A CPU sensor of a part of it: "CPU Core #3", "Tccd1", or just "CPU".
+    Cpu,
+    Gpu,
+    /// Everything else, which includes every ACPI thermal zone. Windows gives sysinfo exactly
+    /// one reading, the first zone, labelled "Computer": a zone near the chipset or the chassis
+    /// that the firmware decided to expose, not the processor's temperature.
+    Other,
+}
+
+/// Names a sensor as the CPU's or the GPU's only when its own label or id says so. A figure
+/// attributed on a guess is a wrong number with a "CPU" caption: a thermal zone that happens to
+/// be the hottest thing found is not the CPU temperature, and the tray and the overview would
+/// show it as one.
+fn classify_sensor(id: &str, label: &str) -> SensorKind {
+    let text = format!("{label} {id}").to_lowercase();
+    // Words, with their trailing digits cut off, so that "core0" and "Core #1" are the word
+    // "core" while "Corsair" and "Encore" are not.
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|word| word.trim_end_matches(|c: char| c.is_ascii_digit()))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let has_word = |wanted: &[&str]| words.iter().any(|word| wanted.contains(word));
+
+    let package = text.contains("tctl") || text.contains("tdie") || has_word(&["package"]);
+    let cpu = text.contains("cpu") || text.contains("tccd");
+    let gpu = text.contains("gpu") || has_word(&["nvidia", "geforce", "radeon", "graphics"]);
+
+    if gpu {
+        // "GPU Core" is the graphics chip's, not a CPU core; a name that claims both is nobody's.
+        return if cpu { SensorKind::Other } else { SensorKind::Gpu };
+    }
+    if package {
+        SensorKind::CpuPackage
+    } else if cpu || has_word(&["core"]) {
+        SensorKind::Cpu
+    } else {
+        SensorKind::Other
+    }
+}
+
+/// The hottest of `readings`, None when there is none.
+fn hottest_of(readings: impl Iterator<Item = f64>) -> Option<f64> {
+    readings.fold(None, |best, celsius| match best {
+        Some(current) if current >= celsius => Some(current),
+        _ => Some(celsius),
+    })
+}
+
+/// Turns the sensors that answered into the metric:
+/// - `cpu_celsius` is the package sensor when there is one, else the hottest CPU-named sensor,
+///   else None — never a zone that merely is the hottest thing found;
+/// - `gpu_celsius` is the hottest GPU-named sensor;
+/// - `hottest` is the hottest of everything, which is what the heat alert and the history chart
+///   use, and is not claimed to be the CPU's;
+/// - availability: no sensor at all is the usual unprivileged WMI refusal (needs elevation);
+///   sensors but none of them the CPU's is partial; the CPU's own is ok.
+fn summarize_temperature(sensors: Vec<SensorReading>) -> TemperatureMetric {
+    let kinds: Vec<SensorKind> = sensors.iter().map(|s| classify_sensor(&s.id, &s.label)).collect();
+    let of_kind = |wanted: &[SensorKind]| {
+        hottest_of(
             sensors
                 .iter()
-                .find(|s| s.label.to_lowercase().contains(needle) || s.id.to_lowercase().contains(needle))
-                .map(|s| s.celsius)
-        };
-        let hottest = sensors.iter().map(|s| s.celsius).fold(0f64, f64::max);
+                .zip(&kinds)
+                .filter(|(_, kind)| wanted.contains(kind))
+                .map(|(sensor, _)| sensor.celsius),
+        )
+    };
+    let cpu_celsius = of_kind(&[SensorKind::CpuPackage]).or_else(|| of_kind(&[SensorKind::Cpu]));
 
-        TemperatureMetric {
-            cpu_celsius: find("cpu").or_else(|| (hottest > 0.0).then_some(hottest)),
-            gpu_celsius: find("gpu"),
-            hottest: (hottest > 0.0).then_some(hottest),
-            availability: if sensors.is_empty() {
-                Availability::NeedsElevation
-            } else {
-                Availability::Partial
-            },
-            sensors,
-            history: Vec::new(),
-        }
+    TemperatureMetric {
+        cpu_celsius,
+        gpu_celsius: of_kind(&[SensorKind::Gpu]),
+        hottest: hottest_of(sensors.iter().map(|s| s.celsius)),
+        availability: if sensors.is_empty() {
+            Availability::NeedsElevation
+        } else if cpu_celsius.is_some() {
+            Availability::Ok
+        } else {
+            Availability::Partial
+        },
+        sensors,
+        history: Vec::new(),
     }
 }
 
@@ -1040,6 +1131,115 @@ mod tests {
         if let Some(usage) = query.value(index) {
             assert!((0.0..=100.0).contains(&usage), "{usage} is not a share");
         }
+    }
+
+    fn sensor(label: &str, celsius: f64) -> SensorReading {
+        SensorReading { id: label.to_string(), label: label.to_string(), celsius }
+    }
+
+    // The only sensor sysinfo has on Windows is the first ACPI thermal zone, named "Computer".
+    // It used to be shown as the CPU temperature, in the tray included, because `cpu_celsius`
+    // fell back to the hottest sensor of any kind.
+    #[test]
+    fn a_thermal_zone_is_not_the_cpu_temperature() {
+        let metric = summarize_temperature(vec![sensor("Computer", 48.0)]);
+        assert_eq!(metric.cpu_celsius, None);
+        assert_eq!(metric.gpu_celsius, None);
+        assert_eq!(metric.hottest, Some(48.0), "it is still the hottest thing there is");
+        assert_eq!(metric.availability, Availability::Partial);
+        assert_eq!(metric.sensors.len(), 1);
+
+        let acpi = SensorReading {
+            id: r"ACPI\ThermalZone\TZ00_0".to_string(),
+            label: "Thermal Zone 0".to_string(),
+            celsius: 51.0,
+        };
+        assert_eq!(summarize_temperature(vec![acpi]).cpu_celsius, None);
+    }
+
+    #[test]
+    fn no_sensor_at_all_needs_elevation_and_reads_as_nothing() {
+        let metric = summarize_temperature(Vec::new());
+        assert_eq!(metric.availability, Availability::NeedsElevation);
+        assert_eq!(metric.cpu_celsius, None);
+        assert_eq!(metric.gpu_celsius, None);
+        assert_eq!(metric.hottest, None);
+    }
+
+    #[test]
+    fn the_cpu_headline_is_the_package_then_the_hottest_core() {
+        let metric = summarize_temperature(vec![
+            sensor("CPU Core #1", 61.0),
+            sensor("CPU Package", 66.0),
+            sensor("CPU Core #2", 71.0),
+            sensor("Computer", 80.0),
+        ]);
+        assert_eq!(metric.cpu_celsius, Some(66.0), "the package, not the hottest core");
+        assert_eq!(metric.hottest, Some(80.0));
+        assert_eq!(metric.availability, Availability::Ok);
+
+        let cores = summarize_temperature(vec![sensor("Core 0", 55.0), sensor("Core 1", 62.0), sensor("Computer", 90.0)]);
+        assert_eq!(cores.cpu_celsius, Some(62.0));
+        assert_eq!(cores.hottest, Some(90.0));
+    }
+
+    #[test]
+    fn the_names_of_cpu_sensors() {
+        for label in ["CPU", "CPU Package", "Intel CPU #1", "Core #0", "Core 7", "Tctl", "Tdie", "Core (Tctl/Tdie)", "Tccd1", "Package id 0", "cpu_thermal"] {
+            let kind = classify_sensor(label, label);
+            assert!(matches!(kind, SensorKind::Cpu | SensorKind::CpuPackage), "{label}: {kind:?}");
+        }
+        assert_eq!(classify_sensor("CPU Package", "CPU Package"), SensorKind::CpuPackage);
+        assert_eq!(classify_sensor("Tctl", "Tctl"), SensorKind::CpuPackage);
+        assert_eq!(classify_sensor("Core 3", "Core 3"), SensorKind::Cpu);
+        // The label can be generic and the id carry the name, or the other way round.
+        assert_eq!(classify_sensor("coretemp-package-0", "Temp 1"), SensorKind::CpuPackage);
+        assert_eq!(classify_sensor("sensor", "CPU Temperature"), SensorKind::Cpu);
+    }
+
+    #[test]
+    fn a_refused_wmi_query_is_repeated_once_a_minute_not_once_a_second() {
+        assert!(should_ask_sensors(false, None), "the first ask is always made");
+        assert!(!should_ask_sensors(false, Some(Duration::from_secs(1))));
+        assert!(!should_ask_sensors(false, Some(Duration::from_secs(59))));
+        assert!(should_ask_sensors(false, Some(Duration::from_secs(60))));
+        // Sensors that answered are read on every tick.
+        assert!(should_ask_sensors(true, Some(Duration::from_millis(900))));
+    }
+
+    #[test]
+    fn a_sensor_is_a_cpu_only_when_its_name_says_so() {
+        for label in [
+            "Computer",
+            "Thermal Zone 0",
+            r"ACPI\ThermalZone\TZ00_0",
+            "System",
+            "Motherboard",
+            "Chipset",
+            "Composite",
+            "Corsair MP600 PRO",
+            "Encore SSD",
+            "Ambient",
+            "Battery",
+            "",
+        ] {
+            assert_eq!(classify_sensor(label, label), SensorKind::Other, "{label:?}");
+        }
+    }
+
+    #[test]
+    fn graphics_sensors_are_not_cpu_cores() {
+        for label in ["GPU Core", "GPU Hot Spot", "NVIDIA GeForce RTX 4070", "AMD Radeon Graphics", "Intel Graphics"] {
+            assert_eq!(classify_sensor(label, label), SensorKind::Gpu, "{label}");
+        }
+        // A name that claims both belongs to neither.
+        assert_eq!(classify_sensor("CPU GPU Package", "CPU GPU Package"), SensorKind::Other);
+
+        let metric = summarize_temperature(vec![sensor("GPU Core", 58.0), sensor("GPU Hot Spot", 66.0)]);
+        assert_eq!(metric.cpu_celsius, None);
+        assert_eq!(metric.gpu_celsius, Some(66.0));
+        assert_eq!(metric.hottest, Some(66.0));
+        assert_eq!(metric.availability, Availability::Partial);
     }
 
     #[test]
