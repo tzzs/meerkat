@@ -157,10 +157,24 @@ export const ipc = {
   },
 };
 
+/**
+ * The label of the window this script runs in ("main" or "panel").
+ *
+ * The backend sends a tick only to the window somebody can see (`emit_to`). A listener that
+ * registers for the default "any" target hears every `emit_to`, whoever it was addressed to, so
+ * the window nobody is looking at would still parse and render each tick meant for the other
+ * one. A listener scoped to its own label ignores those, and still hears global broadcasts such
+ * as `settings-changed`.
+ */
+async function ownLabel(): Promise<string> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  return getCurrentWindow().label;
+}
+
 export async function listenMetrics(handler: (snapshot: Snapshot) => void): Promise<() => void> {
   if (inTauri) {
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<Snapshot>("metrics", (event) => handler(event.payload));
+    return listen<Snapshot>("metrics", (event) => handler(event.payload), { target: await ownLabel() });
   }
   const timer = window.setInterval(async () => {
     const next = await fixture<Snapshot>("latest.json");
@@ -180,7 +194,7 @@ export async function listenNavigate(handler: (destination: string) => void): Pr
 export async function listenEvent<T = unknown>(name: string, handler: (payload: T) => void): Promise<() => void> {
   if (!inTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<T>(name, (event) => handler(event.payload));
+  return listen<T>(name, (event) => handler(event.payload), { target: await ownLabel() });
 }
 
 function emptySeries(metric: string, rangeSeconds: number): HistorySeries {
