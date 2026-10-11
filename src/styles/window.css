@@ -992,6 +992,12 @@
 .mix-row.inactive {
   opacity: 0.55;
 }
+/* Why Windows refused the last change, under the row it was made on. */
+.mix-error {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--m-danger);
+}
 .mix-name {
   font-size: 12.5px;
   display: flex;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ipc } from "../lib/ipc";
 import { visibleSections } from "../lib/sections";
 import { useStore } from "../lib/store";
@@ -28,15 +28,24 @@ export function SoundTab() {
 
   useEffect(() => {
     let alive = true;
+    // One read at a time. A read that took longer than a tick (the audio service busy, a device
+    // being enumerated) used to be joined by one more every 250 ms, each queued behind the last.
+    let reading = false;
     const load = async () => {
-      if (dragging.current) return;
-      const next = await ipc.audioState();
-      if (!alive) return;
-      if (next) {
-        setAudio(next);
-        setFailure(null);
-      } else {
-        setFailure(t("state.noData"));
+      // Nobody is looking at a hidden window's meters, and a hand on a fader owns the values.
+      if (dragging.current || reading || document.visibilityState === "hidden") return;
+      reading = true;
+      try {
+        const next = await ipc.audioState();
+        if (!alive) return;
+        if (next) {
+          setAudio(next);
+          setFailure(null);
+        } else {
+          setFailure(t("state.noData"));
+        }
+      } finally {
+        reading = false;
       }
     };
     void load();
@@ -44,9 +53,11 @@ export function SoundTab() {
     // second looks broken even when it is accurate. Measured cost of one read is ~10ms on the
     // main thread, so this is about 4% of it while the tab is open and none at all otherwise.
     const timer = window.setInterval(load, 250);
+    document.addEventListener("visibilitychange", load);
     return () => {
       alive = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", load);
     };
   }, [t]);
 
@@ -151,12 +162,53 @@ function MixHead() {
  * thumb stays where the user left it until something else changes it, which is the honest
  * reading of "we asked and Windows did not do it".
  */
-function useOptimisticVolume(polled: number): { shown: number; setLocal: (n: number) => void } {
+function useOptimisticVolume(polled: number): { shown: number; setLocal: (n: number) => void; clear: () => void } {
   const [local, setLocal] = useState<number | null>(null);
   useEffect(() => {
     if (local !== null && Math.abs(polled - local) < 0.006) setLocal(null);
   }, [polled, local]);
-  return { shown: local ?? polled, setLocal };
+  const clear = useCallback(() => setLocal(null), []);
+  return { shown: local ?? polled, setLocal, clear };
+}
+
+/**
+ * The same for the mute switch. It matters beyond the flicker: a fader dragged just after a
+ * click on mute would otherwise write the polled state, which has not caught up, and undo it.
+ */
+function useOptimisticMute(polled: boolean): { shown: boolean; set: (muted: boolean) => void; clear: () => void } {
+  const [local, setLocal] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (local !== null && local === polled) setLocal(null);
+  }, [polled, local]);
+  const clear = useCallback(() => setLocal(null), []);
+  return { shown: local ?? polled, set: setLocal, clear };
+}
+
+/** A message that goes away by itself: a refused write is worth a few seconds, not a fixture. */
+function useTransientMessage(ms = 6000): [string | null, (message: string) => void] {
+  const [message, setMessage] = useState<string | null>(null);
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const show = useCallback(
+    (next: string) => {
+      window.clearTimeout(timer.current);
+      setMessage(next);
+      timer.current = window.setTimeout(() => setMessage(null), ms);
+    },
+    [ms],
+  );
+  return [message, show];
+}
+
+/** Why the last change to this row was refused, under the row it belongs to. */
+function RowFailure({ message }: { message: string | null }) {
+  const { t } = useStore();
+  if (!message) return null;
+  return (
+    <span className="mix-error" role="alert">
+      {t("sound.writeFailed")} <span className="faint">{message}</span>
+    </span>
+  );
 }
 
 /**
@@ -236,14 +288,19 @@ function EndpointRow({
   hold: Hold;
 }) {
   const { t } = useStore();
-  const { shown, setLocal } = useOptimisticVolume(endpoint.volume);
+  const volume = useOptimisticVolume(endpoint.volume);
+  const mute = useOptimisticMute(endpoint.muted);
+  const [failure, showFailure] = useTransientMessage();
+  // A refused write has not changed anything, so the row goes back to what Windows reports and
+  // says why, instead of leaving a thumb or a switch where nothing took effect.
+  const refused = (error: string | null) => {
+    if (error === null) return;
+    volume.clear();
+    mute.clear();
+    showFailure(error);
+  };
   const send = useWriteCoalescer(async (next) => {
-    const error = await ipc.audioSetEndpoint(endpoint.id, next, endpoint.muted);
-    if (typeof error === "string") {
-      // The command returns Err as a rejected invoke; surface it rather than leaving the
-      // slider to silently snap back.
-      console.error(error);
-    }
+    refused(await ipc.audioSetEndpoint(endpoint.id, next, mute.shown));
   });
   return (
     <div className="mix-row">
@@ -253,28 +310,33 @@ function EndpointRow({
         {endpoint.isDefault && <Pill tone="accent">{t("sound.default")}</Pill>}
       </span>
       <Fader
-        value={shown}
+        value={volume.shown}
         peak={endpoint.peak}
         label={t("sound.master")}
         hold={hold}
         onInput={(next) => {
-          setLocal(next);
+          volume.setLocal(next);
           send(next);
         }}
       />
-      <Hint label={endpoint.muted ? t("sound.muted") : t("sound.master")}>
+      <Hint label={mute.shown ? t("sound.muted") : t("sound.master")}>
         <Button
           variant="mute"
-          on={endpoint.muted}
-          aria-label={endpoint.muted ? t("sound.muted") : t("sound.master")}
+          on={mute.shown}
+          aria-label={mute.shown ? t("sound.muted") : t("sound.master")}
           onClick={() => {
-            void ipc.audioSetEndpoint(endpoint.id, endpoint.volume, !endpoint.muted);
+            // The volume sent is the one on the slider, which is not the polled one while a
+            // drag is still being written.
+            const next = !mute.shown;
+            mute.set(next);
+            void ipc.audioSetEndpoint(endpoint.id, volume.shown, next).then(refused);
           }}
         >
-          {endpoint.muted ? "⊘" : "♪"}
+          {mute.shown ? "⊘" : "♪"}
         </Button>
       </Hint>
-      <span className="mix-value num">{Math.round(shown * 100)}%</span>
+      <span className="mix-value num">{Math.round(volume.shown * 100)}%</span>
+      <RowFailure message={failure} />
     </div>
   );
 }
@@ -291,10 +353,18 @@ function SessionRow({
   // the user actually sees, so prefer that over `deltaforceclient-win64-shipping.exe`.
   const owner = snapshot?.apps.find((app) => app.pids.includes(session.pid));
   const name = owner?.name?.trim() || session.displayName?.trim() || t("label.pidName", { pid: session.pid });
-  const { shown, setLocal } = useOptimisticVolume(session.volume);
-  const send = useWriteCoalescer((next) =>
-    ipc.audioSetVolume(session.role, session.id, session.pid, next, session.muted),
-  );
+  const volume = useOptimisticVolume(session.volume);
+  const mute = useOptimisticMute(session.muted);
+  const [failure, showFailure] = useTransientMessage();
+  const refused = (error: string | null) => {
+    if (error === null) return;
+    volume.clear();
+    mute.clear();
+    showFailure(error);
+  };
+  const send = useWriteCoalescer(async (next) => {
+    refused(await ipc.audioSetVolume(session.role, session.id, session.pid, next, mute.shown));
+  });
   return (
     <div className={`mix-row ${session.active ? "" : "inactive"}`}>
       <AppIcon name={name} seed={String(session.pid)} exePath={owner?.exePath || undefined} />
@@ -303,28 +373,31 @@ function SessionRow({
         {!session.active && <Pill>{t("label.standby")}</Pill>}
       </span>
       <Fader
-        value={shown}
+        value={volume.shown}
         peak={session.peak}
         label={`${t("sound.master")} ${name}`}
         hold={hold}
         onInput={(next) => {
-          setLocal(next);
+          volume.setLocal(next);
           send(next);
         }}
       />
-      <Hint label={session.muted ? t("sound.muted") : t("sound.unmute")}>
+      <Hint label={mute.shown ? t("sound.muted") : t("sound.unmute")}>
         <Button
           variant="mute"
-          on={session.muted}
-          aria-label={session.muted ? t("sound.muted") : t("sound.unmute")}
+          on={mute.shown}
+          aria-label={mute.shown ? t("sound.muted") : t("sound.unmute")}
           onClick={() => {
-            void ipc.audioSetVolume(session.role, session.id, session.pid, session.volume, !session.muted);
+            const next = !mute.shown;
+            mute.set(next);
+            void ipc.audioSetVolume(session.role, session.id, session.pid, volume.shown, next).then(refused);
           }}
         >
-          {session.muted ? "⊘" : "♪"}
+          {mute.shown ? "⊘" : "♪"}
         </Button>
       </Hint>
-      <span className="mix-value num">{Math.round(shown * 100)}%</span>
+      <span className="mix-value num">{Math.round(volume.shown * 100)}%</span>
+      <RowFailure message={failure} />
     </div>
   );
 }

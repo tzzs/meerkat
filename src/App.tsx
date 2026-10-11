@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { ipc, listenNavigate } from "./lib/ipc";
-import { isTabId, openingTab, readLastTab, writeLastTab } from "./lib/navigation";
+import { isTabId, openingTab, readLastTab, shortcutHint, tabForShortcut, writeLastTab } from "./lib/navigation";
 import { subscribe } from "./lib/subscribe";
 import { TAB_LABEL } from "./i18n";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
@@ -75,6 +75,11 @@ export default function App() {
     [],
   );
 
+  // The tabs the bar shows, in its order: what Ctrl+digit counts along.
+  const tabs = settings.window.tabs.filter((x) => x.visible && !(x.id === "battery" && powerMode === "hidden"));
+  const shownIds = tabs.map((x) => x.id);
+  const shownKey = shownIds.join(" ");
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
@@ -90,29 +95,24 @@ export default function App() {
         if (event.defaultPrevented || pendingQuit) return;
         if (page) setPage(null);
       }
-      const digits = "1234567";
-      if ((event.ctrlKey || event.metaKey) && digits.includes(event.key)) {
-        const visible = settings.window.tabs.filter(
-          (x) => x.visible && !(x.id === "battery" && powerMode === "hidden"),
-        );
-        const target = visible[Number(event.key) - 1];
+      if (event.ctrlKey || event.metaKey) {
+        const target = tabForShortcut(event.key, shownIds);
         if (target) {
           event.preventDefault();
           setPage(null);
-          setTab(target.id);
+          setTab(target);
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [settings.window.tabs, page, pendingQuit]);
+  }, [shownKey, page, pendingQuit]);
 
   useEffect(() => {
     // Being left on a tab that the hardware just stopped justifying looks like a broken window.
     if (powerMode === "hidden" && tab === "battery") setTab("overview");
   }, [powerMode, tab]);
 
-  const tabs = settings.window.tabs.filter((x) => x.visible && !(x.id === "battery" && powerMode === "hidden"));
   const uptime = snapshot ? formatDuration(snapshot.machine.uptimeSeconds, units.locale, { short: true }) : "—";
 
   const summary = useMemo(() => {
@@ -222,11 +222,22 @@ export default function App() {
 
       <div className="tabbar">
         <TabsList>
-          {tabs.map((x) => (
-            <TabsTrigger key={x.id} value={x.id}>
-              {t(x.id === "battery" && powerMode === "thermal" ? "metric.temperature" : TAB_LABEL[x.id] ?? "tab.overview")}
-            </TabsTrigger>
-          ))}
+          {tabs.map((x, index) => {
+            const trigger = (
+              <TabsTrigger value={x.id}>
+                {t(x.id === "battery" && powerMode === "thermal" ? "metric.temperature" : TAB_LABEL[x.id] ?? "tab.overview")}
+              </TabsTrigger>
+            );
+            // Ctrl+1 to Ctrl+8 pick the tab at that place in the bar, so the bar says which.
+            const hint = shortcutHint(index);
+            return hint ? (
+              <Hint key={x.id} label={hint}>
+                {trigger}
+              </Hint>
+            ) : (
+              <Fragment key={x.id}>{trigger}</Fragment>
+            );
+          })}
         </TabsList>
         <span className={`status ${connected ? "live" : "off"}`}>
           {connected ? t("status.live") : t("status.waiting")}

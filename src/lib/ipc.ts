@@ -94,10 +94,26 @@ export const ipc = {
   copyReport: async () => (await call<string>("copy_report")) ?? "",
   version: async () => (await call<string>("app_version")) ?? "dev",
   audioState: () => call<AudioState>("audio_state"),
-  audioSetVolume: (role: string, id: number, pid: number, volume: number, muted: boolean) =>
-    call<string>("audio_set_volume", { role, id, pid, volume, muted }),
-  audioSetEndpoint: (endpointId: string, volume: number, muted: boolean) =>
-    call<string>("audio_set_endpoint", { endpointId, volume, muted }),
+  /**
+   * The mixer's writes answer with the reason Windows refused them (a device that went away, a
+   * session that just ended), or null when it took them. They went through `call`, which folds a
+   * failure into the same null a success has, so a refused change was indistinguishable from an
+   * accepted one and the slider simply sat where it was left.
+   */
+  audioSetVolume: async (
+    role: string,
+    id: number,
+    pid: number,
+    volume: number,
+    muted: boolean,
+  ): Promise<string | null> => {
+    const result = await attempt<null>("audio_set_volume", { role, id, pid, volume, muted });
+    return result.ok ? null : result.error;
+  },
+  audioSetEndpoint: async (endpointId: string, volume: number, muted: boolean): Promise<string | null> => {
+    const result = await attempt<null>("audio_set_endpoint", { endpointId, volume, muted });
+    return result.ok ? null : result.error;
+  },
   /**
    * A real application icon as a data URL, or null when the executable has no readable icon.
    * Callers cache per path: extraction makes the shell load the module, so the first ask for

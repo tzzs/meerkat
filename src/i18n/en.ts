@@ -20,6 +20,7 @@ const en = {
   "sound.unmute": "Mute this",
   "sound.levelVolume": "Level · Volume",
   "sound.micHelp": "Windows reports which apps have a microphone open, not which ones are capturing sound at this instant. Per-app input volume is not exposed by the operating system.",
+  "sound.writeFailed": "Windows did not accept that change.",
   "sound.persistHelp": "Windows restores an app's volume within a sign-in session by itself. Pulse keeps its own record so a setting survives a reboot or an audio-service restart.",
   "tab.settings": "Settings",
 
