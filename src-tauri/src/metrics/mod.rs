@@ -355,25 +355,36 @@ impl Sampler {
         let mut seen: HashMap<String, (u64, u64)> = HashMap::new();
         let (mut total_read, mut total_write) = (0f64, 0f64);
 
-        for disk in self.disks.iter() {
+        // Previous counters are remembered per volume, under a key that is unique within the
+        // tick. The volume's label is not that: it is empty on many machines and repeated on
+        // others, and every volume sharing one overwrote the others' counters, so each rate was
+        // taken against some other volume's totals.
+        let identities: Vec<(String, String)> = self
+            .disks
+            .iter()
+            .map(|disk| {
+                (
+                    disk.mount_point().to_string_lossy().to_string(),
+                    disk.name().to_string_lossy().to_string(),
+                )
+            })
+            .collect();
+        let keys = volume_keys(&identities);
+
+        for (disk, key) in self.disks.iter().zip(keys) {
             let name = disk.name().to_string_lossy().to_string();
             let mount = disk.mount_point().to_string_lossy().to_string();
             let usage = disk.usage();
-            let (read_rate, write_rate) = match self.previous_disk.get(&name) {
-                Some((previous_read, previous_write)) => (
-                    usage.total_read_bytes.saturating_sub(*previous_read) as f64 / elapsed,
-                    usage.total_written_bytes.saturating_sub(*previous_write) as f64 / elapsed,
-                ),
-                None => (0.0, 0.0),
-            };
+            let counters = (usage.total_read_bytes, usage.total_written_bytes);
+            let (read_rate, write_rate) = rate_between(self.previous_disk.get(&key).copied(), counters, elapsed);
             total_read += read_rate;
             total_write += write_rate;
-            seen.insert(name.clone(), (usage.total_read_bytes, usage.total_written_bytes));
+            seen.insert(key.clone(), counters);
 
             let total = disk.total_space();
             let free = disk.available_space();
             volumes.push(VolumeInfo {
-                id: mount.clone(),
+                id: key,
                 name,
                 mount_point: mount.clone(),
                 file_system: disk.file_system().to_string_lossy().to_string(),
@@ -662,6 +673,37 @@ fn summarize_temperature(sensors: Vec<SensorReading>) -> TemperatureMetric {
         },
         sensors,
         history: Vec::new(),
+    }
+}
+
+/// Keys that tell the volumes of one tick apart: the mount point, which Windows keeps unique;
+/// for a volume without one, its label; and for anything still repeated, `#n` after the key
+/// in list order, so the key stays the same from one tick to the next while the list does.
+/// Each `(mount point, label)` pair gets one key, in order.
+fn volume_keys(volumes: &[(String, String)]) -> Vec<String> {
+    let mut used: HashMap<String, usize> = HashMap::new();
+    volumes
+        .iter()
+        .map(|(mount, label)| {
+            let base = if mount.is_empty() { format!("label:{label}") } else { mount.clone() };
+            let seen = used.entry(base.clone()).or_insert(0);
+            let key = if *seen == 0 { base } else { format!("{base}#{seen}") };
+            *seen += 1;
+            key
+        })
+        .collect()
+}
+
+/// Bytes per second between two readings of a cumulative counter pair `(read, written)`.
+/// Nothing before is no rate to give, so zero; a counter that went backwards (a volume
+/// that came back, a driver that restarted) is a restart, not negative traffic.
+fn rate_between(previous: Option<(u64, u64)>, now: (u64, u64), elapsed: f64) -> (f64, f64) {
+    match previous {
+        Some((read, written)) if elapsed > 0.0 => (
+            now.0.saturating_sub(read) as f64 / elapsed,
+            now.1.saturating_sub(written) as f64 / elapsed,
+        ),
+        _ => (0.0, 0.0),
     }
 }
 
@@ -1131,6 +1173,61 @@ mod tests {
         if let Some(usage) = query.value(index) {
             assert!((0.0..=100.0).contains(&usage), "{usage} is not a share");
         }
+    }
+
+    #[test]
+    fn volumes_are_told_apart_by_mount_point_not_by_label() {
+        let keys = volume_keys(&[
+            ("C:\\".to_string(), "".to_string()),
+            ("D:\\".to_string(), "".to_string()),
+            ("E:\\".to_string(), "Data".to_string()),
+        ]);
+        assert_eq!(keys, vec!["C:\\", "D:\\", "E:\\"]);
+    }
+
+    #[test]
+    fn a_repeated_or_missing_mount_point_still_gets_a_key_of_its_own() {
+        let pair = |mount: &str, label: &str| (mount.to_string(), label.to_string());
+        let list = [pair("C:\\", ""), pair("C:\\", ""), pair("", "Backup"), pair("", "Backup"), pair("", "")];
+        let keys = volume_keys(&list);
+        assert_eq!(keys, vec!["C:\\", "C:\\#1", "label:Backup", "label:Backup#1", "label:"]);
+        let mut sorted = keys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), keys.len(), "no two volumes share a key");
+        // The same list gives the same keys, which is what lets a counter be found next tick.
+        assert_eq!(volume_keys(&list), keys);
+    }
+
+    #[test]
+    fn a_rate_is_the_counter_difference_over_the_time_between() {
+        assert_eq!(rate_between(Some((1_000, 4_000)), (3_000, 4_500), 2.0), (1_000.0, 250.0));
+        assert_eq!(rate_between(Some((10, 10)), (10, 10), 1.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn there_is_no_rate_without_a_previous_reading_or_a_time_between() {
+        assert_eq!(rate_between(None, (9_000, 9_000), 1.0), (0.0, 0.0));
+        assert_eq!(rate_between(Some((0, 0)), (9_000, 9_000), 0.0), (0.0, 0.0));
+        // A counter that went backwards is a restart, not negative traffic.
+        assert_eq!(rate_between(Some((9_000, 9_000)), (100, 100), 1.0), (0.0, 0.0));
+    }
+
+    // Two volumes without a label used to share one remembered counter pair, so each took its
+    // rate against the other's totals: a volume that had read 6000 bytes in the tick showed as
+    // 1000 or as its own whole lifetime, depending on the iteration order.
+    #[test]
+    fn two_volumes_with_the_same_label_keep_their_own_counters() {
+        let identities = [("C:\\".to_string(), "".to_string()), ("D:\\".to_string(), "".to_string())];
+        let keys = volume_keys(&identities);
+        let mut previous: HashMap<String, (u64, u64)> = HashMap::new();
+        previous.insert(keys[0].clone(), (1_000_000, 0));
+        previous.insert(keys[1].clone(), (50_000_000, 0));
+
+        let c = rate_between(previous.get(&keys[0]).copied(), (1_006_000, 0), 2.0);
+        let d = rate_between(previous.get(&keys[1]).copied(), (50_000_400, 0), 2.0);
+        assert_eq!(c, (3_000.0, 0.0));
+        assert_eq!(d, (200.0, 0.0));
     }
 
     fn sensor(label: &str, celsius: f64) -> SensorReading {
