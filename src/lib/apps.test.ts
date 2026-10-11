@@ -7,6 +7,7 @@ import {
   holdOrder,
   orderApps,
   processName,
+  rowSignature,
   serviceHostRole,
   visibleWindowTitles,
 } from "./apps";
@@ -121,6 +122,36 @@ describe("visibleWindowTitles", () => {
       { title: " ", visible: true, pid: 1, hwnd: 4 },
     ];
     expect(visibleWindowTitles({ windows })).toEqual(["Inbox"]);
+  });
+});
+
+describe("rowSignature", () => {
+  const base = app("c:\\a\\a.exe", 100, {
+    exePath: "c:\\a\\a.exe",
+    processCount: 3,
+    listeningPorts: [80, 443],
+    windows: [{ title: "Doc", pid: 1, visible: true, hwnd: 1 }],
+  });
+
+  // Every sample builds new AppInfo objects, so the row can only be skipped by what it draws.
+  it("does not move with the figures, which a row receives already formatted", () => {
+    const later = { ...base, cpuPercent: 12, memoryBytes: 999, readBytesPerSecond: 5, connections: 9 };
+    expect(rowSignature(later)).toBe(rowSignature(base));
+  });
+
+  it("moves with anything the row draws or hands to its menu", () => {
+    const before = rowSignature(base);
+    expect(rowSignature({ ...base, processCount: 4 })).not.toBe(before);
+    expect(rowSignature({ ...base, listeningPorts: [80] })).not.toBe(before);
+    expect(rowSignature({ ...base, kind: "service" })).not.toBe(before);
+    expect(rowSignature({ ...base, name: "Renamed" })).not.toBe(before);
+    expect(rowSignature({ ...base, exePath: "c:\\b\\b.exe" })).not.toBe(before);
+    expect(rowSignature({ ...base, windows: [{ title: "Other", pid: 1, visible: true, hwnd: 1 }] })).not.toBe(before);
+  });
+
+  it("ignores windows nobody can see, as the hover list does", () => {
+    const hidden = { ...base, windows: [...base.windows, { title: "Tool", pid: 1, visible: false, hwnd: 2 }] };
+    expect(rowSignature(hidden)).toBe(rowSignature(base));
   });
 });
 

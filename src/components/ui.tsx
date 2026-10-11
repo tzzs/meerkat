@@ -36,6 +36,7 @@ import {
   canQuit,
   holdOrder,
   orderApps,
+  rowSignature,
   visibleWindowTitles,
   type AppMetric,
 } from "../lib/apps";
@@ -141,19 +142,27 @@ export function useHeldCeiling(observed: number, holdSamples = 6): number {
  * `ceiling` fixes the top of the scale, which is right for a percentage: fitted to the data, an
  * idle machine's 3% filled the card. Without it the scale follows the data with a held ceiling.
  */
-export function Chart({
-  values,
-  ceiling,
-  color,
-  variant = "area",
-  height = 56,
-}: {
+interface ChartProps {
   values: number[];
   ceiling?: number;
   color: string;
   variant?: "area" | "line" | "bars";
   height?: number;
-}) {
+}
+
+/**
+ * The samples arrive as a new array every second, so the array's identity says nothing; a flat
+ * series (an idle disk, a GPU at zero) is the same drawing and is not drawn again.
+ */
+function sameChart(a: ChartProps, b: ChartProps): boolean {
+  if (a.ceiling !== b.ceiling || a.color !== b.color || a.variant !== b.variant || a.height !== b.height) return false;
+  if (a.values === b.values) return true;
+  if (a.values.length !== b.values.length) return false;
+  for (let i = 0; i < a.values.length; i++) if (a.values[i] !== b.values[i]) return false;
+  return true;
+}
+
+export const Chart = memo(function Chart({ values, ceiling, color, variant = "area", height = 56 }: ChartProps) {
   const width = 240;
   const held = useHeldCeiling(values.length > 0 ? Math.max(...values) : 0);
   const top = ceiling ?? held;
@@ -191,7 +200,7 @@ export function Chart({
       <path d={line} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
     </svg>
   );
-}
+}, sameChart);
 
 /**
  * A stretch of history on its real time axis (see buildSeries): each run of buckets is its own
@@ -305,7 +314,13 @@ export function useTweenedNumber(value: number, ms = 420, ease = true): number {
 
   useEffect(() => {
     if (value === position.current) return;
-    if (!ease || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    // A window that is hidden has no frames to ease across: rAF does not run there, and the
+    // animation would sit part way until the window came back. It lands on the value at once.
+    if (
+      !ease ||
+      document.visibilityState === "hidden" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
       position.current = value;
       setShown(value);
       return;
@@ -357,14 +372,14 @@ export function Tween({
   );
 }
 
-export function Meter({ ratio, color }: { ratio: number; color: string }) {
+export const Meter = memo(function Meter({ ratio, color }: { ratio: number; color: string }) {
   const clamped = Math.min(1, Math.max(0, Number.isFinite(ratio) ? ratio : 0));
   return (
     <div className="meter">
       <div className="meter-fill" style={{ transform: `scaleX(${clamped})`, background: color }} />
     </div>
   );
-}
+});
 
 export function AvailabilityNote({
   state,
@@ -420,7 +435,7 @@ const KIND_TONE: Record<AppInfo["kind"], string> = {
   packaged: "",
 };
 
-export function Monogram({ name, seed }: { name: string; seed: string }) {
+export const Monogram = memo(function Monogram({ name, seed }: { name: string; seed: string }) {
   const hue = useMemo(() => {
     let h = 0;
     for (const c of seed) h = (h * 31 + c.charCodeAt(0)) % 360;
@@ -434,7 +449,7 @@ export function Monogram({ name, seed }: { name: string; seed: string }) {
       {(name.trim()[0] ?? "?").toUpperCase()}
     </span>
   );
-}
+});
 
 export type { AppMetric } from "../lib/apps";
 export { appValue } from "../lib/apps";
@@ -465,7 +480,7 @@ function loadIcon(exePath: string, size: number): Promise<string | null> {
  * The fallback is not decoration: a process whose executable cannot be read has no icon to
  * ask for, and a row with an empty leading column reads as a row that failed to load.
  */
-export function AppIcon({
+export const AppIcon = memo(function AppIcon({
   name,
   seed,
   exePath,
@@ -509,10 +524,12 @@ export function AppIcon({
       draggable={false}
     />
   );
-}
+});
 
 interface RowProps {
   app: AppInfo;
+  /** What the row draws of `app` apart from the figures (see rowSignature). */
+  signature: string;
   index: number;
   offset: number;
   label: string;
@@ -525,12 +542,46 @@ interface RowProps {
   onQuit: (app: AppInfo) => void;
 }
 
+/** Rows are compared by what they draw, since every sample brings new `app` objects (see AppRow). */
+function sameRow(a: RowProps, b: RowProps): boolean {
+  return (
+    a.signature === b.signature &&
+    a.index === b.index &&
+    a.offset === b.offset &&
+    a.label === b.label &&
+    a.value === b.value &&
+    a.ratio === b.ratio &&
+    a.pinned === b.pinned &&
+    a.t === b.t &&
+    a.measure === b.measure &&
+    a.onMenu === b.onMenu &&
+    a.onQuit === b.onQuit
+  );
+}
+
 /**
  * One application. The row itself takes focus, so the keyboard reaches the same menu the
  * pointer does (ContextMenu key or Shift+F10); the × stays a pointer shortcut out of the tab
  * order, since the menu's Quit… covers it.
+ *
+ * Every sample hands each row a new `app` object, so the row is compared by what it draws: its
+ * signature, its formatted figure and meter, and its place. A row whose figures did not move is
+ * not rendered again; its handlers are the table's stable ones, so nothing else changes. The
+ * `app` it holds can be one sample old, which only matters for fields the signature carries.
  */
-function AppRow({ app, index, offset, label, value, ratio, pinned, t, measure, onMenu, onQuit }: RowProps) {
+const AppRow = memo(function AppRow({
+  app,
+  index,
+  offset,
+  label,
+  value,
+  ratio,
+  pinned,
+  t,
+  measure,
+  onMenu,
+  onQuit,
+}: RowProps) {
   // The synthetic row is a count of processes that need administrative rights to open, not an
   // application: it has no figures, and it must never offer to close anything.
   const unreadable = app.key === UNREADABLE_GROUP;
@@ -574,7 +625,7 @@ function AppRow({ app, index, offset, label, value, ratio, pinned, t, measure, o
       </div>
     </Hint>
   );
-}
+}, sameRow);
 
 export function AppTable({
   apps,
@@ -785,6 +836,7 @@ export function AppTable({
             <AppRow
               key={app.key}
               app={app}
+              signature={rowSignature(app)}
               index={item.index}
               offset={item.start - scrollMargin}
               label={appLabel(app, t)}

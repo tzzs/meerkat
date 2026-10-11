@@ -98,6 +98,27 @@ export function visibleWindowTitles(app: Pick<AppInfo, "windows">): string[] {
   return [...new Set(titles)];
 }
 
+/**
+ * Everything a list row draws or hands to its menu that is not already a prop of its own: two
+ * rows with the same signature look and act the same, so the next sample's row need not render
+ * at all. The figures (CPU, memory, ...) are deliberately not in it; they arrive formatted as the
+ * row's `value` and `ratio`. Every sample builds new `AppInfo` objects, so comparing the objects
+ * themselves could never find two rows equal.
+ */
+export function rowSignature(
+  app: Pick<AppInfo, "key" | "name" | "kind" | "exePath" | "processCount" | "listeningPorts" | "windows">,
+): string {
+  return [
+    app.key,
+    app.name,
+    app.kind,
+    app.exePath,
+    app.processCount,
+    app.listeningPorts.join(","),
+    visibleWindowTitles(app).join("\u0000"),
+  ].join("\u0001");
+}
+
 /** "Show Windows in lists" off hides the operating system's own processes and services. */
 export function forLists(apps: readonly AppInfo[], showSystem: boolean): AppInfo[] {
   return showSystem ? [...apps] : apps.filter((app) => app.kind !== "system" && app.kind !== "service");
