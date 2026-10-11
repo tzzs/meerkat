@@ -26,13 +26,24 @@ use crate::metrics::Sampler;
 use crate::settings::SettingsStore;
 use crate::tray::TrayManager;
 
-fn main() {
+fn main() -> tauri::Result<()> {
     tauri::Builder::default()
+        // First on purpose: plugins set up in registration order, and a second launch exits
+        // inside this one's setup, before any other plugin, window, tray icon or sampler of its
+        // own exists. The running instance gets the arguments instead.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A login item firing while Pulse already runs has nothing to show.
+            if !args.iter().any(|a| a == autostart::FLAG) {
+                menu::show_main(app, None);
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // The flag is what keeps a sign-in start in the tray; without it the login item opened
+        // the window like a manual launch.
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![autostart::FLAG]),
         ))
         .invoke_handler(tauri::generate_handler![
             ipc::snapshot,
@@ -101,6 +112,8 @@ fn main() {
                 let _ = window.set_skip_taskbar(!initial.show_in_taskbar);
             }
 
+            autostart::reconcile(&handle, initial.start_at_login);
+
             spawn_sampler(handle.clone());
 
             // Restore remembered app volumes before anything starts playing sound.
@@ -115,7 +128,7 @@ fn main() {
             }
 
             // Opened by hand it shows its window; started at sign-in it stays in the tray.
-            let at_startup = std::env::args().any(|a| a == "--autostart");
+            let at_startup = std::env::args().any(|a| a == autostart::FLAG);
             if at_startup {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.hide();
@@ -125,8 +138,19 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Pulse failed to start");
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                on_exit(app);
+            }
+        });
+    Ok(())
+}
+
+/// The last thing that runs, on the main thread, once the event loop has stopped: every
+/// clean way out (the tray menu, `quit_pulse`, a relaunch) passes through here.
+fn on_exit(_app: &AppHandle) {
+    eprintln!("exit");
 }
 
 fn panel_pinned(window: &tauri::Window) -> bool {
@@ -258,5 +282,218 @@ fn humanize(insight: &models::Insight) -> String {
             "this machine reached {:.0}°C, and this app is using the most CPU",
             insight.value
         ),
+    }
+}
+
+/// Start at login. The registration itself is the `Run` value the autostart plugin writes
+/// (`HKCU\…\Run\Pulse = <exe> --autostart`); this module reads it back so Pulse can tell whose
+/// registration it is before changing it.
+mod autostart {
+    use tauri::AppHandle;
+    #[cfg(not(debug_assertions))]
+    use tauri_plugin_autostart::ManagerExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
+    };
+
+    /// Passed by the login item, so a sign-in start stays in the tray.
+    pub const FLAG: &str = "--autostart";
+
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    /// A debug build is never a login item: it loads the dev server's URL, nothing serves that
+    /// at sign-in, and the user gets an empty "localhost refused to connect" window. Builds
+    /// before this one registered themselves on every settings save, so a debug start removes
+    /// a registration that launches this very executable, and leaves any other alone.
+    #[cfg(debug_assertions)]
+    pub fn reconcile(app: &AppHandle, _wanted: bool) {
+        let name = &app.package_info().name;
+        let (Some(command), Some(exe)) = (read_run_value(name), current_exe()) else {
+            return;
+        };
+        if launches(&command, &exe).is_none() {
+            return;
+        }
+        match delete_run_value(name) {
+            Ok(()) => eprintln!("removed the login item a debug build had registered: {command}"),
+            Err(error) => eprintln!("could not remove the debug build's login item: {error}"),
+        }
+    }
+
+    /// Startup repair: the setting is the source of truth, but only a registration that is
+    /// missing or launches something else is rewritten. One the user switched off in Task
+    /// Manager stays off; re-approving it on every start would overrule them.
+    #[cfg(not(debug_assertions))]
+    pub fn reconcile(app: &AppHandle, wanted: bool) {
+        let name = &app.package_info().name;
+        let registered = read_run_value(name);
+        if wanted {
+            let current = match (&registered, current_exe()) {
+                (Some(command), Some(exe)) => launches(command, &exe) == Some(FLAG),
+                _ => false,
+            };
+            if !current {
+                enable(app);
+            }
+        } else if registered.is_some() || app.autolaunch().is_enabled().unwrap_or(false) {
+            disable(app);
+        }
+    }
+
+    /// The user flipped the setting: do exactly what it says.
+    pub fn apply(app: &AppHandle, wanted: bool) {
+        #[cfg(debug_assertions)]
+        reconcile(app, wanted);
+        #[cfg(not(debug_assertions))]
+        if wanted {
+            enable(app);
+        } else {
+            disable(app);
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn enable(app: &AppHandle) {
+        // The plugin writes HKLM whenever it is allowed to, and an elevated Pulse (the thermal
+        // sensor relaunch) is: that would start Pulse at every user's sign-in. The next normal
+        // start writes the per-user value instead.
+        if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
+            eprintln!("running elevated; the login item is left to the next normal start");
+            return;
+        }
+        match app.autolaunch().enable() {
+            Ok(()) => eprintln!("registered the login item"),
+            Err(error) => eprintln!("could not register the login item: {error}"),
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn disable(app: &AppHandle) {
+        match app.autolaunch().disable() {
+            Ok(()) => eprintln!("removed the login item"),
+            Err(error) => eprintln!("could not remove the login item: {error}"),
+        }
+    }
+
+    fn current_exe() -> Option<String> {
+        std::env::current_exe().ok().map(|path| path.display().to_string())
+    }
+
+    /// The arguments of a `Run` command line when it launches exactly `exe`, `None` for any
+    /// other program. Paths compare without regard to letter case, as Windows does. The plugin
+    /// writes the path unquoted, so one with spaces is matched as a whole path followed by a
+    /// space or the end, never as a bare prefix (`pulse.exe.old` is somebody else).
+    pub fn launches<'a>(command: &'a str, exe: &str) -> Option<&'a str> {
+        let command = command.trim();
+        if exe.is_empty() {
+            return None;
+        }
+        let rest = match command.strip_prefix('"') {
+            Some(quoted) => strip_path(quoted, exe)?.strip_prefix('"')?,
+            None => strip_path(command, exe)?,
+        };
+        (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
+    }
+
+    /// `text` after a leading `path`, compared character by character without case.
+    fn strip_path<'a>(text: &'a str, path: &str) -> Option<&'a str> {
+        let mut rest = text.chars();
+        for expected in path.chars() {
+            let actual = rest.next()?;
+            if !actual.to_lowercase().eq(expected.to_lowercase()) {
+                return None;
+            }
+        }
+        Some(rest.as_str())
+    }
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn read_run_value(name: &str) -> Option<String> {
+        let key = wide(RUN_KEY);
+        let value = wide(name);
+        // Raw text: an expandable value with %VARIABLES% simply never matches this executable.
+        let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
+        let mut size = 0u32;
+        let status = unsafe {
+            RegGetValueW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr()), PCWSTR(value.as_ptr()), flags, None, None, Some(&mut size))
+        };
+        if status != ERROR_SUCCESS || size == 0 {
+            return None;
+        }
+        let mut buffer = vec![0u16; (size as usize).div_ceil(2)];
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                PCWSTR(value.as_ptr()),
+                flags,
+                None,
+                Some(buffer.as_mut_ptr().cast()),
+                Some(&mut size),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        let end = buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len());
+        Some(String::from_utf16_lossy(&buffer[..end]))
+    }
+
+    #[cfg(debug_assertions)]
+    fn delete_run_value(name: &str) -> Result<(), String> {
+        use windows::Win32::System::Registry::RegDeleteKeyValueW;
+        let key = wide(RUN_KEY);
+        let value = wide(name);
+        let status = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr()), PCWSTR(value.as_ptr())) };
+        if status == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!("error {}", status.0))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const DEV: &str = r"E:\workspaces\Pulse\src-tauri\target\debug\pulse.exe";
+
+        // The value this machine actually had: a debug build, no arguments.
+        #[test]
+        fn the_registration_an_old_debug_build_left_is_recognised() {
+            assert_eq!(launches(DEV, DEV), Some(""));
+            assert_eq!(launches(r"e:\WORKSPACES\pulse\src-tauri\target\debug\PULSE.EXE", DEV), Some(""));
+            assert_eq!(launches(&format!("{DEV} --autostart"), DEV), Some("--autostart"));
+            assert_eq!(launches(&format!("\"{DEV}\" --autostart"), DEV), Some("--autostart"));
+            assert_eq!(launches(&format!("  \"{DEV}\"  "), DEV), Some(""));
+        }
+
+        #[test]
+        fn a_registration_for_any_other_program_is_not_ours() {
+            let release = r"C:\Users\me\AppData\Local\Pulse\pulse.exe";
+            assert_eq!(launches(release, DEV), None);
+            assert_eq!(launches(&format!("{DEV}.old"), DEV), None, "a longer file name is another file");
+            assert_eq!(launches(&format!("{DEV}x --autostart"), DEV), None);
+            assert_eq!(launches(&format!("\"{DEV}.old\""), DEV), None);
+            assert_eq!(launches(&format!("\"{DEV}"), DEV), None, "an unterminated quote is not a match");
+            assert_eq!(launches(r"E:\workspaces\Pulse\src-tauri\target\debug", DEV), None);
+            assert_eq!(launches("", DEV), None);
+            assert_eq!(launches(DEV, ""), None);
+        }
+
+        // The plugin writes `<path> <args>` without quotes, so a path with spaces has to match
+        // as a whole before the arguments start.
+        #[test]
+        fn an_unquoted_path_with_spaces_matches_as_a_whole() {
+            let installed = r"C:\Program Files\Pulse\pulse.exe";
+            assert_eq!(launches(&format!("{installed} --autostart"), installed), Some("--autostart"));
+            assert_eq!(launches(r"C:\Program Files\Pulse\pulse.exe.bak --autostart", installed), None);
+            assert_eq!(launches(r"C:\Program", installed), None);
+        }
     }
 }

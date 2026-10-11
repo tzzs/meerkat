@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::alerts::Watcher;
 use crate::history::History;
@@ -60,7 +59,8 @@ pub fn settings_get(state: State<'_, AppState>) -> Settings {
 
 #[tauri::command]
 pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) -> Result<Settings, String> {
-    let saved = state.settings.set(next.clone())?;
+    let previous = state.settings.get();
+    let saved = state.settings.set(next)?;
     {
         let mut tray = state.tray.lock().unwrap_or_else(|p| p.into_inner());
         tray.rebuild(&app, &saved);
@@ -68,11 +68,10 @@ pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) 
     if let Some(snapshot) = state.latest.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
         state.tray.lock().unwrap_or_else(|p| p.into_inner()).update(&app, snapshot, &saved);
     }
-    let autostart = app.autolaunch();
-    if saved.start_at_login {
-        let _ = autostart.enable();
-    } else {
-        let _ = autostart.disable();
+    // Only a change is acted on: every other save used to re-register the login item, which
+    // is how a debug build ended up starting at sign-in.
+    if previous.start_at_login != saved.start_at_login {
+        crate::autostart::apply(&app, saved.start_at_login);
     }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_skip_taskbar(!saved.show_in_taskbar);
