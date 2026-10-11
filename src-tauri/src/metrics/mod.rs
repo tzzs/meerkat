@@ -85,8 +85,7 @@ pub struct Sampler {
     previous_times: Option<(u64, u64, u64)>,
     last_tick: Instant,
     traces: HashMap<&'static str, Trace>,
-    battery_health: battery::Health,
-    health_read_at: Option<Instant>,
+    battery_health: battery::HealthReader,
     day_key: String,
     day_read: u64,
     day_write: u64,
@@ -141,8 +140,7 @@ impl Sampler {
             previous_times: None,
             last_tick: Instant::now(),
             traces,
-            battery_health: battery::Health::default(),
-            health_read_at: None,
+            battery_health: battery::HealthReader::default(),
             day_key: String::new(),
             day_read: 0,
             day_write: 0,
@@ -510,20 +508,9 @@ impl Sampler {
 
     fn battery(&mut self) -> BatteryMetric {
         let live = battery::live();
-        let due = self
-            .health_read_at
-            .map(|at| at.elapsed().as_secs() > 1800)
-            .unwrap_or(true);
-        if due && live.has_battery {
-            let (health, _) = battery::read_health();
-            self.battery_health = health;
-            self.health_read_at = Some(Instant::now());
-        }
-        let health = &self.battery_health;
-        let health_percent = match (health.design_capacity_wh, health.full_charge_capacity_wh) {
-            (Some(design), Some(full)) if design > 0.0 => Some(full / design * 100.0),
-            _ => None,
-        };
+        // `powercfg` runs on a worker of its own; until its first report lands the health
+        // figures are absent, not zero.
+        let health = self.battery_health.poll(live.has_battery);
 
         BatteryMetric {
             has_battery: live.has_battery,
@@ -535,11 +522,11 @@ impl Sampler {
             power_watts: None,
             design_capacity_wh: health.design_capacity_wh,
             full_charge_capacity_wh: health.full_charge_capacity_wh,
-            health_percent,
+            health_percent: health.health_percent,
             cycle_count: health.cycle_count,
             source: if !live.has_battery {
                 Availability::Unavailable
-            } else if health.design_capacity_wh.is_some() {
+            } else if health.health_percent.is_some() {
                 Availability::Ok
             } else {
                 Availability::Partial
