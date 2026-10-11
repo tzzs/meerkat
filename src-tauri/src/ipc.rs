@@ -170,22 +170,6 @@ pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitRes
 }
 
 #[tauri::command]
-pub fn set_tray_bitmap(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    id: String,
-    png: Vec<u8>,
-) -> Result<(), String> {
-    let tray = state.tray.lock().unwrap_or_else(|p| p.into_inner());
-    tray.set_bitmap(&app, &id, &png)
-}
-
-#[tauri::command]
-pub fn tray_ids(state: State<'_, AppState>) -> Vec<String> {
-    state.tray.lock().unwrap_or_else(|p| p.into_inner()).ids()
-}
-
-#[tauri::command]
 pub fn hide_panel(app: AppHandle) {
     if let Some(panel) = app.get_webview_window("panel") {
         let _ = panel.hide();

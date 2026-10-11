@@ -43,8 +43,6 @@ fn main() {
             ipc::insights,
             ipc::insight_dismiss,
             ipc::quit_app,
-            ipc::set_tray_bitmap,
-            ipc::tray_ids,
             ipc::hide_panel,
             ipc::show_window,
             ipc::set_panel_size,

@@ -1,10 +1,9 @@
 //! Tray readouts. Windows has no menu bar to draw into, so each readout becomes its own
 //! notification-area icon, exactly the way TrafficMonitor and Stat Tray work.
 //!
-//! The icon bitmap itself is rendered by a hidden webview and pushed back through
-//! `set_tray_bitmap`, which keeps the numbers in the same typeface as the panel and lets
-//! the graph style share the chart code. Until a bitmap arrives, the value lives in the
-//! tooltip so the readout is never empty.
+//! The icon bitmap is drawn by `tray_render` with GDI on the sampler thread; no webview is
+//! involved, so the readout keeps updating while every window is hidden. The tooltip carries
+//! the full value text, so the readout is never empty even before the first bitmap.
 
 use std::collections::HashMap;
 
@@ -98,15 +97,6 @@ impl TrayManager {
         }
     }
 
-    pub fn set_bitmap(&self, app: &AppHandle, id: &str, png: &[u8]) -> Result<(), String> {
-        let tray = app.tray_by_id(id).ok_or_else(|| format!("no tray icon {id}"))?;
-        let image = Image::from_bytes(png).map_err(|e| e.to_string())?;
-        tray.set_icon(Some(image)).map_err(|e| e.to_string())
-    }
-
-    pub fn ids(&self) -> Vec<String> {
-        self.icons.keys().cloned().collect()
-    }
 }
 
 fn tray_id(readout: &TrayReadout) -> String {
