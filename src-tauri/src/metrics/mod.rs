@@ -35,11 +35,16 @@ use pdh::PdhQuery;
 
 const LIVE_WINDOW: usize = 240;
 
+/// Every path here must resolve with `PdhAddEnglishCounterW`; a path that does not is dropped
+/// silently at start-up and its figure reads as zero forever (`every_counter_path_resolves`).
 const PDH_SET: [(&str, &str); 5] = [
     ("cache", r"\Memory\Cache Bytes"),
     ("paged_pool", r"\Memory\Pool Paged Resident Bytes"),
     ("nonpaged_pool", r"\Memory\Pool Nonpaged Bytes"),
-    ("pagefile", r"\Paging File(_ Total)\Private Bytes"),
+    // The Paging File object only has percentages. The byte path this used to name
+    // (`\Paging File(_ Total)\Private Bytes`) is answered with PDH_CSTATUS_NO_COUNTER
+    // (0xC0000BB9), which left "Paging file used" at 0.00 B on every machine.
+    ("pagefile", r"\Paging File(_Total)\% Usage"),
     ("queue", r"\System\Processor Queue Length"),
 ];
 
@@ -318,7 +323,11 @@ impl Sampler {
         };
 
         let committed = commit_limit.saturating_sub(commit_free);
-        let pagefile_used = self.pdh_value("pagefile").unwrap_or(0.0).max(0.0) as u64;
+        let pagefile_total = commit_limit.saturating_sub(total);
+        let pagefile_used = self
+            .pdh_value("pagefile")
+            .map(|usage| pagefile_used_bytes(pagefile_total, usage))
+            .unwrap_or(0);
         let paged_pool = self
             .pdh_value("paged_pool")
             .map(|v| v.max(0.0) as u64)
@@ -331,7 +340,7 @@ impl Sampler {
             cached_bytes: self.pdh_value("cache").unwrap_or(0.0).max(0.0) as u64,
             committed_bytes: committed,
             commit_limit_bytes: commit_limit,
-            pagefile_total_bytes: commit_limit.saturating_sub(total),
+            pagefile_total_bytes: pagefile_total,
             pagefile_used_bytes: pagefile_used,
             paged_pool_bytes: paged_pool,
             nonpaged_pool_bytes: self.pdh_value("nonpaged_pool").unwrap_or(0.0).max(0.0) as u64,
@@ -588,6 +597,16 @@ fn system_times() -> Option<(u64, u64, u64)> {
 
 fn combine(time: FILETIME) -> u64 {
     ((time.dwHighDateTime as u64) << 32) | time.dwLowDateTime as u64
+}
+
+/// `\Paging File(_Total)\% Usage` is a share of the page file's size, so the bytes in use are
+/// that share of the total. The counter is a raw fraction and can be read a hair outside
+/// 0–100 while a page file grows, which must not turn into more bytes than the file holds.
+fn pagefile_used_bytes(total_bytes: u64, usage_percent: f64) -> u64 {
+    if !usage_percent.is_finite() {
+        return 0;
+    }
+    (total_bytes as f64 * usage_percent.clamp(0.0, 100.0) / 100.0).round() as u64
 }
 
 fn is_loopback(name: &str) -> bool {
@@ -848,7 +867,8 @@ pub fn machine_info(system: &System) -> MachineInfo {
 }
 
 // ---------------------------------------------------------------------------
-// tests (pure logic only — no interface table and no iphlpapi, so they run anywhere)
+// tests (pure logic, plus the PDH counter paths: those are standard Windows counters and the
+// project only runs on Windows, so resolving them for real is the honest check)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1006,5 +1026,44 @@ mod tests {
         let field = utf16.into_iter().chain([0u16; 4]).collect::<Vec<u16>>();
         assert_eq!(from_utf16_nul(&field), "以太网 2");
         assert_eq!(from_utf16_nul(&[0, 0, 0]), "");
+    }
+
+    /// `Sampler::new` drops a path PDH refuses without a word, and the figure behind it then
+    /// reads as zero forever — that is how "Paging file used" sat at 0.00 B. So every path the
+    /// sampler asks for is added to a fresh query here, for real.
+    #[test]
+    fn every_counter_path_resolves() {
+        let mut query = PdhQuery::new().expect("PDH opens a query");
+        for (name, path) in PDH_SET.iter().copied().chain([("gpu engine", gpu::ENGINE_COUNTER)]) {
+            assert!(query.add(path).is_some(), "{name}: PDH refuses {path}");
+        }
+    }
+
+    #[test]
+    fn the_page_file_counter_is_a_percentage() {
+        let (_, path) = PDH_SET
+            .iter()
+            .copied()
+            .find(|(name, _)| *name == "pagefile")
+            .expect("the page file counter is part of the set");
+        let mut query = PdhQuery::new().expect("PDH opens a query");
+        let index = query.add(path).expect("the page file counter resolves");
+        assert!(query.collect());
+        // A machine with no page file at all has no `_Total` instance, which is a real None.
+        if let Some(usage) = query.value(index) {
+            assert!((0.0..=100.0).contains(&usage), "{usage} is not a share");
+        }
+    }
+
+    #[test]
+    fn page_file_bytes_are_that_share_of_its_size() {
+        assert_eq!(pagefile_used_bytes(10_000, 25.0), 2_500);
+        assert_eq!(pagefile_used_bytes(10_000, 0.0), 0);
+        assert_eq!(pagefile_used_bytes(10_000, 100.0), 10_000);
+        // A raw fraction read while the file grows can overshoot; it never exceeds the file.
+        assert_eq!(pagefile_used_bytes(10_000, 100.4), 10_000);
+        assert_eq!(pagefile_used_bytes(10_000, -0.1), 0);
+        assert_eq!(pagefile_used_bytes(10_000, f64::NAN), 0);
+        assert_eq!(pagefile_used_bytes(0, 50.0), 0, "no page file, nothing in it");
     }
 }

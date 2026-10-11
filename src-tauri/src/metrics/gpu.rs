@@ -12,6 +12,9 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::core::Interface;
 
+/// One instance per process per engine; see `parse_instance` for the instance-name shape.
+pub(crate) const ENGINE_COUNTER: &str = r"\GPU Engine(*)\Utilization Percentage";
+
 pub struct EngineProbe {
     query: PdhQuery,
     index: usize,
@@ -115,7 +118,7 @@ fn wide_to_string(raw: &[u16; 128]) -> String {
 impl EngineProbe {
     pub fn new() -> Option<Self> {
         let mut query = PdhQuery::new()?;
-        let index = query.add(r"\GPU Engine(*)\Utilization Percentage")?;
+        let index = query.add(ENGINE_COUNTER)?;
         query.collect();
         Some(Self {
             query,
