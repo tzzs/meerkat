@@ -5,68 +5,55 @@
 //! involved, so the readout keeps updating while every window is hidden. The tooltip carries
 //! the full value text, so the readout is never empty even before the first bitmap.
 
-use std::collections::HashMap;
+use tauri::{image::Image, tray::TrayIconBuilder, AppHandle, Manager};
 
-use tauri::{image::Image, AppHandle, Manager, tray::TrayIconBuilder};
-
-use crate::i18n::{self, Lang};
+use crate::i18n::{self, Lang, Text};
 use crate::models::{MetricKind, Snapshot};
 use crate::settings::{Settings, Theme, TrayReadout, TrayStyle};
 
+/// The icon kept when no readout is enabled. Every way into Pulse (the panel, the window, the
+/// menu with its Quit) hangs off a tray icon, and the window may be hidden and out of the
+/// taskbar, so an app with none would be running and unreachable.
+pub const FALLBACK_ID: &str = "tray-pulse";
+
 pub struct TrayManager {
-    icons: HashMap<String, String>,
+    /// Tray ids in the order the icons were created, which is the order Windows lists them.
+    live: Vec<String>,
     /// The language the live menus were built in, so a changed setting rebuilds them.
     lang: Lang,
 }
 
 impl TrayManager {
     pub fn new() -> Self {
-        Self { icons: HashMap::new(), lang: Lang::En }
+        Self { live: Vec::new(), lang: Lang::En }
     }
 
+    /// Brings the icons in line with the settings. Windows appends every new icon to the end of
+    /// the notification area, so the only way to honour the readouts' order is to recreate all
+    /// of them in that order whenever the set or the order differs; a change of style, units or
+    /// theme leaves the icons alone and only repaints them.
     pub fn rebuild(&mut self, app: &AppHandle, settings: &Settings) {
         let lang = i18n::resolve(settings.language);
-        let wanted: Vec<&TrayReadout> = settings.tray.iter().filter(|r| r.enabled).collect();
+        let wanted = wanted_ids(settings);
 
-        for (id, _) in self.icons.clone() {
-            if !wanted.iter().any(|r| tray_id(r) == id) {
+        if wanted != self.live {
+            for id in self.live.drain(..) {
                 app.remove_tray_by_id(&id);
-                self.icons.remove(&id);
             }
-        }
-
-        for readout in wanted {
-            let id = tray_id(readout);
-            if self.icons.contains_key(&id) {
-                continue;
-            }
-            let built = (|| {
-                let menu = crate::menu::tray_menu(app, lang)?;
-                let mut builder = TrayIconBuilder::with_id(&id)
-                    .menu(&menu)
-                    .show_menu_on_left_click(false)
-                    .tooltip(tooltip(lang, readout.metric, "—"));
-                if let Some(icon) = app.default_window_icon() {
-                    builder = builder.icon(icon.clone());
+            for id in &wanted {
+                let tip = match readout_for(settings, id) {
+                    Some(readout) => tooltip(lang, readout.metric, "\u{2014}"),
+                    None => i18n::text(lang, Text::Pulse).to_string(),
+                };
+                match build_icon(app, id, &tip, lang) {
+                    Ok(()) => self.live.push(id.clone()),
+                    Err(error) => eprintln!("tray {id}: {error}"),
                 }
-                builder
-                    .on_menu_event(crate::menu::on_menu_event)
-                    .on_tray_icon_event(crate::menu::on_tray_event)
-                    .build(app)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            })();
-            match built {
-                Ok(_) => {
-                    self.icons.insert(id.clone(), readout.metric.key().to_string());
-                }
-                Err(error) => eprintln!("tray {id}: {error}"),
             }
-        }
-
-        // The menus are built once per icon, so a language change has to replace them.
-        if lang != self.lang {
-            for id in self.icons.keys() {
+            self.lang = lang;
+        } else if lang != self.lang {
+            // The menus are built once per icon, so a language change has to replace them.
+            for id in &self.live {
                 let Some(tray) = app.tray_by_id(id) else { continue };
                 match crate::menu::tray_menu(app, lang) {
                     Ok(menu) => {
@@ -115,11 +102,42 @@ impl TrayManager {
             }
         }
     }
-
 }
 
 fn tray_id(readout: &TrayReadout) -> String {
     format!("tray-{}", readout.id)
+}
+
+/// What the notification area should hold: one icon per enabled readout in settings order, or
+/// the fallback alone when nothing is enabled. A readout listed twice is one icon.
+fn wanted_ids(settings: &Settings) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for readout in settings.tray.iter().filter(|r| r.enabled) {
+        let id = tray_id(readout);
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        ids.push(FALLBACK_ID.to_string());
+    }
+    ids
+}
+
+fn readout_for<'a>(settings: &'a Settings, id: &str) -> Option<&'a TrayReadout> {
+    settings.tray.iter().find(|r| r.enabled && tray_id(r) == id)
+}
+
+fn build_icon(app: &AppHandle, id: &str, tooltip: &str, lang: Lang) -> Result<(), String> {
+    let menu = crate::menu::tray_menu(app, lang)?;
+    let mut builder = TrayIconBuilder::with_id(id)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .tooltip(tooltip);
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app).map(|_| ()).map_err(|e| e.to_string())
 }
 
 fn tooltip(lang: Lang, metric: MetricKind, value: &str) -> String {
@@ -165,7 +183,8 @@ pub fn value_text(readout: &TrayReadout, snapshot: &Snapshot) -> String {
     }
 }
 
-fn compact(bytes_per_second: f64) -> String {    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
+fn compact(bytes_per_second: f64) -> String {
+    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
     let mut value = bytes_per_second;
     let mut unit = 0;
     while value >= 1024.0 && unit < UNITS.len() - 1 {
@@ -200,5 +219,89 @@ fn series_for(metric: MetricKind, snapshot: &Snapshot) -> Vec<f64> {
         MetricKind::Gpu => snapshot.gpu.history.clone(),
         MetricKind::Battery => snapshot.battery.history.clone(),
         MetricKind::Temperature => snapshot.temperature.history.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn readout(id: &str, metric: MetricKind, enabled: bool, style: TrayStyle) -> TrayReadout {
+        TrayReadout {
+            id: id.into(),
+            metric,
+            style,
+            show_icon: false,
+            show_caption: false,
+            invert: false,
+            enabled,
+        }
+    }
+
+    fn settings(readouts: Vec<TrayReadout>) -> Settings {
+        let mut settings = Settings::default();
+        settings.tray = readouts;
+        settings
+    }
+
+    // The settings file this was reported from had every readout switched off, no taskbar entry
+    // and a window that only hides: nothing was left to click or quit.
+    #[test]
+    fn with_every_readout_off_one_fallback_icon_remains() {
+        let none = settings(vec![
+            readout("cpu", MetricKind::Cpu, false, TrayStyle::Both),
+            readout("memory", MetricKind::Memory, false, TrayStyle::Value),
+        ]);
+        assert_eq!(wanted_ids(&none), vec![FALLBACK_ID.to_string()]);
+        assert_eq!(wanted_ids(&settings(Vec::new())), vec![FALLBACK_ID.to_string()]);
+    }
+
+    #[test]
+    fn the_fallback_goes_away_once_a_readout_is_enabled() {
+        let one = settings(vec![
+            readout("cpu", MetricKind::Cpu, false, TrayStyle::Both),
+            readout("network", MetricKind::Network, true, TrayStyle::Graph),
+        ]);
+        assert_eq!(wanted_ids(&one), vec!["tray-network".to_string()]);
+    }
+
+    #[test]
+    fn icons_follow_the_order_of_the_readouts_in_settings() {
+        let a = settings(vec![
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Both),
+            readout("memory", MetricKind::Memory, true, TrayStyle::Value),
+            readout("network", MetricKind::Network, true, TrayStyle::Graph),
+        ]);
+        let b = settings(vec![
+            readout("network", MetricKind::Network, true, TrayStyle::Graph),
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Both),
+            readout("memory", MetricKind::Memory, true, TrayStyle::Value),
+        ]);
+        assert_eq!(wanted_ids(&a), ["tray-cpu", "tray-memory", "tray-network"]);
+        assert_eq!(wanted_ids(&b), ["tray-network", "tray-cpu", "tray-memory"]);
+        assert_ne!(wanted_ids(&a), wanted_ids(&b), "a reorder differs from the live icons");
+    }
+
+    // Style and invert only repaint: recreating the icons for them would make every icon in the
+    // tray blink and drop to the end of the area at each change.
+    #[test]
+    fn a_change_of_style_does_not_change_which_icons_are_wanted() {
+        let before = settings(vec![
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Both),
+            readout("memory", MetricKind::Memory, true, TrayStyle::Value),
+        ]);
+        let mut after = before.clone();
+        after.tray[0].style = TrayStyle::Graph;
+        after.tray[1].invert = true;
+        assert_eq!(wanted_ids(&before), wanted_ids(&after));
+    }
+
+    #[test]
+    fn a_readout_listed_twice_is_one_icon() {
+        let twice = settings(vec![
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Both),
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Value),
+        ]);
+        assert_eq!(wanted_ids(&twice), ["tray-cpu"]);
     }
 }

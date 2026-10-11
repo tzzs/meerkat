@@ -37,6 +37,8 @@ pub enum Text {
     OpenPulse,
     Settings,
     QuitPulse,
+    /// The product name, which is also the tray icon's tooltip when no readout is enabled.
+    Pulse,
 }
 
 pub fn text(lang: Lang, text: Text) -> &'static str {
@@ -44,6 +46,7 @@ pub fn text(lang: Lang, text: Text) -> &'static str {
         (Lang::En, Text::OpenPulse) => "Open Pulse",
         (Lang::En, Text::Settings) => "Settings",
         (Lang::En, Text::QuitPulse) => "Quit Pulse",
+        (Lang::En, Text::Pulse) | (Lang::ZhHans, Text::Pulse) => "Pulse",
         (Lang::ZhHans, Text::OpenPulse) => "打开 Pulse",
         (Lang::ZhHans, Text::Settings) => "设置",
         (Lang::ZhHans, Text::QuitPulse) => "退出 Pulse",

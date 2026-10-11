@@ -1,7 +1,7 @@
 //! Tray menu and the panel/window show-hide plumbing.
 
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Wry};
 
 use crate::i18n::{self, Lang, Text};
@@ -29,7 +29,9 @@ pub fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-pub fn on_tray_event(tray: &TrayIcon, event: TrayIconEvent) {
+/// Registered once for every tray icon (see `main`), so rebuilding the icons never stacks
+/// handlers.
+pub fn on_tray_event(app: &AppHandle, event: TrayIconEvent) {
     if let TrayIconEvent::Click {
         button: MouseButton::Left,
         button_state: MouseButtonState::Up,
@@ -42,7 +44,7 @@ pub fn on_tray_event(tray: &TrayIcon, event: TrayIconEvent) {
             tauri::Size::Physical(size) => size.height as f64,
             tauri::Size::Logical(size) => size.height,
         };
-        toggle_panel(tray.app_handle(), position.x, position.y, height);
+        toggle_panel(app, position.x, position.y, height);
     }
 }
 

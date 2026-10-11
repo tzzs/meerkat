@@ -168,6 +168,13 @@ pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitRes
     }
 }
 
+/// A clean exit for the window's own Quit: closing the window only hides it, so without this a
+/// Pulse whose tray icons are hidden by Windows could not be ended from where the user is.
+#[tauri::command]
+pub fn quit_pulse(app: AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 pub fn hide_panel(app: AppHandle) {
     if let Some(panel) = app.get_webview_window("panel") {

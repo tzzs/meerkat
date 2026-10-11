@@ -54,6 +54,7 @@ fn main() -> tauri::Result<()> {
             ipc::insights,
             ipc::insight_dismiss,
             ipc::quit_app,
+            ipc::quit_pulse,
             ipc::hide_panel,
             ipc::show_window,
             ipc::set_panel_size,
@@ -66,6 +67,10 @@ fn main() -> tauri::Result<()> {
             ipc::app_icon,
             ipc::relaunch_elevated
         ])
+        // One listener for every tray icon, however often the icons are rebuilt: a handler set
+        // on each icon builder was registered again with every rebuild.
+        .on_menu_event(menu::on_menu_event)
+        .on_tray_icon_event(menu::on_tray_event)
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 // Closing the window keeps Pulse in the tray, like the Mac version.
