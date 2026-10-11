@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ipc } from "../lib/ipc";
+import { visibleSections } from "../lib/sections";
 import { useStore } from "../lib/store";
 import type { AudioEndpoint, AudioSession, AudioState } from "../lib/types";
-import { AppIcon, Card, Pill } from "./ui";
+import { AppIcon, Card, Pill, Sections } from "./ui";
 import { Button } from "./ui/button";
 import { Hint } from "./ui/tooltip";
 import { Slider } from "./ui/slider";
@@ -19,7 +20,8 @@ type Hold = Pick<
  * helper to see the same thing.
  */
 export function SoundTab() {
-  const { t } = useStore();
+  const { t, settings } = useStore();
+  const order = visibleSections(settings, "sound");
   const [audio, setAudio] = useState<AudioState | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const dragging = useRef(false);
@@ -75,40 +77,49 @@ export function SoundTab() {
 
   return (
     <div className="stack">
-      <Card title={t("sound.output")} right={<Pill>{outputs.length}</Pill>}>
-        <div className="mix-list">
-          <MixHead />
-          {outputs.map((endpoint) => (
-            <EndpointRow key={endpoint.id} endpoint={endpoint} hold={hold} />
-          ))}
-          {outputs.length === 0 && <p className="empty">{t("state.noData")}</p>}
-        </div>
-        <p className="hint faint">{t("sound.persistHelp")}</p>
-      </Card>
-
-      <Card title={t("sound.apps")} right={<Pill>{audio.render.length}</Pill>}>
-        <div className="mix-list">
-          <MixHead />
-          {audio.render.map((session) => (
-            <SessionRow key={`${session.id}-${session.pid}`} session={session} hold={hold} />
-          ))}
-          {audio.render.length === 0 && <p className="empty">{t("sound.noSessions")}</p>}
-        </div>
-      </Card>
-
-      <Card title={t("sound.input")} right={<Pill>{audio.capture.length}</Pill>}>
-        <div className="mix-list">
-          <MixHead />
-          {inputs.map((endpoint) => (
-            <EndpointRow key={endpoint.id} endpoint={endpoint} hold={hold} />
-          ))}
-          {audio.capture.map((session) => (
-            <SessionRow key={`${session.id}-${session.pid}`} session={session} hold={hold} />
-          ))}
-          {inputs.length === 0 && audio.capture.length === 0 && <p className="empty">{t("state.noData")}</p>}
-        </div>
-        <p className="hint faint">{t("sound.micHelp")}</p>
-      </Card>
+      <Sections
+        order={order}
+        parts={{
+          output: (
+            <Card title={t("sound.output")} right={<Pill>{outputs.length}</Pill>}>
+              <div className="mix-list">
+                <MixHead />
+                {outputs.map((endpoint) => (
+                  <EndpointRow key={endpoint.id} endpoint={endpoint} hold={hold} />
+                ))}
+                {outputs.length === 0 && <p className="empty">{t("state.noData")}</p>}
+              </div>
+              <p className="hint faint">{t("sound.persistHelp")}</p>
+            </Card>
+          ),
+          apps: (
+            <Card title={t("sound.apps")} right={<Pill>{audio.render.length}</Pill>}>
+              <div className="mix-list">
+                <MixHead />
+                {audio.render.map((session) => (
+                  <SessionRow key={`${session.id}-${session.pid}`} session={session} hold={hold} />
+                ))}
+                {audio.render.length === 0 && <p className="empty">{t("sound.noSessions")}</p>}
+              </div>
+            </Card>
+          ),
+          input: (
+            <Card title={t("sound.input")} right={<Pill>{audio.capture.length}</Pill>}>
+              <div className="mix-list">
+                <MixHead />
+                {inputs.map((endpoint) => (
+                  <EndpointRow key={endpoint.id} endpoint={endpoint} hold={hold} />
+                ))}
+                {audio.capture.map((session) => (
+                  <SessionRow key={`${session.id}-${session.pid}`} session={session} hold={hold} />
+                ))}
+                {inputs.length === 0 && audio.capture.length === 0 && <p className="empty">{t("state.noData")}</p>}
+              </div>
+              <p className="hint faint">{t("sound.micHelp")}</p>
+            </Card>
+          ),
+        }}
+      />
     </div>
   );
 }

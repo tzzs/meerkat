@@ -84,8 +84,10 @@ export default function App() {
         window.setTimeout(() => document.querySelector<HTMLInputElement>(".titlebar .find")?.focus(), 30);
       }
       if (event.key === "Escape") {
-        // The quit dialog owns Escape while it is up; it should not also drop out of Settings.
-        if (pendingQuit) return;
+        // A dialog, a dropdown or a number box that took Escape for itself has marked it
+        // handled, and it should not also drop out of Settings. The quit dialog is one of
+        // those, but its request is cleared before the key reaches here, so it is named too.
+        if (event.defaultPrevented || pendingQuit) return;
         if (page) setPage(null);
       }
       const digits = "1234567";

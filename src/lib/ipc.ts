@@ -82,6 +82,11 @@ export const ipc = {
       .then(({ invoke }) => invoke("log_frontend", { level, message }))
       .catch(() => undefined);
   },
+  /**
+   * Ends Pulse: the tray readouts and the sampling with it. Closing the window only hides it,
+   * so this is the one way out from the window itself.
+   */
+  quitPulse: () => void call("quit_pulse"),
   hidePanel: () => void call("hide_panel"),
   showWindow: (destination?: string) => void call("show_window", { destination: destination ?? null }),
   setPanelSize: (width: number, height: number) => void call("set_panel_size", { width, height }),

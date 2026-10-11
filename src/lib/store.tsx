@@ -300,13 +300,3 @@ export function useStore(): StoreValue {
   if (!value) throw new Error("useStore outside the provider");
   return value;
 }
-
-export function visibleSections(settings: Settings, tab: string): Set<string> {
-  const config = settings.window.tabs.find((t) => t.id === tab);
-  if (!config || config.sections.length === 0) return new Set(["*"]);
-  return new Set(config.sections.filter((s) => s.visible).map((s) => s.id));
-}
-
-export function sectionShown(shown: Set<string>, id: string): boolean {
-  return shown.has("*") || shown.has(id);
-}

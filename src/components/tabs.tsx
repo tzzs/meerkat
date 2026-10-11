@@ -12,7 +12,8 @@ import { forLists } from "../lib/apps";
 import { ipc } from "../lib/ipc";
 import { buildSeries, formatAxisTime, formatHistoryValue, historyCeiling, historyUnit } from "../lib/series";
 import { SPARK_CEILING } from "../lib/spark";
-import { sectionShown, useStore, visibleSections } from "../lib/store";
+import { visibleSections } from "../lib/sections";
+import { useStore } from "../lib/store";
 import type { AppInfo, HistoryPoint, Insight, MetricKind } from "../lib/types";
 import type { Translate } from "../i18n";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
@@ -26,6 +27,7 @@ import {
   HistoryPlot,
   Meter,
   Pill,
+  Sections,
   Stat,
   Tween,
   type AppMetric,
@@ -282,7 +284,7 @@ function useInsights(): Insight[] {
 
 export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void }) {
   const { snapshot, settings, units, t } = useStore();
-  const shown = visibleSections(settings, "overview");
+  const order = visibleSections(settings, "overview");
   const [range, setRange] = useTabState("overview", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("overview", "metric", "memory");
   const apps = useApps();
@@ -380,56 +382,58 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
         ))}
       </div>
 
-      {sectionShown(shown, "charts") && (
-        <Card title={t("overview.title")} right={<RangePicker value={range} onChange={setRange} />}>
-          <div className="two-col">
-            <div>
-              <h4 className="section-title">{t("metric.cpu")}</h4>
-              <HistoryChart metric="cpu" range={range} tone={TONE.cpu} units={units} t={t} />
-            </div>
-            <div>
-              <h4 className="section-title">{t("metric.memory")}</h4>
-              <HistoryChart metric="memory" range={range} tone={TONE.memory} units={units} t={t} />
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {sectionShown(shown, "topApps") && (
-        <Card title={t("overview.topApps")}>
-          <AppTable
-            apps={apps}
-            metric={metric}
-            onMetricChange={setMetric}
-            units={units}
-            t={t}
-            cap={9}
-          />
-        </Card>
-      )}
-
-      {sectionShown(shown, "worthALook") && (
-        <Card title={t("overview.worthALook")} right={<Pill>{insights.length}</Pill>}>
-          {/* The list is a log of things that are still true, not a feed of events, and that
-              distinction is the whole reason it confused the user who wrote this comment. */}
-          <p className="hint faint">
-            {t("overview.worthALookHelp", {
-              seconds: formatDuration(settings.alerts.sustainedSeconds, units.locale, { short: true }),
-            })}
-          </p>
-          {insights.length === 0 ? (
-            <p className="empty">{t("overview.worthALookEmpty")}</p>
-          ) : (
-            <InsightRows insights={insights} />
-          )}
-        </Card>
-      )}
-
-      {sectionShown(shown, "storage") && (
-        <Card title={t("overview.volumes")}>
-          <VolumeList />
-        </Card>
-      )}
+      <Sections
+        order={order}
+        parts={{
+          charts: (
+            <Card title={t("overview.title")} right={<RangePicker value={range} onChange={setRange} />}>
+              <div className="two-col">
+                <div>
+                  <h4 className="section-title">{t("metric.cpu")}</h4>
+                  <HistoryChart metric="cpu" range={range} tone={TONE.cpu} units={units} t={t} />
+                </div>
+                <div>
+                  <h4 className="section-title">{t("metric.memory")}</h4>
+                  <HistoryChart metric="memory" range={range} tone={TONE.memory} units={units} t={t} />
+                </div>
+              </div>
+            </Card>
+          ),
+          topApps: (
+            <Card title={t("overview.topApps")}>
+              <AppTable
+                apps={apps}
+                metric={metric}
+                onMetricChange={setMetric}
+                units={units}
+                t={t}
+                cap={9}
+              />
+            </Card>
+          ),
+          worthALook: (
+            <Card title={t("overview.worthALook")} right={<Pill>{insights.length}</Pill>}>
+              {/* The list is a log of things that are still true, not a feed of events, and that
+                  distinction is the whole reason it confused the user who wrote this comment. */}
+              <p className="hint faint">
+                {t("overview.worthALookHelp", {
+                  seconds: formatDuration(settings.alerts.sustainedSeconds, units.locale, { short: true }),
+                })}
+              </p>
+              {insights.length === 0 ? (
+                <p className="empty">{t("overview.worthALookEmpty")}</p>
+              ) : (
+                <InsightRows insights={insights} />
+              )}
+            </Card>
+          ),
+          storage: (
+            <Card title={t("overview.volumes")}>
+              <VolumeList />
+            </Card>
+          ),
+        }}
+      />
     </div>
   );
 }
@@ -455,7 +459,7 @@ function historyFor(snapshot: NonNullable<ReturnType<typeof useStore>["snapshot"
 
 export function CpuTab() {
   const { snapshot, settings, units, t } = useStore();
-  const shown = visibleSections(settings, "cpu");
+  const order = visibleSections(settings, "cpu");
   const [range, setRange] = useTabState("cpu", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("cpu", "metric", "cpu");
   const apps = useApps();
@@ -486,28 +490,31 @@ export function CpuTab() {
         </Card>
       </div>
 
-      {sectionShown(shown, "perCore") && (
-        <Card title={`${t("label.perCore")} · ${snapshot.machine.logicalCores}`}>
-          <CoreGrid values={snapshot.cpu.corePercents} units={units} />
-        </Card>
-      )}
-
-      {sectionShown(shown, "history") && (
-        <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "cpu", tone: TONE.cpu }]} />
-      )}
-
-      {sectionShown(shown, "apps") && (
-        <Card title={t("overview.topApps")}>
-          <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
-        </Card>
-      )}
+      <Sections
+        order={order}
+        parts={{
+          perCore: (
+            <Card title={`${t("label.perCore")} · ${snapshot.machine.logicalCores}`}>
+              <CoreGrid values={snapshot.cpu.corePercents} units={units} />
+            </Card>
+          ),
+          history: (
+            <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "cpu", tone: TONE.cpu }]} />
+          ),
+          apps: (
+            <Card title={t("overview.topApps")}>
+              <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
+            </Card>
+          ),
+        }}
+      />
     </div>
   );
 }
 
 export function MemoryTab({ search }: { search?: string }) {
   const { snapshot, settings, units, t } = useStore();
-  const shown = visibleSections(settings, "memory");
+  const order = visibleSections(settings, "memory");
   const [range, setRange] = useTabState("memory", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("memory", "metric", "memory");
   const apps = useApps();
@@ -550,43 +557,46 @@ export function MemoryTab({ search }: { search?: string }) {
         </Card>
       </div>
 
-      {sectionShown(shown, "breakdown") && (
-        <Card title={t("memory.title")}>
-          <div className="breakdown">
-            {rows.map(([label, value, limit]) => (
-              <div key={label} className="break-row">
-                <span className="break-label">{label}</span>
-                <Meter ratio={value / Math.max(1, limit)} color={TONE.memory} />
-                <span className="break-value num">{formatBytes(value, units)}</span>
+      <Sections
+        order={order}
+        parts={{
+          breakdown: (
+            <Card title={t("memory.title")}>
+              <div className="breakdown">
+                {rows.map(([label, value, limit]) => (
+                  <div key={label} className="break-row">
+                    <span className="break-label">{label}</span>
+                    <Meter ratio={value / Math.max(1, limit)} color={TONE.memory} />
+                    <span className="break-value num">{formatBytes(value, units)}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {sectionShown(shown, "history") && (
-        <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "memory", tone: TONE.memory }]} />
-      )}
-
-      {sectionShown(shown, "apps") && (
-        <Card title={t("overview.topApps")}>
-          <AppTable
-            apps={apps}
-            metric={metric}
-            onMetricChange={setMetric}
-            units={units}
-            t={t}
-            seedQuery={search}
-          />
-        </Card>
-      )}
+            </Card>
+          ),
+          history: (
+            <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "memory", tone: TONE.memory }]} />
+          ),
+          apps: (
+            <Card title={t("overview.topApps")}>
+              <AppTable
+                apps={apps}
+                metric={metric}
+                onMetricChange={setMetric}
+                units={units}
+                t={t}
+                seedQuery={search}
+              />
+            </Card>
+          ),
+        }}
+      />
     </div>
   );
 }
 
 export function DiskTab() {
   const { snapshot, settings, units, t } = useStore();
-  const shown = visibleSections(settings, "disk");
+  const order = visibleSections(settings, "disk");
   const [range, setRange] = useTabState("disk", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("disk", "metric", "disk");
   const apps = useApps();
@@ -628,35 +638,38 @@ export function DiskTab() {
         </Card>
       </div>
 
-      {sectionShown(shown, "volumes") && (
-        <Card title={t("overview.volumes")}>
-          <VolumeList />
-        </Card>
-      )}
-
-      {sectionShown(shown, "history") && (
-        <HistoryCard
-          range={range}
-          onRangeChange={setRange}
-          series={[
-            { metric: "diskRead", tone: TONE.disk, label: t("label.read") },
-            { metric: "diskWrite", tone: TONE.disk, label: t("label.write") },
-          ]}
-        />
-      )}
-
-      {sectionShown(shown, "apps") && (
-        <Card title={t("overview.topApps")}>
-          <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
-        </Card>
-      )}
+      <Sections
+        order={order}
+        parts={{
+          volumes: (
+            <Card title={t("overview.volumes")}>
+              <VolumeList />
+            </Card>
+          ),
+          history: (
+            <HistoryCard
+              range={range}
+              onRangeChange={setRange}
+              series={[
+                { metric: "diskRead", tone: TONE.disk, label: t("label.read") },
+                { metric: "diskWrite", tone: TONE.disk, label: t("label.write") },
+              ]}
+            />
+          ),
+          apps: (
+            <Card title={t("overview.topApps")}>
+              <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
+            </Card>
+          ),
+        }}
+      />
     </div>
   );
 }
 
 export function NetworkTab() {
   const { snapshot, settings, units, t } = useStore();
-  const shown = visibleSections(settings, "network");
+  const order = visibleSections(settings, "network");
   const [range, setRange] = useTabState("network", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("network", "metric", "connections");
   const apps = useApps();
@@ -702,62 +715,65 @@ export function NetworkTab() {
         </Card>
       </div>
 
-      {sectionShown(shown, "adapters") && (
-        <Card title={t("overview.adapters")}>
-          <div className="breakdown">
-            {n.adapters
-              .filter((a) => !a.isLoopback)
-              .map((a) => {
-                // One row per card: state, how fast the link is, and both directions. The
-                // shared break-row grid is three columns built for a meter, and dropping a
-                // status badge into that meter column stretched it into what looked like an
-                // empty progress bar.
-                return (
-                  <div key={a.name} className="adapter-row">
-                    <span className="break-label" title={a.name}>
-                      {a.name}
-                    </span>
-                    <Pill className="justify-self-start" tone={a.isUp ? "" : "faint"}>{a.isUp ? t("network.linkUp") : t("network.linkDown")}</Pill>
-                    <span className="adapter-speed num faint">
-                      {a.linkSpeedBitsPerSecond ? formatLinkSpeed(a.linkSpeedBitsPerSecond, units.locale) : "—"}
-                    </span>
-                    <span className="adapter-rate num">
-                      ↓ {formatRate(a.downloadBytesPerSecond, units, "network")}
-                    </span>
-                    <span className="adapter-rate num">
-                      ↑ {formatRate(a.uploadBytesPerSecond, units, "network")}
-                    </span>
-                  </div>
-                );
-              })}
-            {n.adapters.filter((a) => !a.isLoopback).length === 0 && <p className="empty">{t("state.noData")}</p>}
-          </div>
-        </Card>
-      )}
-
-      {sectionShown(shown, "history") && (
-        <HistoryCard
-          range={range}
-          onRangeChange={setRange}
-          series={[
-            { metric: "download", tone: TONE.network, label: t("label.download") },
-            { metric: "upload", tone: TONE.network, label: t("label.upload") },
-          ]}
-        />
-      )}
-
-      {sectionShown(shown, "connections") && (
-        <Card title={t("overview.topApps")} right={<p className="hint faint">{t("network.perAppHelp")}</p>}>
-          <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
-        </Card>
-      )}
+      <Sections
+        order={order}
+        parts={{
+          adapters: (
+            <Card title={t("overview.adapters")}>
+              <div className="breakdown">
+                {n.adapters
+                  .filter((a) => !a.isLoopback)
+                  .map((a) => {
+                    // One row per card: state, how fast the link is, and both directions. The
+                    // shared break-row grid is three columns built for a meter, and dropping a
+                    // status badge into that meter column stretched it into what looked like an
+                    // empty progress bar.
+                    return (
+                      <div key={a.name} className="adapter-row">
+                        <span className="break-label" title={a.name}>
+                          {a.name}
+                        </span>
+                        <Pill className="justify-self-start" tone={a.isUp ? "" : "faint"}>{a.isUp ? t("network.linkUp") : t("network.linkDown")}</Pill>
+                        <span className="adapter-speed num faint">
+                          {a.linkSpeedBitsPerSecond ? formatLinkSpeed(a.linkSpeedBitsPerSecond, units.locale) : "—"}
+                        </span>
+                        <span className="adapter-rate num">
+                          ↓ {formatRate(a.downloadBytesPerSecond, units, "network")}
+                        </span>
+                        <span className="adapter-rate num">
+                          ↑ {formatRate(a.uploadBytesPerSecond, units, "network")}
+                        </span>
+                      </div>
+                    );
+                  })}
+                {n.adapters.filter((a) => !a.isLoopback).length === 0 && <p className="empty">{t("state.noData")}</p>}
+              </div>
+            </Card>
+          ),
+          history: (
+            <HistoryCard
+              range={range}
+              onRangeChange={setRange}
+              series={[
+                { metric: "download", tone: TONE.network, label: t("label.download") },
+                { metric: "upload", tone: TONE.network, label: t("label.upload") },
+              ]}
+            />
+          ),
+          connections: (
+            <Card title={t("overview.topApps")} right={<p className="hint faint">{t("network.perAppHelp")}</p>}>
+              <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
+            </Card>
+          ),
+        }}
+      />
     </div>
   );
 }
 
 export function GpuTab() {
   const { snapshot, settings, units, t } = useStore();
-  const shown = visibleSections(settings, "gpu");
+  const order = visibleSections(settings, "gpu");
   const [range, setRange] = useTabState("gpu", "range", 3600);
   if (!snapshot) return <Missing />;
   const g = snapshot.gpu;
@@ -809,31 +825,35 @@ export function GpuTab() {
         </Card>
       </div>
 
-      {sectionShown(shown, "apps") && (
-        <Card title={t("overview.topApps")}>
-          <div className="rows">
-            {g.perProcess.slice(0, 20).map((row) => {
-              const owner = appFor(row.pid);
-              const name = owner?.name?.trim() || `pid ${row.pid}`;
-              return (
-                <div key={row.pid} className="row">
-                  <AppIcon name={name} seed={String(row.pid)} exePath={owner?.exePath || undefined} />
-                  <div className="row-main">
-                    <span className="row-name">{name}</span>
-                    <span className="row-sub faint">{owner ? `${t("metric.gpu")} · ${row.pid}` : "—"}</span>
-                  </div>
-                  <span className="row-value num">{formatPercent(row.percent, units.locale, 1)}</span>
-                </div>
-              );
-            })}
-            {g.perProcess.length === 0 && <p className="empty">{t("state.noData")}</p>}
-          </div>
-        </Card>
-      )}
-
-      {sectionShown(shown, "history") && (
-        <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "gpu", tone: TONE.gpu }]} />
-      )}
+      <Sections
+        order={order}
+        parts={{
+          apps: (
+            <Card title={t("overview.topApps")}>
+              <div className="rows">
+                {g.perProcess.slice(0, 20).map((row) => {
+                  const owner = appFor(row.pid);
+                  const name = owner?.name?.trim() || `pid ${row.pid}`;
+                  return (
+                    <div key={row.pid} className="row">
+                      <AppIcon name={name} seed={String(row.pid)} exePath={owner?.exePath || undefined} />
+                      <div className="row-main">
+                        <span className="row-name">{name}</span>
+                        <span className="row-sub faint">{owner ? `${t("metric.gpu")} · ${row.pid}` : "—"}</span>
+                      </div>
+                      <span className="row-value num">{formatPercent(row.percent, units.locale, 1)}</span>
+                    </div>
+                  );
+                })}
+                {g.perProcess.length === 0 && <p className="empty">{t("state.noData")}</p>}
+              </div>
+            </Card>
+          ),
+          history: (
+            <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "gpu", tone: TONE.gpu }]} />
+          ),
+        }}
+      />
     </div>
   );
 }
@@ -841,7 +861,7 @@ export function GpuTab() {
 export function BatteryTab() {
   const { snapshot, settings, units, t } = useStore();
   const [range, setRange] = useTabState("battery", "range", 3600);
-  const shown = visibleSections(settings, "battery");
+  const order = visibleSections(settings, "battery");
   if (!snapshot) return <Missing />;
   const b = snapshot.battery;
   const temp = snapshot.temperature;
@@ -875,36 +895,40 @@ export function BatteryTab() {
         </div>
       )}
 
-      {sectionShown(shown, "power") && (
-        <Card title={t("temperature.title")} tone={TONE.temperature}>
-          <div className="hero-figure">
-            <Tween className="huge num" style={{ color: TONE.temperature }} value={temp.hottest} format={(n) => formatTemp(n, units)} />
-            <span className="faint">{t("label.hottest")}</span>
-          </div>
-          <div className="breakdown">
-            {temp.sensors.map((s) => (
-              <div key={s.id} className="break-row">
-                <span className="break-label">{s.label}</span>
-                <Meter ratio={Math.min(1, s.celsius / 110)} color={TONE.temperature} />
-                <span className="break-value num">{formatTemp(s.celsius, units)}</span>
+      <Sections
+        order={order}
+        parts={{
+          power: (
+            <Card title={t("temperature.title")} tone={TONE.temperature}>
+              <div className="hero-figure">
+                <Tween className="huge num" style={{ color: TONE.temperature }} value={temp.hottest} format={(n) => formatTemp(n, units)} />
+                <span className="faint">{t("label.hottest")}</span>
               </div>
-            ))}
-          </div>
-          <AvailabilityNote state={temp.availability} t={t} elevate />
-        </Card>
-      )}
-
-      {sectionShown(shown, "history") && (
-        <HistoryCard
-          range={range}
-          onRangeChange={setRange}
-          series={
-            b.hasBattery
-              ? [{ metric: "battery", tone: TONE.battery }]
-              : [{ metric: "temp", tone: TONE.temperature }]
-          }
-        />
-      )}
+              <div className="breakdown">
+                {temp.sensors.map((s) => (
+                  <div key={s.id} className="break-row">
+                    <span className="break-label">{s.label}</span>
+                    <Meter ratio={Math.min(1, s.celsius / 110)} color={TONE.temperature} />
+                    <span className="break-value num">{formatTemp(s.celsius, units)}</span>
+                  </div>
+                ))}
+              </div>
+              <AvailabilityNote state={temp.availability} t={t} elevate />
+            </Card>
+          ),
+          history: (
+            <HistoryCard
+              range={range}
+              onRangeChange={setRange}
+              series={
+                b.hasBattery
+                  ? [{ metric: "battery", tone: TONE.battery }]
+                  : [{ metric: "temp", tone: TONE.temperature }]
+              }
+            />
+          ),
+        }}
+      />
     </div>
   );
 }

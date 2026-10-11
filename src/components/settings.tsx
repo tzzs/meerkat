@@ -1,9 +1,30 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { ipc } from "../lib/ipc";
 import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
-import { isMetricKind, METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
+import { nudge, parseNumberInput, type NumberProblem, type NumberRule } from "../lib/number-input";
+import { effectiveSections, moveWithin, sectionLabelKey, withTabSections } from "../lib/sections";
+import { alertFieldSpec, coresForPercent, toShown, toStored, type AlertField } from "../lib/thresholds";
+import {
+  isMetricKind,
+  METRIC_ORDER,
+  powerTabMode,
+  type MetricKind,
+  type SectionConfig,
+  type Settings,
+  type TrayReadout,
+  type TrayStyle,
+} from "../lib/types";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogActions,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { TAB_LABEL } from "../i18n";
@@ -23,6 +44,7 @@ const TRAY_METRICS: Record<MetricKind, Key> = {
 
 export function SettingsPages({ page, setPage }: { page: Page; setPage: (p: Page | null) => void }) {
   const { settings, save, t, settingsError, clearSettingsError } = useStore();
+  const [confirmReset, setConfirmReset] = useState(false);
   const pages: [Page, string][] = [
     ["general", t("settings.general")],
     ["layout", t("settings.layout")],
@@ -54,11 +76,72 @@ export function SettingsPages({ page, setPage }: { page: Page; setPage: (p: Page
         {page === "general" && <General settings={settings} save={save} />}
         {page === "layout" && <Layout settings={settings} save={save} />}
         {page === "about" && <About />}
-        <button className="reset" onClick={() => save({ ...fallbackSettings, tray: settings.tray })}>
+        <button className="reset" onClick={() => setConfirmReset(true)}>
           {t("action.reset")}
         </button>
       </div>
+      {/* It used to wipe the layout, the units and the thresholds on a single click. */}
+      <Confirm
+        open={confirmReset}
+        onClose={() => setConfirmReset(false)}
+        title={t("settings.resetTitle")}
+        body={t("settings.resetBody")}
+        confirmLabel={t("action.reset")}
+        onConfirm={() => save({ ...fallbackSettings, tray: settings.tray })}
+      />
     </div>
+  );
+}
+
+/**
+ * A question with two answers, over Radix's dialog (see ui/dialog): focus is held inside, Escape
+ * and the backdrop cancel, and focus starts on Cancel, so Enter on an open dialog does nothing
+ * irreversible.
+ */
+function Confirm({
+  open,
+  onClose,
+  title,
+  body,
+  confirmLabel,
+  danger = false,
+  onConfirm,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  onConfirm: () => void;
+}) {
+  const { t } = useStore();
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent label={title}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="text-muted-foreground">{body}</DialogDescription>
+        </DialogHeader>
+        <DialogActions>
+          <DialogClose>
+            <Button variant="chip" data-autofocus>
+              {t("action.cancel")}
+            </Button>
+          </DialogClose>
+          <span className="spacer" />
+          <Button
+            variant={danger ? "danger" : "primary"}
+            onClick={() => {
+              onClose();
+              onConfirm();
+            }}
+          >
+            {confirmLabel}
+          </Button>
+        </DialogActions>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -100,10 +183,32 @@ function toggle(value: boolean, onChange: (v: boolean) => void) {
   return <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />;
 }
 
+/** "5" for a quarter of twenty cores, "0.6" for three per cent of them. */
+function formatCores(cores: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: cores < 10 ? 1 : 0 }).format(cores);
+}
+
 function General({ settings, save }: { settings: Settings; save: (s: Settings) => void }) {
   const { t, snapshot, units } = useStore();
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => save({ ...settings, [key]: value });
   const sample = snapshot;
+  const logicalCores = snapshot?.machine.logicalCores ?? null;
+  const cores = coresForPercent(settings.alerts.cpuPercent, logicalCores);
+
+  /** A threshold's box, in the units the lists print it in (see alertFieldSpec). */
+  const alertBox = (field: AlertField) => {
+    const spec = alertFieldSpec(field, settings);
+    return (
+      <NumberBox
+        value={toShown(settings.alerts[field], spec)}
+        suffix={spec.suffix}
+        rule={spec.rule}
+        onCommit={(shown) =>
+          save({ ...settings, alerts: { ...settings.alerts, [field]: toStored(shown, spec) } })
+        }
+      />
+    );
+  };
 
   return (
     <div className="settings-group">
@@ -180,65 +285,117 @@ function General({ settings, save }: { settings: Settings; save: (s: Settings) =
       <Row label={t("settings.alertsEnabled")}>
         {toggle(settings.alerts.enabled, (v) => save({ ...settings, alerts: { ...settings.alerts, enabled: v } }))}
       </Row>
-      <Row label={t("settings.alertCpu")}>
-        <NumberBox
-          value={settings.alerts.cpuPercent}
-          suffix="%"
-          onChange={(v) => save({ ...settings, alerts: { ...settings.alerts, cpuPercent: v } })}
-        />
+      {/* The threshold is a share of the whole machine, which on a twenty-thread chip is five
+          threads; the hint says so, because "25%" alone reads as a quarter of one core. */}
+      <Row
+        label={t("settings.alertCpuMachine")}
+        hint={
+          cores === null || logicalCores === null
+            ? undefined
+            : t("settings.alertCpuCores", { cores: formatCores(cores, units.locale), total: logicalCores })
+        }
+      >
+        {alertBox("cpuPercent")}
       </Row>
-      <Row label={t("settings.alertMemory")}>
-        <NumberBox
-          value={Math.round(settings.alerts.memoryGrowBytes / 1048576)}
-          suffix="MB"
-          onChange={(v) => save({ ...settings, alerts: { ...settings.alerts, memoryGrowBytes: v * 1048576 } })}
-        />
-      </Row>
-      <Row label={t("settings.alertDisk")}>
-        <NumberBox
-          value={Math.round(settings.alerts.diskBytesPerSecond / 1048576)}
-          suffix="MB/s"
-          onChange={(v) => save({ ...settings, alerts: { ...settings.alerts, diskBytesPerSecond: v * 1048576 } })}
-        />
-      </Row>
-      <Row label={t("settings.alertNetwork")}>
-        <NumberBox
-          value={Math.round(settings.alerts.networkBytesPerSecond / 1048576)}
-          suffix="MB/s"
-          onChange={(v) => save({ ...settings, alerts: { ...settings.alerts, networkBytesPerSecond: v * 1048576 } })}
-        />
-      </Row>
-      <Row label={t("settings.alertSustained")}>
-        <NumberBox
-          value={settings.alerts.sustainedSeconds}
-          suffix="s"
-          onChange={(v) => save({ ...settings, alerts: { ...settings.alerts, sustainedSeconds: v } })}
-        />
-      </Row>
+      <Row label={t("settings.alertMemoryWindow")}>{alertBox("memoryGrowBytes")}</Row>
+      <Row label={t("settings.alertDisk")}>{alertBox("diskBytesPerSecond")}</Row>
+      <Row label={t("settings.alertNetwork")}>{alertBox("networkBytesPerSecond")}</Row>
+      <Row label={t("settings.alertSustained")}>{alertBox("sustainedSeconds")}</Row>
     </div>
   );
 }
 
-function NumberBox({ value, suffix, onChange }: { value: number; suffix: string; onChange: (v: number) => void }) {
+/**
+ * A number the user types, saved only when it is valid for the field.
+ *
+ * Enter commits, so does leaving the box; Escape puts the saved value back (and, with nothing
+ * to put back, is left to close the page as it always did); the arrow keys step. What fails the
+ * field's rule is said in place and is never sent to the backend.
+ */
+function NumberBox({
+  value,
+  suffix,
+  rule,
+  onCommit,
+}: {
+  value: number;
+  suffix: string;
+  rule: NumberRule;
+  onCommit: (value: number) => void;
+}) {
+  const { t } = useStore();
   const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
+  const [problem, setProblem] = useState<NumberProblem | null>(null);
+  const errorId = useId();
+  // The saved value moved (a rollback, a unit change, the backend clamped it): follow it.
+  useEffect(() => {
+    setText(String(value));
+    setProblem(null);
+  }, [value]);
+
+  const commit = () => {
+    const parsed = parseNumberInput(text, rule);
+    if (!parsed.ok) {
+      setProblem(parsed.problem);
+      return;
+    }
+    setProblem(null);
+    setText(String(parsed.value));
+    if (parsed.value !== value) onCommit(parsed.value);
+  };
+
+  const edited = text !== String(value) || problem !== null;
+  const error =
+    problem === null
+      ? null
+      : t(problem === "notWhole" ? "settings.numberWhole" : "settings.numberRange", {
+          min: rule.min,
+          max: rule.max,
+        });
+
   return (
     <span className="number-box">
       <input
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => {
-          const parsed = Number(text);
-          if (Number.isFinite(parsed)) onChange(parsed);
+        inputMode={rule.integer ? "numeric" : "decimal"}
+        aria-invalid={problem !== null}
+        aria-describedby={error ? errorId : undefined}
+        onChange={(event) => {
+          setText(event.target.value);
+          setProblem(null);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          } else if (event.key === "Escape" && edited) {
+            // Handled here: it would otherwise also close the whole Settings page.
+            event.preventDefault();
+            event.stopPropagation();
+            setText(String(value));
+            setProblem(null);
+          } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            event.preventDefault();
+            setText(nudge(text, event.key === "ArrowUp" ? 1 : -1, rule));
+            setProblem(null);
+          }
         }}
       />
       <span className="faint">{suffix}</span>
+      {error && (
+        <span id={errorId} className="field-error" role="alert">
+          {error}
+        </span>
+      )}
     </span>
   );
 }
 
 function Layout({ settings, save }: { settings: Settings; save: (s: Settings) => void }) {
   const { t, snapshot, units } = useStore();
+  // One tab's sections are open at a time; the list is long enough with all eight shut.
+  const [openTab, setOpenTab] = useState<string | null>(null);
 
   const updateTray = (next: TrayReadout[]) => save({ ...settings, tray: next });
 
@@ -265,6 +422,17 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
 
   const usedMetrics = new Set(settings.tray.map((r) => r.metric));
 
+  // The panel can only draw a metric, so only metrics are offered; an id left in the file by an
+  // older default stays where it is and is stepped over.
+  const tiles = settings.panel.tiles;
+  const metricTiles = tiles.filter((tile) => isMetricKind(tile.id));
+  const saveTiles = (next: SectionConfig[]) => save({ ...settings, panel: { ...settings.panel, tiles: next } });
+  const moveTile = (id: string, delta: -1 | 1) =>
+    saveTiles(moveWithin(tiles, id, delta, (tile) => isMetricKind(tile.id)));
+
+  const saveTabs = (tabs: Settings["window"]["tabs"]) => save({ ...settings, window: { ...settings.window, tabs } });
+  const moveTab = (id: string, delta: -1 | 1) => saveTabs(moveWithin(settings.window.tabs, id, delta));
+
   return (
     <div className="settings-group">
       <h4 className="section-title">{t("settings.tray")}</h4>
@@ -274,6 +442,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
           <input
             type="checkbox"
             checked={readout.enabled}
+            aria-label={t(TRAY_METRICS[readout.metric])}
             onChange={(e) =>
               updateTray(settings.tray.map((r) => (r.id === readout.id ? { ...r, enabled: e.target.checked } : r)))
             }
@@ -306,10 +475,14 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
           )}
           <span className="tray-preview num">{preview(readout, snapshot, units)}</span>
           <span className="spacer" />
-          <button onClick={() => move(index, -1)} aria-label={t("settings.moveUp")}>
+          <button disabled={index === 0} onClick={() => move(index, -1)} aria-label={t("settings.moveUp")}>
             ↑
           </button>
-          <button onClick={() => move(index, 1)} aria-label={t("settings.moveDown")}>
+          <button
+            disabled={index === settings.tray.length - 1}
+            onClick={() => move(index, 1)}
+            aria-label={t("settings.moveDown")}
+          >
             ↓
           </button>
           <button
@@ -340,26 +513,40 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
           (v) => save({ ...settings, panel: { ...settings.panel, layout: v } }),
         )}
       </Row>
+      {/* One group, so the chip that shows a tile still names it to a screen reader as part of
+          "Tiles shown in the panel"; the arrows beside each chip set the order the panel draws. */}
       <ToggleGroup
         type="multiple"
-        className="mb-[var(--sp-3)]"
-        value={settings.panel.tiles.filter((tile) => tile.visible).map((tile) => tile.id)}
+        className="mb-[var(--sp-3)] flex-col items-stretch gap-0"
+        value={metricTiles.filter((tile) => tile.visible).map((tile) => tile.id)}
         onValueChange={(next) =>
-          save({
-            ...settings,
-            panel: {
-              ...settings.panel,
-              tiles: settings.panel.tiles.map((tile) => ({ ...tile, visible: next.includes(tile.id) })),
-            },
-          })
+          saveTiles(tiles.map((tile) => (isMetricKind(tile.id) ? { ...tile, visible: next.includes(tile.id) } : tile)))
         }
         aria-label={t("settings.visibleTiles")}
       >
-        {settings.panel.tiles.filter((tile) => isMetricKind(tile.id)).map((tile) => (
-          <ToggleChip key={tile.id} value={tile.id}>
-            {t(TRAY_METRICS[tile.id as MetricKind] ?? "metric.cpu")}
-          </ToggleChip>
-        ))}
+        {metricTiles.map((tile, index) => {
+          const name = t(TRAY_METRICS[tile.id as MetricKind]);
+          return (
+            <div className="tray-row" key={tile.id}>
+              <ToggleChip value={tile.id}>{name}</ToggleChip>
+              <span className="spacer" />
+              <button
+                disabled={index === 0}
+                onClick={() => moveTile(tile.id, -1)}
+                aria-label={`${t("settings.moveUp")}: ${name}`}
+              >
+                ↑
+              </button>
+              <button
+                disabled={index === metricTiles.length - 1}
+                onClick={() => moveTile(tile.id, 1)}
+                aria-label={`${t("settings.moveDown")}: ${name}`}
+              >
+                ↓
+              </button>
+            </div>
+          );
+        })}
       </ToggleGroup>
 
       <h4 className="section-title">{t("settings.windowTabs")}</h4>
@@ -368,47 +555,92 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
         const mode = powerTabMode(snapshot);
         const offHardware = tab.id === "battery" && mode === "hidden";
         const label = tab.id === "battery" && mode === "thermal" ? "metric.temperature" : TAB_LABEL[tab.id];
+        const name = t(label);
+        const sections = effectiveSections(tab, tab.id);
+        const open = openTab === tab.id;
+        const setSections = (next: SectionConfig[]) => save(withTabSections(settings, tab.id, next));
         return (
-        <div className="tray-row" key={tab.id}>
-          <input
-            type="checkbox"
-            checked={tab.visible}
-            disabled={offHardware}
-            onChange={(e) =>
-              save({
-                ...settings,
-                window: {
-                  tabs: settings.window.tabs.map((x, i) => (i === index ? { ...x, visible: e.target.checked } : x)),
-                },
-              })
-            }
-          />
-          <span className="tray-name">{t(label)}</span>
-          {offHardware && <span className="faint">{t("settings.noPowerHardware")}</span>}
-          <span className="spacer" />
-          <button
-            onClick={() => {
-              const list = [...settings.window.tabs];
-              const target = index - 1;
-              if (target < 0) return;
-              [list[index], list[target]] = [list[target], list[index]];
-              save({ ...settings, window: { tabs: list } });
-            }}
-          >
-            ↑
-          </button>
-          <button
-            onClick={() => {
-              const list = [...settings.window.tabs];
-              const target = index + 1;
-              if (target >= list.length) return;
-              [list[index], list[target]] = [list[target], list[index]];
-              save({ ...settings, window: { tabs: list } });
-            }}
-          >
-            ↓
-          </button>
-        </div>
+          <div className="tab-config" key={tab.id}>
+            <div className="tray-row">
+              <input
+                type="checkbox"
+                checked={tab.visible}
+                disabled={offHardware}
+                aria-label={name}
+                onChange={(e) =>
+                  saveTabs(settings.window.tabs.map((x, i) => (i === index ? { ...x, visible: e.target.checked } : x)))
+                }
+              />
+              <span className="tray-name">{name}</span>
+              {offHardware && <span className="faint">{t("settings.noPowerHardware")}</span>}
+              <span className="spacer" />
+              {sections.length > 0 && (
+                <button
+                  className="tray-expand"
+                  aria-expanded={open}
+                  onClick={() => setOpenTab(open ? null : tab.id)}
+                >
+                  {t("settings.sections")} {open ? "▴" : "▾"}
+                </button>
+              )}
+              <button
+                disabled={index === 0}
+                onClick={() => moveTab(tab.id, -1)}
+                aria-label={`${t("settings.moveUp")}: ${name}`}
+              >
+                ↑
+              </button>
+              <button
+                disabled={index === settings.window.tabs.length - 1}
+                onClick={() => moveTab(tab.id, 1)}
+                aria-label={`${t("settings.moveDown")}: ${name}`}
+              >
+                ↓
+              </button>
+            </div>
+            {open && (
+              <div className="section-list">
+                {sections.map((section, i) => {
+                  const key = sectionLabelKey(tab.id, section.id);
+                  const sectionName = key ? t(key) : section.id;
+                  return (
+                    <div className="tray-row" key={section.id}>
+                      <input
+                        type="checkbox"
+                        checked={section.visible}
+                        aria-label={sectionName}
+                        onChange={(e) =>
+                          setSections(
+                            sections.map((s) => (s.id === section.id ? { ...s, visible: e.target.checked } : s)),
+                          )
+                        }
+                      />
+                      <span className="tray-name">{sectionName}</span>
+                      <span className="spacer" />
+                      <button
+                        disabled={i === 0}
+                        onClick={() => setSections(moveWithin(sections, section.id, -1))}
+                        aria-label={`${t("settings.moveUp")}: ${sectionName}`}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        disabled={i === sections.length - 1}
+                        onClick={() => setSections(moveWithin(sections, section.id, 1))}
+                        aria-label={`${t("settings.moveDown")}: ${sectionName}`}
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  );
+                })}
+                {/* Back to "all of them, as designed", which is how the file stores it. */}
+                <button className="reset-tab" disabled={tab.sections.length === 0} onClick={() => setSections([])}>
+                  {t("settings.resetTab")}
+                </button>
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
@@ -433,18 +665,21 @@ function preview(
     case "network":
       return formatRate(snapshot.network.downloadBytesPerSecond, units, "network");
     case "gpu":
-      return `${Math.round(snapshot.gpu.totalPercent ?? 0)}%`;
+      return snapshot.gpu.totalPercent === null ? "—" : `${Math.round(snapshot.gpu.totalPercent)}%`;
     case "battery":
-      return `${Math.round(snapshot.battery.chargePercent ?? 0)}%`;
+      return snapshot.battery.hasBattery && snapshot.battery.chargePercent !== null
+        ? `${Math.round(snapshot.battery.chargePercent)}%`
+        : "—";
     case "temperature":
-      return snapshot.temperature.hottest ? `${Math.round(snapshot.temperature.hottest)}°` : "—";
+      return snapshot.temperature.hottest !== null ? `${Math.round(snapshot.temperature.hottest)}°` : "—";
   }
 }
 
 function About() {
-  const { t, snapshot, settings } = useStore();
+  const { t, snapshot } = useStore();
   const [version, setVersion] = useState("…");
   const [copied, setCopied] = useState(false);
+  const [confirmQuit, setConfirmQuit] = useState(false);
   useEffect(() => {
     void ipc.version().then(setVersion);
   }, []);
@@ -470,7 +705,21 @@ function About() {
         {copied ? t("action.done") : t("settings.aboutCopyReport")}
       </Button>
       <p className="hint faint">{t("settings.aboutReportHelp")}</p>
-      <p className="hint faint">{JSON.stringify(settings.alerts)}</p>
+
+      {/* Closing the window only hides it, so without this the way out was the tray menu. */}
+      <Button variant="danger" className="mt-[var(--sp-4)] self-start" onClick={() => setConfirmQuit(true)}>
+        {t("action.quit")}
+      </Button>
+      <p className="hint faint">{t("settings.quitHelp")}</p>
+      <Confirm
+        open={confirmQuit}
+        onClose={() => setConfirmQuit(false)}
+        title={t("quit.title")}
+        body={t("quit.body")}
+        confirmLabel={t("action.quit")}
+        danger
+        onConfirm={() => ipc.quitPulse()}
+      />
     </div>
   );
 }

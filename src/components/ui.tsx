@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
 import { Badge, type BadgeProps } from "./ui/badge";
@@ -64,6 +74,22 @@ export function Card({
       )}
       {children}
     </UICard>
+  );
+}
+
+/**
+ * A tab's sections, in the order the user saved and without the ones they hid. `parts` holds
+ * every section the tab can draw, keyed by id; `order` (see visibleSections) picks and sequences
+ * them. The tabs used to write the sections out in one fixed order behind "is it shown?", which
+ * kept visibility and ignored the arrows in Settings.
+ */
+export function Sections({ order, parts }: { order: string[]; parts: Record<string, ReactNode> }) {
+  return (
+    <>
+      {order.map((id) => (
+        <Fragment key={id}>{parts[id]}</Fragment>
+      ))}
+    </>
   );
 }
 

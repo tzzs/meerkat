@@ -816,6 +816,18 @@
   font-family: var(--font-num);
   font-size: 12px;
 }
+/* What was typed does not fit the field, and has not been saved. */
+.number-box input[aria-invalid="true"] {
+  border-color: var(--danger-edge);
+  background: var(--danger-tint);
+}
+.number-box {
+  flex-wrap: wrap;
+}
+.field-error {
+  font-size: 11px;
+  color: var(--m-danger);
+}
 .tray-row {
   display: flex;
   align-items: center;
@@ -837,6 +849,57 @@
 .tray-row button:hover {
   background: var(--surface-3);
   color: var(--text);
+}
+.tray-row button:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+/* A chip in a row (a panel tile's visibility) keeps its own look; the rule above is for the
+   arrows and the remove button. */
+.tray-row button[aria-pressed] {
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: var(--text-2);
+}
+.tray-row button[aria-pressed="true"] {
+  color: var(--text);
+}
+.tray-row .tray-expand {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+/* A tab's sections, indented under the tab they belong to. */
+.tab-config {
+  margin-bottom: 4px;
+}
+.tab-config > .tray-row {
+  margin-bottom: 0;
+}
+.section-list {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 6px var(--sp-5);
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--hairline-strong);
+}
+.section-list .tray-row {
+  background: transparent;
+  margin-bottom: 2px;
+}
+.reset-tab {
+  align-self: flex-start;
+  margin: 2px 10px 0;
+  padding: 3px 9px;
+  border-radius: var(--r-xs);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.reset-tab:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.reset-tab:disabled {
+  opacity: 0.4;
 }
 .tray-name {
   min-width: 92px;
