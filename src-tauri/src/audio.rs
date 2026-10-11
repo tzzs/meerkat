@@ -41,7 +41,9 @@
 //! Windows does not persist per-application volume: the session dies with the process. To
 //! reproduce the macOS behaviour ("Chrome stays at 30% next launch"), [`remember_volume`]
 //! stores a rule keyed by `exe name + endpoint id`, and [`apply_saved_volumes`] re-applies the
-//! stored rules to sessions that have just appeared. Callers own the state file path.
+//! stored rules to the sessions that are live and, from a watcher thread it starts once, to
+//! every session that appears later — each session once, when it is first met, so a volume the
+//! user changes afterwards is not fought over. Callers own the state file path.
 //!
 //! # Errors
 //! Nothing is swallowed at the write path: failures carry the Windows message text and the
@@ -51,9 +53,11 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -921,85 +925,216 @@ pub fn remember_volume(
     save_store(state_path, &store)
 }
 
-/// Re-applies remembered volumes to sessions that are currently live.
+/// What a remembered rule asks of one session.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Adjustment {
+    volume: Option<f32>,
+    muted: Option<bool>,
+}
+
+/// The write that makes a session match the rule for its `exe` and endpoint, or `None` when no
+/// rule applies or the session already matches (a value that is already right is not written:
+/// a write is a change the app and the user can both see).
+///
+/// A rule for the session's own endpoint wins over one for "every endpoint" (empty endpoint),
+/// whichever is listed first. A session whose endpoint cannot be determined only ever matches
+/// the latter, so nothing is guessed across devices.
+fn adjustment_for(
+    rules: &[VolumeRule],
+    exe: &str,
+    endpoint_id: &str,
+    volume: f32,
+    muted: bool,
+) -> Option<Adjustment> {
+    let for_exe = |rule: &&VolumeRule| rule.exe.eq_ignore_ascii_case(exe);
+    let rule = rules
+        .iter()
+        .filter(for_exe)
+        .find(|rule| same_endpoint(&rule.endpoint_id, endpoint_id))
+        .or_else(|| rules.iter().filter(for_exe).find(|rule| rule.endpoint_id.is_empty()))?;
+    let volume = rule.volume.filter(|wanted| (wanted - volume).abs() > 0.001);
+    let muted = rule.muted.filter(|wanted| *wanted != muted);
+    (volume.is_some() || muted.is_some()).then_some(Adjustment { volume, muted })
+}
+
+fn write_adjustment(session: &ISimpleAudioVolume, change: Adjustment) -> Result<(), String> {
+    let mut errs = Vec::new();
+    if let Some(volume) = change.volume {
+        if let Err(e) = unsafe { session.SetMasterVolume(clamp01(volume), core::ptr::null()) } {
+            errs.push(fmt_err("SetMasterVolume", e));
+        }
+    }
+    if let Some(muted) = change.muted {
+        if let Err(e) = unsafe { session.SetMute(muted, core::ptr::null()) } {
+            errs.push(fmt_err("SetMute", e));
+        }
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs.join("; "))
+    }
+}
+
+/// How often the watcher looks for new sessions. An app that starts playing is at its own
+/// volume until the next look, so this is also the longest a restored volume is late.
+const WATCH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Sweeps a session may be absent from the enumeration before it is forgotten. The audio
+/// service can report an empty list for a moment while it rebuilds it; forgetting everything
+/// then would make every session look new, and the rules would be applied over whatever the
+/// user had set since.
+const FORGET_AFTER_SWEEPS: u64 = 30;
+
+/// The sessions that have been met, so a rule is applied to a session once — when it appears —
+/// and never again over what the user does to it afterwards.
+struct SeenSessions {
+    sweep: u64,
+    last_met: HashMap<(Role, String), u64>,
+}
+
+impl SeenSessions {
+    fn new() -> Self {
+        Self { sweep: 0, last_met: HashMap::new() }
+    }
+
+    /// True the first time this session is met; every call records that it was met now.
+    fn is_new(&mut self, role: Role, session: &str) -> bool {
+        self.last_met.insert((role, session.to_string()), self.sweep).is_none()
+    }
+
+    /// Ends a sweep of the enumeration, forgetting sessions that have not been met for a while.
+    fn end_sweep(&mut self) {
+        let now = self.sweep;
+        self.last_met.retain(|_, met| now - *met < FORGET_AFTER_SWEEPS);
+        self.sweep += 1;
+    }
+}
+
+/// One session's identity for [`SeenSessions`]: the instance identifier, which is unique per
+/// live session (a restarted app, a stream opened again, and a session moved to another device
+/// each get a new one); the process when a driver gives none.
+fn session_identity(info: &SessionInfo) -> String {
+    if info.instance_id.is_empty() {
+        format!("pid:{}", info.pid)
+    } else {
+        info.instance_id.clone()
+    }
+}
+
+/// One look at the live sessions of both directions: every session not met before gets the rule
+/// that matches it. Returns how many were adjusted; an `Err` only when something failed and
+/// nothing was adjusted, which keeps a partial success usable.
+fn restore_new_sessions(rules: &[VolumeRule], seen: &mut SeenSessions) -> Result<usize, String> {
+    let _guard = ComGuard::enter()?;
+    let mut applied = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+
+    for role in [Role::Render, Role::Capture] {
+        let looked = with_sessions(role, |probe| {
+            let info = &probe.info;
+            // No executable, no rule: it may be resolvable next time, so it is not recorded.
+            if info.exe.is_empty() || !seen.is_new(role, &session_identity(info)) {
+                return;
+            }
+            let Some(change) = adjustment_for(rules, &info.exe, &info.endpoint_id, info.volume, info.muted)
+            else {
+                return;
+            };
+            let Some(session) = probe.ctl else {
+                problems.push(format!("{}: session exposes no volume control", info.display_name));
+                return;
+            };
+            match write_adjustment(session, change) {
+                Ok(()) => applied += 1,
+                Err(e) => problems.push(format!("{}: {e}", info.display_name)),
+            }
+        });
+        // No default device in this direction (a machine with no microphone) is nothing to
+        // look at, and not a reason to skip the other direction.
+        if let Err(e) = looked {
+            problems.push(format!("{role:?}: {e}"));
+        }
+    }
+    seen.end_sweep();
+
+    if applied == 0 && !problems.is_empty() {
+        return Err(problems.join(" | "));
+    }
+    Ok(applied)
+}
+
+static WATCHER: OnceLock<()> = OnceLock::new();
+
+/// Looks for sessions that have appeared since the last look, every [`WATCH_INTERVAL`], for the
+/// life of the process. The rules are read again each time, so one remembered after start-up
+/// applies to the next session of that app. Failures are printed when they change, not every
+/// two seconds.
+fn watch(state_path: PathBuf, mut seen: SeenSessions) {
+    if let Err(e) = init_com() {
+        eprintln!("audio: the volume watcher could not start COM: {e}");
+        return;
+    }
+    let mut rules: Vec<VolumeRule> = Vec::new();
+    let mut last_problem = String::new();
+    loop {
+        std::thread::sleep(WATCH_INTERVAL);
+        match load_store(&state_path) {
+            Ok(store) => rules = store.rules,
+            Err(e) => {
+                if e != last_problem {
+                    eprintln!("audio: saved volumes not read, keeping the last ones: {e}");
+                    last_problem = e;
+                }
+            }
+        }
+        match restore_new_sessions(&rules, &mut seen) {
+            Ok(0) => last_problem.clear(),
+            Ok(count) => {
+                last_problem.clear();
+                eprintln!("audio: restored the saved volume of {count} new session(s)");
+            }
+            Err(e) => {
+                if e != last_problem {
+                    eprintln!("audio: restoring saved volumes: {e}");
+                    last_problem = e;
+                }
+            }
+        }
+    }
+}
+
+/// Re-applies remembered volumes to the sessions that are live now, and keeps doing so for
+/// sessions that appear later.
 ///
 /// Windows drops per-app volume when the process exits, so this is what makes a setting
 /// "stick": for each session whose `exe + endpoint` has a rule and whose current volume or
-/// mute differs from it, the value is written again. Call after [`sessions`] on each poll, or
-/// whenever a new session shows up. Returns the number of sessions actually adjusted.
+/// mute differs from it, the value is written again. The first call restores what is already
+/// playing and returns the number of sessions adjusted; it also starts, once per process, a
+/// background thread that looks at the sessions every couple of seconds and applies the rules
+/// to the ones it has not met before. A session is only ever adjusted when it is first met, so
+/// a volume changed afterwards, in Pulse or in Windows, is left alone. Later calls only
+/// restore once more; they do not start another watcher, and the first call's `state_path` is
+/// the one it keeps reading.
 ///
 /// A session whose endpoint cannot be determined (unexpected instance-identifier format) is
 /// matched on `exe` alone against rules with an empty endpoint, so nothing is guessed across
 /// devices. Individual write failures are collected and reported in an `Err` only if *no*
 /// session could be adjusted, keeping the common partial-success case usable.
 pub fn apply_saved_volumes(state_path: &Path) -> Result<usize, String> {
-    let store = load_store(state_path)?;
-    if store.rules.is_empty() {
-        return Ok(0);
-    }
-    let _guard = ComGuard::enter()?;
-    let mut applied = 0usize;
-    let mut problems: Vec<String> = Vec::new();
+    let mut seen = SeenSessions::new();
+    let first = load_store(state_path).and_then(|store| restore_new_sessions(&store.rules, &mut seen));
 
-    for role in [Role::Render, Role::Capture] {
-        with_sessions(role, |probe| {
-            let info = &probe.info;
-            if info.exe.is_empty() {
-                return;
-            }
-            let session_endpoint = if info.endpoint_id.is_empty() {
-                String::new()
-            } else {
-                info.endpoint_id.to_lowercase()
-            };
-            let rule = match store.rules.iter().find(|r| {
-                r.exe == info.exe
-                    && (r.endpoint_id.is_empty()
-                        || (!session_endpoint.is_empty()
-                            && r.endpoint_id == session_endpoint))
-            }) {
-                Some(rule) => rule,
-                None => return,
-            };
-            let volume = rule.volume.unwrap_or(info.volume);
-            let muted = rule.muted.unwrap_or(info.muted);
-            let volume_changed = (volume - info.volume).abs() > 0.001;
-            let mute_changed = muted != info.muted;
-            if !volume_changed && !mute_changed {
-                return;
-            }
-            let Some(session) = probe.ctl else {
-                problems.push(format!(
-                    "{}: session exposes no volume control",
-                    info.display_name
-                ));
-                return;
-            };
-            let mut errs = Vec::new();
-            if volume_changed {
-                if let Err(e) =
-                    unsafe { session.SetMasterVolume(clamp01(volume), core::ptr::null()) }
-                {
-                    errs.push(fmt_err("SetMasterVolume", e));
-                }
-            }
-            if mute_changed {
-                if let Err(e) = unsafe { session.SetMute(muted, core::ptr::null()) } {
-                    errs.push(fmt_err("SetMute", e));
-                }
-            }
-            if errs.is_empty() {
-                applied += 1;
-            } else {
-                problems.push(format!("{}: {}", info.display_name, errs.join("; ")));
-            }
-        })?;
+    if WATCHER.set(()).is_ok() {
+        let path = state_path.to_path_buf();
+        let started = std::thread::Builder::new()
+            .name("pulse-audio-restore".into())
+            .spawn(move || watch(path, seen));
+        if let Err(e) = started {
+            eprintln!("audio: the volume watcher could not start: {e}");
+        }
     }
-
-    if applied == 0 && !problems.is_empty() {
-        return Err(problems.join(" | "));
-    }
-    Ok(applied)
+    first
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,5 +1225,137 @@ mod tests {
     fn missing_state_file_is_not_an_error() {
         let path = std::env::temp_dir().join("pulse-audio-does-not-exist/none.json");
         assert_eq!(load_store(&path).unwrap().rules.len(), 0);
+    }
+
+    const SPEAKERS: &str = "{0.0.0.00000000}.{aaaa}";
+    const HEADSET: &str = "{0.0.0.00000000}.{bbbb}";
+
+    fn rule(exe: &str, endpoint: &str, volume: Option<f32>, muted: Option<bool>) -> VolumeRule {
+        VolumeRule { exe: exe.to_string(), endpoint_id: endpoint.to_string(), volume, muted }
+    }
+
+    #[test]
+    fn a_rule_applies_to_its_exe_on_its_endpoint() {
+        let rules = [rule("chrome.exe", SPEAKERS, Some(0.3), Some(false))];
+        assert_eq!(
+            adjustment_for(&rules, "chrome.exe", SPEAKERS, 1.0, false),
+            Some(Adjustment { volume: Some(0.3), muted: None })
+        );
+        // Endpoint ids are compared ignoring case, as Windows does.
+        assert!(adjustment_for(&rules, "chrome.exe", &SPEAKERS.to_uppercase(), 1.0, false).is_some());
+        assert_eq!(adjustment_for(&rules, "chrome.exe", HEADSET, 1.0, false), None, "another device");
+        assert_eq!(adjustment_for(&rules, "firefox.exe", SPEAKERS, 1.0, false), None, "another app");
+    }
+
+    #[test]
+    fn an_empty_endpoint_means_every_endpoint() {
+        let rules = [rule("chrome.exe", "", Some(0.5), None)];
+        for endpoint in [SPEAKERS, HEADSET, ""] {
+            assert_eq!(
+                adjustment_for(&rules, "chrome.exe", endpoint, 1.0, false),
+                Some(Adjustment { volume: Some(0.5), muted: None }),
+                "{endpoint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_whose_endpoint_is_unknown_only_matches_rules_for_every_endpoint() {
+        let rules = [rule("chrome.exe", SPEAKERS, Some(0.3), None)];
+        assert_eq!(adjustment_for(&rules, "chrome.exe", "", 1.0, false), None);
+    }
+
+    #[test]
+    fn the_rule_for_the_sessions_own_endpoint_beats_the_rule_for_all() {
+        let rules = [
+            rule("chrome.exe", "", Some(0.9), None),
+            rule("chrome.exe", HEADSET, Some(0.2), None),
+        ];
+        assert_eq!(
+            adjustment_for(&rules, "chrome.exe", HEADSET, 1.0, false).and_then(|a| a.volume),
+            Some(0.2)
+        );
+        assert_eq!(
+            adjustment_for(&rules, "chrome.exe", SPEAKERS, 1.0, false).and_then(|a| a.volume),
+            Some(0.9),
+            "a device with no rule of its own takes the general one"
+        );
+    }
+
+    #[test]
+    fn a_session_that_already_matches_is_not_written() {
+        let rules = [rule("chrome.exe", SPEAKERS, Some(0.3), Some(true))];
+        assert_eq!(adjustment_for(&rules, "chrome.exe", SPEAKERS, 0.3, true), None);
+        // Volumes come back from the audio engine a hair off; that is still equal.
+        assert_eq!(adjustment_for(&rules, "chrome.exe", SPEAKERS, 0.3004, true), None);
+        // Only the half that differs is asked for.
+        assert_eq!(
+            adjustment_for(&rules, "chrome.exe", SPEAKERS, 0.3, false),
+            Some(Adjustment { volume: None, muted: Some(true) })
+        );
+        assert_eq!(
+            adjustment_for(&rules, "chrome.exe", SPEAKERS, 0.8, true),
+            Some(Adjustment { volume: Some(0.3), muted: None })
+        );
+    }
+
+    #[test]
+    fn a_rule_that_leaves_one_half_alone_leaves_it_alone() {
+        let rules = [rule("chrome.exe", SPEAKERS, None, Some(true))];
+        assert_eq!(
+            adjustment_for(&rules, "chrome.exe", SPEAKERS, 0.77, false),
+            Some(Adjustment { volume: None, muted: Some(true) })
+        );
+        assert_eq!(adjustment_for(&rules, "chrome.exe", SPEAKERS, 0.77, true), None);
+    }
+
+    #[test]
+    fn a_session_is_new_once_and_the_rule_is_not_applied_again_over_the_user() {
+        let mut seen = SeenSessions::new();
+        assert!(seen.is_new(Role::Render, "session-1"));
+        seen.end_sweep();
+        // The user changes its volume; the next looks find the same session and leave it be.
+        for _ in 0..5 {
+            assert!(!seen.is_new(Role::Render, "session-1"));
+            seen.end_sweep();
+        }
+        // The same identifier in the other direction is another session.
+        assert!(seen.is_new(Role::Capture, "session-1"));
+        assert!(seen.is_new(Role::Render, "session-2"));
+    }
+
+    #[test]
+    fn a_session_is_remembered_through_a_short_gap_and_forgotten_after_a_long_one() {
+        let mut seen = SeenSessions::new();
+        assert!(seen.is_new(Role::Render, "a"));
+        seen.end_sweep();
+        // The audio service reports nothing for a few sweeps while it rebuilds its list.
+        for _ in 0..FORGET_AFTER_SWEEPS - 2 {
+            seen.end_sweep();
+        }
+        assert!(!seen.is_new(Role::Render, "a"), "still known: it would be restored over the user");
+        seen.end_sweep();
+        for _ in 0..FORGET_AFTER_SWEEPS {
+            seen.end_sweep();
+        }
+        assert!(seen.is_new(Role::Render, "a"), "gone long enough to be a new session");
+    }
+
+    #[test]
+    fn a_session_with_no_instance_identifier_is_identified_by_its_process() {
+        let info = |instance_id: &str, pid: u32| SessionInfo {
+            index: 0,
+            pid,
+            exe: "chrome.exe".into(),
+            display_name: "Chrome".into(),
+            volume: 1.0,
+            muted: false,
+            peak: 0.0,
+            active: true,
+            instance_id: instance_id.into(),
+            endpoint_id: String::new(),
+        };
+        assert_eq!(session_identity(&info("{0.0.0.00000000}.{aaaa}|x|1", 10)), "{0.0.0.00000000}.{aaaa}|x|1");
+        assert_eq!(session_identity(&info("", 4242)), "pid:4242");
     }
 }
