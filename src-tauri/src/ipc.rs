@@ -17,6 +17,10 @@ use crate::tray::TrayManager;
 pub struct AppState {
     pub latest: RwLock<Option<Snapshot>>,
     pub settings: SettingsStore,
+    /// Held for the whole of a `settings_set`, so two saves cannot interleave their "was it
+    /// changed" comparison, the tray rebuild and the event. Taken on worker threads only: it is
+    /// held while waiting for the main thread, which therefore must never ask for it.
+    pub settings_saving: Mutex<()>,
     pub history: Mutex<History>,
     pub watcher: Mutex<Watcher>,
     pub tray: Mutex<TrayManager>,
@@ -54,27 +58,30 @@ pub fn refresh_visibility(app: &AppHandle) {
         .store(visible, std::sync::atomic::Ordering::Relaxed);
 }
 
-#[tauri::command]
+// A plain `fn` command runs on the main thread, which is also the one that paints and takes input:
+// anything that locks, reads a file or talks to COM goes through `command(async)`, which hands it
+// to the runtime's workers instead. Only the light window controls below stay on the main thread.
+#[tauri::command(async)]
 pub fn snapshot(state: State<'_, AppState>) -> Option<Snapshot> {
     state.latest.read().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn settings_get(state: State<'_, AppState>) -> Settings {
     state.settings.get()
 }
 
-#[tauri::command]
+/// Saves, applies, announces, in that order: the file first, then the tray (which is rebuilt
+/// from what the store holds and has repainted when this goes on), and only then the event, so a
+/// window that reacts to it by reading the settings or the tray finds the new state.
+#[tauri::command(async)]
 pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) -> Result<Settings, String> {
+    let _one_at_a_time = state.settings_saving.lock().unwrap_or_else(|p| p.into_inner());
     let previous = state.settings.get();
     let saved = state.settings.set(next)?;
-    {
-        let mut tray = state.tray.lock().unwrap_or_else(|p| p.into_inner());
-        tray.rebuild(&app, &saved);
-    }
-    if let Some(snapshot) = state.latest.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        state.tray.lock().unwrap_or_else(|p| p.into_inner()).update(&app, snapshot, &saved);
-    }
+    // Waits for the main thread, which does the icons. The store's own lock is long released;
+    // `settings_saving` is held, and the main thread never takes it.
+    crate::tray::rebuild(&app);
     // Only a change is acted on: every other save used to re-register the login item, which
     // is how a debug build ended up starting at sign-in.
     if previous.start_at_login != saved.start_at_login {
@@ -87,7 +94,7 @@ pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) 
     Ok(saved)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn history_series(
     state: State<'_, AppState>,
     metric: String,
@@ -98,24 +105,24 @@ pub fn history_series(
     history.series(&metric, range_seconds, now)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn history_ranking(state: State<'_, AppState>, hours: u64) -> Vec<crate::models::RankingRow> {
     let now = crate::history::now_seconds();
     let history = state.history.lock().unwrap_or_else(|p| p.into_inner());
     history.ranking(hours, now)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn insights(state: State<'_, AppState>) -> Vec<Insight> {
     state.watcher.lock().unwrap_or_else(|p| p.into_inner()).list()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn insight_dismiss(state: State<'_, AppState>, id: String) {
     state.watcher.lock().unwrap_or_else(|p| p.into_inner()).dismiss(&id);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitResult {
     let Some(snapshot) = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone() else {
         return QuitResult { asked: 0, force_used: force, error: Some("no reading yet".into()) };
@@ -217,7 +224,7 @@ pub fn set_panel_size(app: AppHandle, state: State<'_, AppState>, width: u32, he
 }
 
 /// The report Settings → About copies: machine, settings, recent log. No app names.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
     let snapshot = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone();
     let settings = state.settings.get();
@@ -337,7 +344,7 @@ fn png_data_url(image: &crate::icons::IconImage) -> Option<String> {
     Some(format!("data:image/png;base64,{encoded}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn audio_state(state: State<'_, AppState>) -> Result<AudioState, String> {
     let snapshot = snapshot_audio()?;
     #[cfg(debug_assertions)]
@@ -351,7 +358,7 @@ pub fn audio_state(state: State<'_, AppState>) -> Result<AudioState, String> {
 
 /// Windows restores a same-named app's volume within a login session on its own, so the
 /// saved rules mostly earn their keep across a reboot or an audio-service restart.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn audio_set_volume(
     state: State<'_, AppState>,
     role: String,
@@ -374,7 +381,7 @@ pub fn audio_set_volume(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn audio_set_endpoint(endpoint_id: String, volume: f32, muted: bool) -> Result<(), String> {
     crate::audio::init_com()?;
     crate::audio::set_endpoint_volume(&endpoint_id, volume)?;

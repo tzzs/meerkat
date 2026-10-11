@@ -4,12 +4,28 @@
 //! The icon bitmap is drawn by `tray_render` with GDI on the sampler thread; no webview is
 //! involved, so the readout keeps updating while every window is hidden. The tooltip carries
 //! the full value text, so the readout is never empty even before the first bitmap.
+//!
+//! # Threads
+//!
+//! A notification-area icon belongs to the main thread: creating, removing or changing one
+//! (`set_icon`, `set_tooltip`, `set_menu`) is posted to it and the caller then waits for the
+//! answer. A lock held across such a call is a deadlock waiting for the main thread to want it,
+//! and an earlier version had exactly that: the sampler held the manager's mutex across
+//! `set_icon` while `settings_set`, which Tauri ran on the main thread, waited for the mutex.
+//!
+//! So the manager's mutex is taken **on the main thread only**, inside the closures this module
+//! posts (`reconcile` and `paint`), where the calls into the shell run inline and never wait for
+//! anybody. Nothing waits for the main thread while holding any lock: the sampler posts its
+//! frames and moves on, and `rebuild` waits for the main thread but holds nothing while it does.
 
 use std::collections::HashMap;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use tauri::{image::Image, tray::TrayIconBuilder, AppHandle, Manager};
 
 use crate::i18n::{self, Lang, Text, Units};
+use crate::ipc::AppState;
 use crate::models::{Availability, MetricKind, Snapshot};
 use crate::settings::{NetworkUnit, Settings, StorageUnit, TemperatureUnit, TrayReadout, TrayStyle};
 use crate::tray_render::{self, Frame, Layout};
@@ -27,13 +43,20 @@ const ABSENT: &str = "\u{2014}";
 const NETWORK_FLOOR: f64 = 100_000.0;
 const DISK_FLOOR: f64 = 1_000_000.0;
 
+/// How long `rebuild` waits for the main thread before it gives up on an answer. Far longer
+/// than any icon takes; it only has to end a wait on an event loop that has already stopped.
+const MAIN_THREAD_PATIENCE: Duration = Duration::from_secs(10);
+
+/// What Pulse has put in the notification area, and what each icon is known to be showing.
+///
+/// Locked on the main thread only (see the module docs).
 pub struct TrayManager {
     /// Tray ids in the order the icons were created, which is the order Windows lists them.
     live: Vec<String>,
     /// The language the live menus were built in, so a changed setting rebuilds them.
     lang: Lang,
-    /// The last bitmap and tooltip handed to each icon. Every call into the shell costs a round
-    /// trip to the main thread, and most seconds a readout is exactly what it was.
+    /// The last bitmap and tooltip handed to each icon. Every call into the shell is work for the
+    /// main thread, and most seconds a readout is exactly what it was.
     shown: HashMap<String, Shown>,
 }
 
@@ -43,38 +66,213 @@ struct Shown {
     tooltip: String,
 }
 
+/// One icon as it should look right now: drawn and worded, but not yet handed to the shell.
+pub struct IconFrame {
+    id: String,
+    tooltip: String,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// The part of an `IconFrame` the shell does not have yet.
+#[derive(Debug, PartialEq, Eq)]
+struct IconWrite {
+    id: String,
+    tooltip: Option<String>,
+    /// RGBA bytes, width, height.
+    image: Option<(Vec<u8>, u32, u32)>,
+}
+
+/// What `reconcile` has to do to bring the live icons in line with the ones wanted.
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    /// Already right.
+    Keep,
+    /// The set of icons or their order differs. Windows appends every new icon to the end of
+    /// the notification area, so the only way to honour the readouts' order is to recreate all
+    /// of them in that order; a change of style, units or theme leaves the icons alone and only
+    /// repaints them.
+    Recreate,
+    /// The same icons in another language: their menus are replaced.
+    Menus,
+}
+
 impl TrayManager {
     pub fn new() -> Self {
         Self { live: Vec::new(), lang: Lang::En, shown: HashMap::new() }
     }
 
-    /// Brings the icons in line with the settings. Windows appends every new icon to the end of
-    /// the notification area, so the only way to honour the readouts' order is to recreate all
-    /// of them in that order whenever the set or the order differs; a change of style, units or
-    /// theme leaves the icons alone and only repaints them.
-    pub fn rebuild(&mut self, app: &AppHandle, settings: &Settings) {
-        let lang = i18n::resolve(settings.language);
-        let wanted = wanted_ids(settings);
+    fn plan(&self, wanted: &[String], lang: Lang) -> Plan {
+        if wanted != self.live.as_slice() {
+            Plan::Recreate
+        } else if lang != self.lang {
+            Plan::Menus
+        } else {
+            Plan::Keep
+        }
+    }
 
-        if wanted != self.live {
-            for id in self.live.drain(..) {
+    /// Every live icon is about to be removed: nothing is live and nothing is known to be shown.
+    fn retire_all(&mut self) -> Vec<String> {
+        self.shown.clear();
+        std::mem::take(&mut self.live)
+    }
+
+    /// Of this tick's frames, the writes the icons actually need: a frame equal to what an icon
+    /// already shows costs nothing. What is being written is remembered at once; `rejected`
+    /// takes it back when the shell refuses, so the next tick tries again.
+    fn select_writes(&mut self, frames: Vec<IconFrame>) -> Vec<IconWrite> {
+        let mut writes = Vec::new();
+        for frame in frames {
+            // An icon that was never created has nowhere to be drawn.
+            if !self.live.contains(&frame.id) {
+                continue;
+            }
+            let shown = self.shown.entry(frame.id.clone()).or_default();
+            let tooltip = if shown.tooltip != frame.tooltip {
+                shown.tooltip.clone_from(&frame.tooltip);
+                Some(frame.tooltip)
+            } else {
+                None
+            };
+            let image = if shown.rgba != frame.rgba {
+                shown.rgba.clone_from(&frame.rgba);
+                Some((frame.rgba, frame.width, frame.height))
+            } else {
+                None
+            };
+            if tooltip.is_some() || image.is_some() {
+                writes.push(IconWrite { id: frame.id, tooltip, image });
+            }
+        }
+        writes
+    }
+
+    /// The shell did not take a write: forget what was assumed shown.
+    fn rejected(&mut self, id: &str) {
+        self.shown.remove(id);
+    }
+}
+
+/// Runs `work` on the main thread and hands back what it returned, or `None` when the event
+/// loop has stopped or does not answer. On the main thread itself it runs at once, which is how
+/// Tauri's own `run_on_main_thread` behaves. The caller must hold no lock while it waits.
+fn on_main_thread<T: Send + 'static>(app: &AppHandle, work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(work());
+    })
+    .ok()?;
+    rx.recv_timeout(MAIN_THREAD_PATIENCE).ok()
+}
+
+/// Brings the icons in line with the settings the store holds *now*, paints them from the
+/// latest reading, and returns once the main thread is done. Reading the settings where the
+/// work happens, not where it was asked for, is what keeps two quick saves from leaving the
+/// icons at the older one.
+pub fn rebuild(app: &AppHandle) {
+    let handle = app.clone();
+    let done = on_main_thread(app, move || {
+        let Some(state) = handle.try_state::<AppState>() else {
+            return;
+        };
+        let settings = state.settings.get();
+        reconcile(&handle, &settings);
+        let frames = state
+            .latest
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|snapshot| frames_for(snapshot, &settings));
+        if let Some(frames) = frames {
+            paint(&handle, frames);
+        }
+    });
+    if done.is_none() {
+        eprintln!("tray: the main thread did not answer the rebuild");
+    }
+}
+
+/// Draws this tick's readouts and posts them to the main thread. Returns at once: the sampler
+/// never waits for the shell.
+pub fn update(app: &AppHandle, snapshot: &Snapshot, settings: &Settings) {
+    let frames = frames_for(snapshot, settings);
+    if frames.is_empty() {
+        return;
+    }
+    let handle = app.clone();
+    // A failure means the event loop has stopped, and there is nothing left to paint on.
+    let _ = app.run_on_main_thread(move || paint(&handle, frames));
+}
+
+/// Every enabled readout drawn from `snapshot`, in settings order. A readout listed twice is
+/// one icon, and the first one speaks for it.
+fn frames_for(snapshot: &Snapshot, settings: &Settings) -> Vec<IconFrame> {
+    let lang = i18n::resolve(settings.language);
+    let units = Units::of(settings);
+    // The taskbar's theme is Windows' own system theme: Pulse's theme setting is about its
+    // windows, and a dark default on a light bar is how the readout used to vanish.
+    let light_bar = tray_render::taskbar_is_light();
+    let size = tray_render::icon_size();
+
+    let mut frames: Vec<IconFrame> = Vec::new();
+    for readout in settings.tray.iter().filter(|r| r.enabled) {
+        let id = tray_id(readout);
+        if frames.iter().any(|f| f.id == id) {
+            continue;
+        }
+        let reading = reading(readout, snapshot, lang, units);
+        let rendered = tray_render::render(&Frame {
+            label: &reading.label,
+            series: &reading.series,
+            range: reading.range,
+            hue: hue(readout.metric),
+            layout: layout_of(readout.style),
+            light_bar,
+            size,
+        });
+        frames.push(IconFrame {
+            id,
+            tooltip: reading.tooltip,
+            rgba: rendered.rgba,
+            width: rendered.width,
+            height: rendered.height,
+        });
+    }
+    frames
+}
+
+/// Main thread only: creates, removes and re-menus icons until they are the ones wanted.
+fn reconcile(app: &AppHandle, settings: &Settings) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
+    let lang = i18n::resolve(settings.language);
+    let wanted = wanted_ids(settings);
+
+    match manager.plan(&wanted, lang) {
+        Plan::Keep => {}
+        Plan::Recreate => {
+            for id in manager.retire_all() {
                 app.remove_tray_by_id(&id);
             }
-            self.shown.clear();
             for id in &wanted {
                 let tip = match readout_for(settings, id) {
                     Some(readout) => format!("{} {ABSENT}", i18n::metric(lang, readout.metric)),
                     None => i18n::text(lang, Text::Pulse).to_string(),
                 };
                 match build_icon(app, id, &tip, lang) {
-                    Ok(()) => self.live.push(id.clone()),
+                    Ok(()) => manager.live.push(id.clone()),
                     Err(error) => eprintln!("tray {id}: {error}"),
                 }
             }
-            self.lang = lang;
-        } else if lang != self.lang {
+            manager.lang = lang;
+        }
+        Plan::Menus => {
             // The menus are built once per icon, so a language change has to replace them.
-            for id in &self.live {
+            for id in &manager.live {
                 let Some(tray) = app.tray_by_id(id) else { continue };
                 match crate::menu::tray_menu(app, lang) {
                     Ok(menu) => {
@@ -83,52 +281,41 @@ impl TrayManager {
                     Err(error) => eprintln!("tray menu {id}: {error}"),
                 }
             }
-            self.lang = lang;
+            manager.lang = lang;
         }
     }
+}
 
-    pub fn update(&mut self, app: &AppHandle, snapshot: &Snapshot, settings: &Settings) {
-        let lang = i18n::resolve(settings.language);
-        let units = Units::of(settings);
-        // The taskbar's theme is Windows' own system theme: Pulse's theme setting is about its
-        // windows, and a dark default on a light bar is how the readout used to vanish.
-        let light_bar = tray_render::taskbar_is_light();
-        let size = tray_render::icon_size();
-
-        for readout in settings.tray.iter().filter(|r| r.enabled) {
-            let id = tray_id(readout);
-            let Some(tray) = app.tray_by_id(&id) else { continue };
-            let reading = reading(readout, snapshot, lang, units);
-            let rendered = tray_render::render(&Frame {
-                label: &reading.label,
-                series: &reading.series,
-                range: reading.range,
-                hue: hue(readout.metric),
-                layout: layout_of(readout.style),
-                light_bar,
-                size,
-            });
-
-            let shown = self.shown.entry(id.clone()).or_default();
-            if shown.tooltip != reading.tooltip {
-                match tray.set_tooltip(Some(reading.tooltip.clone())) {
-                    Ok(()) => shown.tooltip = reading.tooltip,
-                    Err(error) => eprintln!("tray tooltip {id}: {error}"),
-                }
+/// Main thread only: hands the shell what it does not already show.
+fn paint(app: &AppHandle, frames: Vec<IconFrame>) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let mut manager = state.tray.lock().unwrap_or_else(|p| p.into_inner());
+    for write in manager.select_writes(frames) {
+        let Some(tray) = app.tray_by_id(&write.id) else {
+            manager.rejected(&write.id);
+            continue;
+        };
+        let mut refused = false;
+        if let Some(tooltip) = write.tooltip {
+            if let Err(error) = tray.set_tooltip(Some(tooltip)) {
+                eprintln!("tray tooltip {}: {error}", write.id);
+                refused = true;
             }
-            if shown.rgba != rendered.rgba {
-                let image = Image::new(&rendered.rgba, rendered.width, rendered.height);
-                match tray.set_icon(Some(image)) {
-                    Ok(()) => {
-                        #[cfg(debug_assertions)]
-                        if let Ok(dir) = app.path().app_data_dir() {
-                            tray_render::dump_debug(&id, &rendered, &dir.join("dev"));
-                        }
-                        shown.rgba = rendered.rgba;
-                    }
-                    Err(error) => eprintln!("tray icon {id}: {error}"),
-                }
+        }
+        if let Some((rgba, width, height)) = write.image {
+            #[cfg(debug_assertions)]
+            if let Ok(dir) = app.path().app_data_dir() {
+                tray_render::dump_debug(&write.id, &rgba, &dir.join("dev"));
             }
+            if let Err(error) = tray.set_icon(Some(Image::new_owned(rgba, width, height))) {
+                eprintln!("tray icon {}: {error}", write.id);
+                refused = true;
+            }
+        }
+        if refused {
+            manager.rejected(&write.id);
         }
     }
 }
@@ -607,5 +794,118 @@ mod tests {
         assert_eq!(network.range, (0.0, 2_000_000.0));
         // Histories of different lengths are matched from the newest end.
         assert_eq!(larger_of(&[1.0, 5.0, 2.0], &[3.0, 1.0]), vec![5.0, 2.0]);
+    }
+
+    // ---- What reaches the shell. These are the decisions the main thread acts on, so they are
+    // ---- tested without a Tauri app.
+
+    fn manager_with(ids: &[&str]) -> TrayManager {
+        let mut manager = TrayManager::new();
+        manager.live = ids.iter().map(|id| id.to_string()).collect();
+        manager
+    }
+
+    fn icon(id: &str, tooltip: &str, fill: u8) -> IconFrame {
+        IconFrame { id: id.into(), tooltip: tooltip.into(), rgba: vec![fill; 16], width: 2, height: 2 }
+    }
+
+    #[test]
+    fn a_new_icon_gets_its_tooltip_and_bitmap_and_an_unchanged_frame_costs_nothing() {
+        let mut manager = manager_with(&["tray-cpu"]);
+        let first = manager.select_writes(vec![icon("tray-cpu", "CPU 16%", 1)]);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].tooltip.as_deref(), Some("CPU 16%"));
+        assert_eq!(first[0].image, Some((vec![1; 16], 2, 2)));
+
+        let again = manager.select_writes(vec![icon("tray-cpu", "CPU 16%", 1)]);
+        assert!(again.is_empty(), "the shell already shows exactly this: {again:?}");
+    }
+
+    #[test]
+    fn only_the_part_that_changed_is_written() {
+        let mut manager = manager_with(&["tray-cpu"]);
+        manager.select_writes(vec![icon("tray-cpu", "CPU 16%", 1)]);
+
+        let tooltip_only = manager.select_writes(vec![icon("tray-cpu", "CPU 17%", 1)]);
+        assert_eq!(tooltip_only[0].tooltip.as_deref(), Some("CPU 17%"));
+        assert_eq!(tooltip_only[0].image, None);
+
+        let image_only = manager.select_writes(vec![icon("tray-cpu", "CPU 17%", 2)]);
+        assert_eq!(image_only[0].tooltip, None);
+        assert_eq!(image_only[0].image, Some((vec![2; 16], 2, 2)));
+    }
+
+    #[test]
+    fn a_frame_for_an_icon_that_does_not_exist_is_dropped() {
+        // A readout whose icon could not be created, or one switched off a moment ago, has no icon
+        // to draw on, and nothing is remembered for it.
+        let mut manager = manager_with(&["tray-cpu"]);
+        let writes = manager.select_writes(vec![icon("tray-memory", "Memory 63%", 1), icon("tray-cpu", "CPU", 1)]);
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].id, "tray-cpu");
+        assert!(!manager.shown.contains_key("tray-memory"));
+    }
+
+    #[test]
+    fn a_write_the_shell_refused_is_tried_again_on_the_next_tick() {
+        let mut manager = manager_with(&["tray-cpu"]);
+        manager.select_writes(vec![icon("tray-cpu", "CPU 16%", 1)]);
+        manager.rejected("tray-cpu");
+        let retry = manager.select_writes(vec![icon("tray-cpu", "CPU 16%", 1)]);
+        assert_eq!(retry.len(), 1);
+        assert!(retry[0].tooltip.is_some() && retry[0].image.is_some(), "both are written again");
+    }
+
+    #[test]
+    fn recreated_icons_start_from_nothing_shown() {
+        // A new icon carries the application icon and a placeholder tooltip, whatever the old one
+        // showed, so a frame equal to the old one still has to be written.
+        let mut manager = manager_with(&["tray-cpu", "tray-memory"]);
+        manager.select_writes(vec![icon("tray-cpu", "CPU", 1), icon("tray-memory", "Memory", 2)]);
+        let retired = manager.retire_all();
+        assert_eq!(retired, ["tray-cpu", "tray-memory"], "removed in the order they were listed");
+        assert!(manager.live.is_empty() && manager.shown.is_empty());
+
+        manager.live = vec!["tray-cpu".into()];
+        let writes = manager.select_writes(vec![icon("tray-cpu", "CPU", 1)]);
+        assert_eq!(writes.len(), 1);
+    }
+
+    #[test]
+    fn the_plan_follows_the_set_the_order_and_the_language_of_the_icons() {
+        let live = ["tray-cpu".to_string(), "tray-memory".to_string()];
+        let mut manager = TrayManager::new();
+        manager.live = live.to_vec();
+        manager.lang = Lang::En;
+
+        assert_eq!(manager.plan(&live, Lang::En), Plan::Keep, "nothing changed");
+        let reordered = ["tray-memory".to_string(), "tray-cpu".to_string()];
+        assert_eq!(manager.plan(&reordered, Lang::En), Plan::Recreate, "windows lists icons in creation order");
+        let fewer = ["tray-cpu".to_string()];
+        assert_eq!(manager.plan(&fewer, Lang::En), Plan::Recreate);
+        assert_eq!(manager.plan(&live, Lang::ZhHans), Plan::Menus, "only the menus carry words");
+
+        // An icon that failed to build is not live, so the next save tries the whole set again.
+        manager.live = vec!["tray-cpu".to_string()];
+        assert_eq!(manager.plan(&live, Lang::En), Plan::Recreate);
+    }
+
+    #[test]
+    fn a_readout_listed_twice_is_drawn_once_and_the_fallback_is_never_drawn() {
+        let mut twice = settings(vec![
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Both),
+            readout("memory", MetricKind::Memory, false, TrayStyle::Value),
+            readout("cpu", MetricKind::Cpu, true, TrayStyle::Value),
+            readout("network", MetricKind::Network, true, TrayStyle::Graph),
+        ]);
+        twice.language = crate::settings::Language::En;
+        let frames = frames_for(&snapshot(), &twice);
+        let ids: Vec<&str> = frames.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, ["tray-cpu", "tray-network"], "settings order, one frame per icon, none for a disabled readout");
+        assert!(frames.iter().all(|f| f.rgba.len() == (f.width * f.height * 4) as usize));
+        assert_eq!(frames[0].tooltip, "CPU 16%");
+
+        let none = settings(vec![readout("cpu", MetricKind::Cpu, false, TrayStyle::Both)]);
+        assert!(frames_for(&snapshot(), &none).is_empty(), "the fallback icon keeps its own picture");
     }
 }

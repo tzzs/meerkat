@@ -102,6 +102,7 @@ fn main() -> tauri::Result<()> {
             app.manage(AppState {
                 latest: RwLock::new(None),
                 settings,
+                settings_saving: Mutex::new(()),
                 history: Mutex::new(History::open(&app_data)),
                 watcher: Mutex::new(Watcher::open(&app_data)),
                 tray: Mutex::new(TrayManager::new()),
@@ -115,12 +116,7 @@ fn main() -> tauri::Result<()> {
             });
 
             let handle = app.handle().clone();
-            handle
-                .state::<AppState>()
-                .tray
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .rebuild(&handle, &initial);
+            tray::rebuild(&handle);
 
             if let Some(window) = handle.get_webview_window("main") {
                 let _ = window.set_skip_taskbar(!initial.show_in_taskbar);
@@ -183,8 +179,10 @@ fn spawn_sampler(app: AppHandle) {
             let toaster = toast::Toaster::start(app.clone());
             let mut sampler = Sampler::new();
             loop {
-                let settings = state.settings.get();
                 let snapshot = sampler.sample();
+                // Read after the sampling, which takes a while, so a setting that was saved in
+                // the meantime already counts for this tick.
+                let settings = state.settings.get();
 
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
                 state.history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot);
@@ -206,11 +204,9 @@ fn spawn_sampler(app: AppHandle) {
                     }
                 }
 
-                state
-                    .tray
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .update(&app, &snapshot, &settings);
+                // Posted to the main thread, never waited for: the sampler holds no lock here
+                // and does not stand in the shell's queue.
+                tray::update(&app, &snapshot, &settings);
 
                 if state.visible() {
                     let _ = app.emit("metrics", &snapshot);

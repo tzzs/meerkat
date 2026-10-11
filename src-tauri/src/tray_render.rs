@@ -549,11 +549,11 @@ fn sparkline(line: &mut [u8], fill: &mut [u8], side: i32, area: Area, series: &[
 /// Saves the last rendered bitmap so the taskbar output can be inspected without a
 /// screenshot of the shell. Debug builds only.
 #[cfg(debug_assertions)]
-pub fn dump_debug(id: &str, image: &Rendered, dir: &std::path::Path) {
+pub fn dump_debug(id: &str, rgba: &[u8], dir: &std::path::Path) {
     use std::fs;
-    let path = dir.join(format!("tray-{id}.rgba"));
+    let path = dir.join(format!("{id}.rgba"));
     let _ = fs::create_dir_all(dir);
-    let _ = fs::write(path, &image.rgba);
+    let _ = fs::write(path, rgba);
 }
 
 #[cfg(test)]

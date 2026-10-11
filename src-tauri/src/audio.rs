@@ -883,6 +883,11 @@ fn find_rule_mut<'a>(store: &'a mut VolumeStore, exe: &str, endpoint_id: &str) -
         .find(|r| r.exe == exe && r.endpoint_id == endpoint_id)
 }
 
+/// One read-modify-write of the store at a time. The commands that end up here run on worker
+/// threads, so two of them (a mute on one row while another row is dragged) can overlap, and they
+/// would share the temp file and lose each other's rule.
+static STORE_WRITE: Mutex<()> = Mutex::new(());
+
 /// Remembers the volume/mute for `exe_name` on `endpoint_id`, creating the state file's parent
 /// directories as needed. `exe_name` may be a full path or a bare file name; it is normalized
 /// to a lower-cased file name. Passing an empty `endpoint_id` means "every endpoint". Call this
@@ -907,6 +912,7 @@ pub fn remember_volume(
     } else {
         endpoint_id.to_lowercase()
     };
+    let _only_writer = STORE_WRITE.lock().unwrap_or_else(|p| p.into_inner());
     let mut store = load_store(state_path)?;
     let volume = Some(clamp01(volume));
     let muted = Some(muted);
