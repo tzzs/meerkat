@@ -492,13 +492,12 @@ impl Sampler {
                 history: Vec::new(),
             };
         };
+        // The probe attributes the engine counters to adapters itself (by LUID): the headline is
+        // the busiest adapter's, and each adapter carries its own utilisation. Handing the
+        // headline to the first adapter, as this used to, put a discrete card's load on the
+        // integrated chip of every hybrid laptop.
         let (total_percent, per_process, availability) = probe.refresh();
-        let mut adapters = probe.adapters().to_vec();
-        if let Some(percent) = total_percent {
-            if let Some(first) = adapters.first_mut() {
-                first.utilization_percent = Some(percent);
-            }
-        }
+        let adapters = probe.adapters().to_vec();
         // The probe reports Ok as soon as the engine counters answer; an adapter with nothing
         // measured at all is the case that has to demote it, because then the headline
         // describes only part of what the machine has. An adapter that reports memory but no
