@@ -31,6 +31,8 @@ pub struct ProcSample {
     pub cpu_percent: f64,
     pub read_total: u64,
     pub write_total: u64,
+    /// When the process started, in milliseconds since the Unix epoch (a resolution of one
+    /// second). `None` when Windows would not say.
     pub started_at_ms: Option<u64>,
     pub args: Vec<String>,
     pub measurable: bool,
@@ -98,10 +100,11 @@ fn sample(pid: &Pid, p: &Process, snapshot: &HashMap<u32, String>) -> ProcSample
         .map(|(head, _)| head.to_lowercase())
         .unwrap_or_default();
     let usage = p.disk_usage();
+    // sysinfo's start time is whole seconds since the Unix epoch.
     let started_at_ms = if p.start_time() == 0 {
         None
     } else {
-        Some(boot_anchored(p.start_time()))
+        Some(p.start_time().saturating_mul(1000))
     };
     let measurable = !exe.is_empty();
     let reported = p.name().to_string_lossy().to_string();
@@ -125,15 +128,6 @@ fn sample(pid: &Pid, p: &Process, snapshot: &HashMap<u32, String>) -> ProcSample
         args: p.cmd().iter().map(|s| s.to_string_lossy().to_string()).collect(),
         measurable,
     }
-}
-
-/// sysinfo gives whole seconds since boot; convert once per process list.
-fn boot_anchored(seconds_since_boot: u64) -> u64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    now.saturating_sub(seconds_since_boot * 1000)
 }
 
 /// Per-process byte rates derived from sysinfo's cumulative counters.
@@ -653,6 +647,29 @@ mod tests {
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].name, "protected");
         assert_eq!(apps[0].windows[0].title, "Something");
+    }
+
+    /// sysinfo reports the start time as seconds since the epoch. It was once read as seconds
+    /// since boot, which turned the field into the process's age, and with it the "younger than
+    /// ten minutes" test of the memory alert into one nothing could fail.
+    #[test]
+    fn the_start_time_of_a_live_process_is_a_moment_not_an_age() {
+        use sysinfo::{ProcessesToUpdate, System};
+        let mut system = System::new();
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        let me = std::process::id();
+        let sample = collect(&system)
+            .into_iter()
+            .find(|p| p.pid == me)
+            .expect("this test process is in the list");
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let started = sample.started_at_ms.expect("a process can read its own start time");
+        assert!(started <= now, "{started} is in the future of {now}");
+        assert!(now - started < 3_600_000, "a test process is not an hour old: {started} vs {now}");
     }
 
     /// Measured against notepad.exe here: a well-formed block reports characters, with the
