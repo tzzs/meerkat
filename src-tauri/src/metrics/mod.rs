@@ -185,8 +185,10 @@ impl Sampler {
         let mut memory = self.memory();
         let mut disk = self.disk(elapsed);
         let mut network = self.network(elapsed, &tcp);
-        let mut gpu = self.gpu();
+        // The battery first: which power source the machine is on decides how eagerly the GPU
+        // probe asks NVIDIA's driver for its sensors.
         let mut battery_metric = self.battery();
+        let mut gpu = self.gpu(battery_metric.on_ac_power);
         let mut temperature = self.temperature();
         // NVML is usually the only real temperature an unprivileged process can read,
         // so it fills the gap the ACPI thermal zone leaves rather than staying unused.
@@ -482,7 +484,7 @@ impl Sampler {
         }
     }
 
-    fn gpu(&mut self) -> GpuMetric {
+    fn gpu(&mut self, on_ac_power: bool) -> GpuMetric {
         let Some(probe) = self.gpu_probe.as_mut() else {
             return GpuMetric {
                 total_percent: None,
@@ -496,6 +498,7 @@ impl Sampler {
         // the busiest adapter's, and each adapter carries its own utilisation. Handing the
         // headline to the first adapter, as this used to, put a discrete card's load on the
         // integrated chip of every hybrid laptop.
+        probe.set_on_ac_power(on_ac_power);
         let (total_percent, per_process, availability) = probe.refresh();
         let adapters = probe.adapters().to_vec();
         // The probe reports Ok as soon as the engine counters answer; an adapter with nothing

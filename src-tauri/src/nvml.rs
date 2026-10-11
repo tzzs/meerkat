@@ -1,12 +1,16 @@
 //! NVIDIA GPUs through `nvml.dll`: temperature, fan speed and power draw.
 //!
-//! The library is opened by name when asked and closed again on the way out, so a machine
-//! without the NVIDIA driver reads as "no NVML here" instead of failing at start-up with a
-//! missing-DLL error.
+//! The library is opened by name the first time it is asked for and then kept, loaded and
+//! initialised, for the life of the process. Opening and closing it around every reading cost a
+//! `LoadLibrary`, an `nvmlInit` and an `nvmlShutdown` every few seconds, and on a hybrid laptop
+//! each of those calls wakes the discrete GPU. A machine without the NVIDIA driver reads as "no
+//! NVML here" instead of failing at start-up with a missing-DLL error, and a failed start is
+//! tried again once a minute rather than at every reading.
 
 use std::ffi::c_char;
 use std::mem::size_of;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use windows::core::{PCSTR, PCWSTR};
 use windows::Win32::Foundation::{FreeLibrary, HMODULE};
@@ -52,23 +56,93 @@ struct NvmlMemory {
 }
 
 const _: () = assert!(size_of::<NvmlMemory>() == 24);
-/// NVML's own init and shutdown are process-wide, so a second poller must not tear the
-/// library down while the first one is still reading through it.
-static NVML_LOCK: Mutex<()> = Mutex::new(());
+
+/// How long NVML is left alone after it could not be started, or stopped answering: nothing on
+/// the machine changes in a few seconds, and every attempt is a `LoadLibrary` and an `nvmlInit`
+/// that can wake the card.
+const RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// What this process holds of NVML.
+enum Session {
+    /// Not open: never tried, or the last attempt (or the library itself) failed at this moment.
+    Closed { failed_at: Option<Instant> },
+    Open(Open),
+}
+
+/// A loaded, initialised library and the entry points resolved from it.
+struct Open {
+    module: HMODULE,
+    api: Api,
+}
+
+// The module handle and the resolved function pointers are process-wide and only ever used while
+// holding SESSION's lock.
+unsafe impl Send for Open {}
+
+/// NVML's init and shutdown are process-wide, so everything that touches the library goes
+/// through this one lock.
+static SESSION: Mutex<Session> = Mutex::new(Session::Closed { failed_at: None });
+
+/// Whether a start may be attempted now.
+fn may_try_start(failed_at: Option<Instant>, now: Instant) -> bool {
+    failed_at.map_or(true, |at| now.saturating_duration_since(at) >= RETRY_AFTER)
+}
 
 /// `None` when this machine has no usable NVML: no NVIDIA card, `nvml.dll` missing, or the
-/// library refusing to initialise.
+/// library refusing to initialise (tried again at most once a minute). Otherwise one reading of
+/// every device, through the library that stays open between calls.
 pub fn devices() -> Option<Vec<NvmlDevice>> {
-    let _guard = NVML_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut session = SESSION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let path = to_wide("nvml.dll");
-    let module = unsafe { LoadLibraryW(PCWSTR(path.as_ptr())) }.ok()?;
-    let result = unsafe { Api::resolve(module) }.and_then(|api| unsafe { api.poll() });
-    let _ = unsafe { FreeLibrary(module) };
+    if let Session::Closed { failed_at } = &*session {
+        if !may_try_start(*failed_at, Instant::now()) {
+            return None;
+        }
+        match unsafe { Open::start() } {
+            Some(open) => *session = Session::Open(open),
+            None => {
+                *session = Session::Closed { failed_at: Some(Instant::now()) };
+                return None;
+            }
+        }
+    }
+    let Session::Open(open) = &*session else {
+        return None;
+    };
+    // SAFETY: the library was initialised by `start` and has not been shut down since.
+    match unsafe { open.api.devices() } {
+        Some(list) => Some(list),
+        None => {
+            // The device count is refused after a driver reset or a lost GPU: close what is
+            // open and start over after the delay.
+            let closed = Session::Closed { failed_at: Some(Instant::now()) };
+            if let Session::Open(open) = std::mem::replace(&mut *session, closed) {
+                unsafe { open.stop() };
+            }
+            None
+        }
+    }
+}
 
-    result
+impl Open {
+    unsafe fn start() -> Option<Self> {
+        let path = to_wide("nvml.dll");
+        let module = unsafe { LoadLibraryW(PCWSTR(path.as_ptr())) }.ok()?;
+        let Some(api) = (unsafe { Api::resolve(module) }) else {
+            let _ = unsafe { FreeLibrary(module) };
+            return None;
+        };
+        if unsafe { (api.init)() } != NVML_SUCCESS {
+            let _ = unsafe { FreeLibrary(module) };
+            return None;
+        }
+        Some(Self { module, api })
+    }
+
+    unsafe fn stop(self) {
+        let _ = unsafe { (self.api.shutdown)() };
+        let _ = unsafe { FreeLibrary(self.module) };
+    }
 }
 
 struct Api {
@@ -109,19 +183,13 @@ impl Api {
         })
     }
 
-    unsafe fn poll(&self) -> Option<Vec<NvmlDevice>> {
-        if (self.init)() != NVML_SUCCESS {
-            return None;
-        }
-        let devices = self.devices();
-        let _ = (self.shutdown)();
-        Some(devices)
-    }
-
-    unsafe fn devices(&self) -> Vec<NvmlDevice> {
+    /// One reading of every device. `None` when NVML will not even count them, which means the
+    /// library is no longer in a usable state; a single figure a card does not report is just
+    /// `None` inside its own `NvmlDevice`.
+    unsafe fn devices(&self) -> Option<Vec<NvmlDevice>> {
         let mut count = 0u32;
         if (self.device_count)(&mut count) != NVML_SUCCESS {
-            return Vec::new();
+            return None;
         }
         // A count out of NVML is still just a number; cap it before it becomes an allocation.
         let mut out = Vec::new();
@@ -138,7 +206,7 @@ impl Api {
                 memory_used_bytes: self.read_memory_used(handle),
             });
         }
-        out
+        Some(out)
     }
 
     unsafe fn read_memory_used(&self, device: DeviceHandle) -> Option<u64> {
@@ -225,4 +293,40 @@ fn read_ascii(raw: &[c_char]) -> Option<String> {
 
 fn to_wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_start_is_not_repeated_before_the_delay() {
+        let failed = Instant::now();
+        assert!(may_try_start(None, failed), "the first start is always tried");
+        assert!(!may_try_start(Some(failed), failed));
+        assert!(!may_try_start(Some(failed), failed + Duration::from_secs(59)));
+        assert!(may_try_start(Some(failed), failed + Duration::from_secs(60)));
+        // A clock that reads earlier than the failure is not a reason to start again.
+        assert!(!may_try_start(Some(failed + Duration::from_secs(5)), failed));
+    }
+
+    // The library stays open between readings, so two in a row come out of the same session:
+    // the same devices, in the same order. A machine without NVIDIA's driver answers None both
+    // times (the second is the "not for a minute" path) and passes too.
+    #[test]
+    fn readings_through_the_one_open_library_agree() {
+        let names = |readings: Option<Vec<NvmlDevice>>| {
+            readings.map(|list| list.into_iter().map(|d| d.name).collect::<Vec<_>>())
+        };
+        let first = names(devices());
+        let second = names(devices());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn the_names_nvml_returns_are_plain_text() {
+        let raw: Vec<c_char> = b"NVIDIA GeForce RTX 5060 Ti\0\0\0".iter().map(|b| *b as c_char).collect();
+        assert_eq!(read_ascii(&raw).as_deref(), Some("NVIDIA GeForce RTX 5060 Ti"));
+        assert_eq!(read_ascii(&[0 as c_char; 4]), None, "an empty name is not a name");
+    }
 }

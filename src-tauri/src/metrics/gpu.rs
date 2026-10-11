@@ -15,6 +15,7 @@
 use super::pdh::PdhQuery;
 use crate::models::{Availability, GpuAdapter, GpuProcess};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ADAPTER_DESC1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
     DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIFactory6,
@@ -31,20 +32,75 @@ pub struct EngineProbe {
     /// Every LUID each adapter is known by, index-aligned with `adapters`. Internal on purpose:
     /// the `GpuAdapter` the UI gets has no use for it.
     luids: Vec<Vec<u64>>,
-    last_adapter_refresh: std::time::Instant,
-    last_sensor_read: std::time::Instant,
+    /// DXGI's vendor id of each adapter, index-aligned with `adapters`.
+    vendors: Vec<u32>,
+    /// When each adapter's engines last showed any load, index-aligned with `adapters`.
+    last_activity: Vec<Option<Instant>>,
+    last_adapter_refresh: Instant,
+    last_sensor_read: Option<Instant>,
+    /// Whether the machine is on mains power, as the sampler last said ([`Self::set_on_ac_power`]).
+    on_ac: bool,
+}
+
+/// An adapter as DXGI listed it, with the identifiers the probe matches on.
+struct Listed {
+    adapter: GpuAdapter,
+    /// Every LUID the chip was found under.
+    luids: Vec<u64>,
+    vendor_id: u32,
+}
+
+const NVIDIA_VENDOR_ID: u32 = 0x10DE;
+
+/// How often NVML is read on mains power.
+const AC_SENSOR_INTERVAL: Duration = Duration::from_secs(5);
+/// How often it is read on battery, and then only while the card is in use.
+const BATTERY_SENSOR_INTERVAL: Duration = Duration::from_secs(15);
+/// On battery, how recently the card must have shown load for NVML to be worth asking.
+const ACTIVITY_WINDOW: Duration = Duration::from_secs(10);
+/// An engine load below this is counter noise, not the card being used.
+const ACTIVITY_PERCENT: f64 = 0.1;
+
+/// Whether to read the NVIDIA sensors now.
+///
+/// Every NVML call can wake a discrete GPU that Windows has put to sleep, and an awake one costs
+/// a laptop on battery several watts. So on battery the card is only asked about while the
+/// engine counters say something is running on it (and at most every 15 s); the values from the
+/// last reading stay in the meantime. On mains power it is every 5 s.
+fn should_read_sensors(
+    on_ac: bool,
+    since_last_read: Option<Duration>,
+    since_activity: Option<Duration>,
+) -> bool {
+    let due = |interval: Duration| since_last_read.map_or(true, |waited| waited >= interval);
+    if on_ac {
+        return due(AC_SENSOR_INTERVAL);
+    }
+    since_activity.is_some_and(|ago| ago <= ACTIVITY_WINDOW) && due(BATTERY_SENSOR_INTERVAL)
+}
+
+/// What survives a new enumeration: the sensor values, and the memory figure NVML supplied where
+/// DXGI has none. Without it the figures vanish for up to one reading interval every five
+/// minutes, and on battery until the card is next in use.
+fn carry_sensors(from: &GpuAdapter, to: &mut GpuAdapter) {
+    to.temperature_c = from.temperature_c;
+    to.fan_percent = from.fan_percent;
+    to.power_watts = from.power_watts;
+    if to.dedicated_used_bytes.unwrap_or(0) == 0 {
+        to.dedicated_used_bytes = from.dedicated_used_bytes.or(to.dedicated_used_bytes);
+    }
 }
 
 /// The adapters worth a row, without the identifiers they are known by.
 #[allow(dead_code)]
 pub fn enumerate_adapters() -> Vec<GpuAdapter> {
-    enumerate_with_luids().into_iter().map(|(adapter, _)| adapter).collect()
+    enumerate_listed().into_iter().map(|listed| listed.adapter).collect()
 }
 
 /// The adapters worth a row, each with every LUID it was found under (more than one when DXGI
-/// lists the same chip twice).
-fn enumerate_with_luids() -> Vec<(GpuAdapter, Vec<u64>)> {
-    let mut out: Vec<(GpuAdapter, Vec<u64>)> = Vec::new();
+/// lists the same chip twice) and its vendor.
+fn enumerate_listed() -> Vec<Listed> {
+    let mut out: Vec<Listed> = Vec::new();
     let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory6>() }) else {
         return out;
     };
@@ -60,11 +116,11 @@ fn enumerate_with_luids() -> Vec<(GpuAdapter, Vec<u64>)> {
             continue;
         }
         let luid = pack_luid(desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
-        let kept: Vec<GpuAdapter> = out.iter().map(|(adapter, _)| adapter.clone()).collect();
+        let kept: Vec<GpuAdapter> = out.iter().map(|listed| listed.adapter.clone()).collect();
         if let Some(first) = duplicate_of(&kept, &name, desc.DedicatedVideoMemory as u64) {
             // One chip under a second identifier: one row, and the engines that name either
             // identifier belong to it.
-            out[first].1.push(luid);
+            out[first].luids.push(luid);
             continue;
         }
         let mut dedicated_total = Some(desc.DedicatedVideoMemory as u64);
@@ -81,8 +137,8 @@ fn enumerate_with_luids() -> Vec<(GpuAdapter, Vec<u64>)> {
             }
         }
 
-        out.push((
-            GpuAdapter {
+        out.push(Listed {
+            adapter: GpuAdapter {
                 index: out.len() as u32,
                 name,
                 dedicated_total_bytes: dedicated_total,
@@ -93,8 +149,9 @@ fn enumerate_with_luids() -> Vec<(GpuAdapter, Vec<u64>)> {
                 power_watts: None,
                 utilization_percent: None,
             },
-            vec![luid],
-        ));
+            luids: vec![luid],
+            vendor_id: desc.VendorId,
+        });
     }
     let _ = factory;
     out
@@ -153,29 +210,85 @@ impl EngineProbe {
         let mut query = PdhQuery::new()?;
         let index = query.add(ENGINE_COUNTER)?;
         query.collect();
-        let (adapters, luids) = enumerate_with_luids().into_iter().unzip();
-        Some(Self {
+        let mut probe = Self {
             query,
             index,
-            adapters,
-            luids,
-            last_adapter_refresh: std::time::Instant::now(),
-            last_sensor_read: std::time::Instant::now() - std::time::Duration::from_secs(60),
-        })
+            adapters: Vec::new(),
+            luids: Vec::new(),
+            vendors: Vec::new(),
+            last_activity: Vec::new(),
+            last_adapter_refresh: Instant::now(),
+            last_sensor_read: None,
+            on_ac: true,
+        };
+        probe.adopt(enumerate_listed());
+        Some(probe)
+    }
+
+    /// Tells the probe which power source the machine is on. It decides how eagerly the NVIDIA
+    /// sensors are read (see [`should_read_sensors`]); until told, mains power is assumed, which
+    /// is what a desktop reports.
+    pub fn set_on_ac_power(&mut self, on_ac: bool) {
+        self.on_ac = on_ac;
+    }
+
+    /// Takes a fresh enumeration, keeping what was learned about the adapters it still lists.
+    fn adopt(&mut self, listed: Vec<Listed>) {
+        let old_adapters = std::mem::take(&mut self.adapters);
+        let old_activity = std::mem::take(&mut self.last_activity);
+        self.luids.clear();
+        self.vendors.clear();
+        for item in listed {
+            let mut adapter = item.adapter;
+            let before = old_adapters.iter().position(|old| old.name == adapter.name);
+            if let Some(at) = before {
+                carry_sensors(&old_adapters[at], &mut adapter);
+            }
+            self.last_activity.push(before.and_then(|at| old_activity.get(at).copied().flatten()));
+            self.adapters.push(adapter);
+            self.luids.push(item.luids);
+            self.vendors.push(item.vendor_id);
+        }
     }
 
     /// NVIDIA reports temperature, fan and live power draw through NVML without any
     /// elevation, which is the only real sensor source on a machine whose ACPI thermal
     /// zone is a static motherboard reading rather than the CPU die.
+    ///
+    /// With no NVIDIA adapter listed NVML is never even loaded; see [`should_read_sensors`] for
+    /// when it is asked.
     fn read_sensors(&mut self) {
-        if self.last_sensor_read.elapsed().as_secs() < 5 {
+        let is_nvidia: Vec<bool> = self.vendors.iter().map(|vendor| *vendor == NVIDIA_VENDOR_ID).collect();
+        if !is_nvidia.contains(&true) {
             return;
         }
-        self.last_sensor_read = std::time::Instant::now();
-        let Some(devices) = crate::nvml::devices() else {
+        let now = Instant::now();
+        let since_read = self.last_sensor_read.map(|at| now.saturating_duration_since(at));
+        let since_activity = self
+            .last_activity
+            .iter()
+            .zip(&is_nvidia)
+            .filter(|(_, nvidia)| **nvidia)
+            .filter_map(|(at, _)| *at)
+            .map(|at| now.saturating_duration_since(at))
+            .min();
+        if !should_read_sensors(self.on_ac, since_read, since_activity) {
             return;
-        };
-        for adapter in self.adapters.iter_mut() {
+        }
+        self.last_sensor_read = Some(now);
+
+        let devices = crate::nvml::devices();
+        for (adapter, nvidia) in self.adapters.iter_mut().zip(&is_nvidia) {
+            if !*nvidia {
+                continue;
+            }
+            let Some(devices) = devices.as_ref() else {
+                // NVML went away: a temperature read before that is not the temperature now.
+                adapter.temperature_c = None;
+                adapter.fan_percent = None;
+                adapter.power_watts = None;
+                continue;
+            };
             let name = adapter.name.to_lowercase();
             let Some(device) = devices.iter().find(|d| d.name.to_lowercase() == name) else {
                 continue;
@@ -197,13 +310,17 @@ impl EngineProbe {
     /// Each adapter's own `utilization_percent` is set as a side effect. The caller can still
     /// downgrade the availability with `all_adapters_measured`.
     pub fn refresh(&mut self) -> (Option<f64>, Vec<GpuProcess>, Availability) {
-        self.read_sensors();
         if self.last_adapter_refresh.elapsed().as_secs() > 300 {
-            let (adapters, luids) = enumerate_with_luids().into_iter().unzip();
-            self.adapters = adapters;
-            self.luids = luids;
-            self.last_adapter_refresh = std::time::Instant::now();
+            self.adopt(enumerate_listed());
+            self.last_adapter_refresh = Instant::now();
         }
+        let reading = self.read_engines();
+        // After the engines, so that this tick's load counts as activity.
+        self.read_sensors();
+        reading
+    }
+
+    fn read_engines(&mut self) -> (Option<f64>, Vec<GpuProcess>, Availability) {
         if !self.query.collect() {
             self.clear_utilisation();
             return (None, Vec::new(), Availability::Unavailable);
@@ -218,8 +335,12 @@ impl EngineProbe {
 
         let loads = EngineLoads::from_rows(&rows);
         let (per_adapter, headline) = loads.per_adapter(&self.luids);
-        for (adapter, percent) in self.adapters.iter_mut().zip(per_adapter) {
-            adapter.utilization_percent = percent;
+        let now = Instant::now();
+        for (at, percent) in per_adapter.into_iter().enumerate() {
+            if percent.is_some_and(|load| load >= ACTIVITY_PERCENT) {
+                self.last_activity[at] = Some(now);
+            }
+            self.adapters[at].utilization_percent = percent;
         }
         (headline, loads.processes(), Availability::Ok)
     }
@@ -431,6 +552,96 @@ mod tests {
 
         // Nothing enumerated is nothing unmeasured; the rows carry no claim at all.
         assert!(all_adapters_measured(&[]));
+    }
+
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    #[test]
+    fn on_mains_power_the_sensors_are_read_every_five_seconds() {
+        assert!(should_read_sensors(true, None, None), "the first reading is never held back");
+        assert!(!should_read_sensors(true, Some(secs(4)), None));
+        assert!(should_read_sensors(true, Some(secs(5)), None));
+        // The card being idle is no reason to skip on mains power.
+        assert!(should_read_sensors(true, Some(secs(60)), Some(secs(3600))));
+    }
+
+    #[test]
+    fn on_battery_a_card_nothing_runs_on_is_left_asleep() {
+        assert!(!should_read_sensors(false, None, None), "never active: not even a first look");
+        assert!(!should_read_sensors(false, Some(secs(300)), None));
+        assert!(!should_read_sensors(false, Some(secs(300)), Some(secs(11))), "active, but not lately");
+    }
+
+    #[test]
+    fn on_battery_a_card_in_use_is_read_at_most_every_fifteen_seconds() {
+        assert!(should_read_sensors(false, None, Some(secs(1))));
+        assert!(!should_read_sensors(false, Some(secs(5)), Some(secs(1))));
+        assert!(!should_read_sensors(false, Some(secs(14)), Some(secs(1))));
+        assert!(should_read_sensors(false, Some(secs(15)), Some(secs(1))));
+        assert!(should_read_sensors(false, Some(secs(40)), Some(secs(10))), "the window is inclusive");
+    }
+
+    #[test]
+    fn what_a_reading_found_survives_a_new_enumeration() {
+        let mut old = adapter("NVIDIA GeForce RTX 5060 Ti", Some(17_000_000_000), Some(12.0));
+        old.temperature_c = Some(54.0);
+        old.fan_percent = Some(30.0);
+        old.power_watts = Some(21.5);
+        old.dedicated_used_bytes = Some(3_000_000_000);
+
+        // A fresh enumeration has the sensors empty and, on NVIDIA drivers, zero used memory.
+        let mut fresh = adapter("NVIDIA GeForce RTX 5060 Ti", Some(17_000_000_000), None);
+        fresh.dedicated_used_bytes = Some(0);
+        carry_sensors(&old, &mut fresh);
+        assert_eq!(fresh.temperature_c, Some(54.0));
+        assert_eq!(fresh.fan_percent, Some(30.0));
+        assert_eq!(fresh.power_watts, Some(21.5));
+        assert_eq!(fresh.dedicated_used_bytes, Some(3_000_000_000));
+        assert_eq!(fresh.utilization_percent, None, "load is read again, not carried");
+
+        // A figure DXGI itself measured is not overwritten by an older one.
+        let mut measured = adapter("Intel(R) Graphics", Some(134_217_728), None);
+        measured.dedicated_used_bytes = Some(5_000_000);
+        let mut before = measured.clone();
+        before.dedicated_used_bytes = Some(1_000_000);
+        carry_sensors(&before, &mut measured);
+        assert_eq!(measured.dedicated_used_bytes, Some(5_000_000));
+    }
+
+    // The probe's per-adapter vectors are index-aligned, and a re-enumeration has to keep them
+    // so. Built for real (PDH and DXGI exist on any Windows this runs on); the listing is made up.
+    #[test]
+    fn a_new_enumeration_keeps_sensors_and_activity_with_their_adapter() {
+        let Some(mut probe) = EngineProbe::new() else {
+            return;
+        };
+        let listed = |name: &str, vendor_id: u32, luid: u64| Listed {
+            adapter: adapter(name, Some(1_000), None),
+            luids: vec![luid],
+            vendor_id,
+        };
+        probe.adopt(vec![
+            listed("Intel(R) Graphics", 0x8086, 1),
+            listed("NVIDIA GeForce RTX 5060 Ti", NVIDIA_VENDOR_ID, 2),
+        ]);
+        probe.adapters[1].temperature_c = Some(61.0);
+        let seen_active = Instant::now();
+        probe.last_activity[1] = Some(seen_active);
+
+        // The same chips come back in the other order, the way a driver update can list them.
+        probe.adopt(vec![
+            listed("NVIDIA GeForce RTX 5060 Ti", NVIDIA_VENDOR_ID, 2),
+            listed("Intel(R) Graphics", 0x8086, 1),
+        ]);
+        assert_eq!(probe.adapters[0].name, "NVIDIA GeForce RTX 5060 Ti");
+        assert_eq!(probe.adapters[0].temperature_c, Some(61.0));
+        assert_eq!(probe.last_activity[0], Some(seen_active));
+        assert_eq!(probe.vendors, vec![NVIDIA_VENDOR_ID, 0x8086]);
+        assert_eq!(probe.luids, vec![vec![2], vec![1]]);
+        assert_eq!(probe.adapters[1].temperature_c, None);
+        assert_eq!(probe.last_activity[1], None);
     }
 
     // The instance names are Windows's: pid, the adapter's LUID as two 8-digit halves (high
