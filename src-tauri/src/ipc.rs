@@ -62,16 +62,25 @@ pub struct OnScreen {
     pub panel: bool,
 }
 
-impl OnScreen {
-    pub fn any(self) -> bool {
-        self.main || self.panel
-    }
+/// Who a tick of metrics is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Audience {
+    Nobody,
+    /// One window, by label.
+    Only(&'static str),
+    /// Both windows. One broadcast, not one send each: a listener registered without a target
+    /// hears every `emit_to`, so two sends would deliver the tick twice to it.
+    Everyone,
+}
 
-    /// The labels of the windows that should receive this tick's metrics.
-    pub fn labels(self) -> impl Iterator<Item = &'static str> {
-        [(self.main, "main"), (self.panel, "panel")]
-            .into_iter()
-            .filter_map(|(shown, label)| shown.then_some(label))
+impl OnScreen {
+    pub fn audience(self) -> Audience {
+        match (self.main, self.panel) {
+            (false, false) => Audience::Nobody,
+            (true, false) => Audience::Only("main"),
+            (false, true) => Audience::Only("panel"),
+            (true, true) => Audience::Everyone,
+        }
     }
 }
 
@@ -104,20 +113,23 @@ pub fn refresh_visibility(app: &AppHandle) {
     }
 }
 
-/// One tick's snapshot to the windows that are on screen, serialised once however many there
-/// are. `emit_to` with a label reaches the listeners registered for that window; a listener
-/// registered without a target hears every window's events (see `listenEvent` in the frontend).
+/// One tick's snapshot to the windows that are on screen, serialised once. `emit_to` with a label
+/// reaches the listeners registered for that window; a listener registered without a target
+/// hears every window's events, so until the frontend registers with its window's label the
+/// hidden window still gets what is sent to the visible one.
 pub fn publish_metrics(app: &AppHandle, state: &AppState, snapshot: &Snapshot) {
-    let on_screen = state.on_screen();
-    if !on_screen.any() {
+    let audience = state.on_screen().audience();
+    if audience == Audience::Nobody {
         return;
     }
     let Ok(json) = serde_json::to_string(snapshot) else {
         return;
     };
-    for label in on_screen.labels() {
-        let _ = app.emit_str_to(label, "metrics", json.clone());
-    }
+    let _ = match audience {
+        Audience::Nobody => return,
+        Audience::Only(label) => app.emit_str_to(label, "metrics", json),
+        Audience::Everyone => app.emit_str("metrics", json),
+    };
 }
 
 // A plain `fn` command runs on the main thread, which is also the one that paints and takes input:
@@ -462,20 +474,19 @@ fn parse_role(role: &str) -> Result<crate::audio::Role, String> {
 mod tests {
     use super::*;
 
-    fn labels(main: bool, panel: bool) -> Vec<&'static str> {
-        OnScreen { main, panel }.labels().collect()
+    fn audience(main: bool, panel: bool) -> Audience {
+        OnScreen { main, panel }.audience()
     }
 
     // The old code sent the same 125 KB to both webviews whenever either was shown, and counted a
     // minimised window as shown.
     #[test]
     fn a_tick_goes_only_to_the_windows_somebody_can_see() {
-        assert!(labels(false, false).is_empty());
-        assert_eq!(labels(true, false), ["main"]);
-        assert_eq!(labels(false, true), ["panel"]);
-        assert_eq!(labels(true, true), ["main", "panel"]);
-        assert!(!OnScreen::default().any());
-        assert!(OnScreen { main: false, panel: true }.any());
+        assert_eq!(audience(false, false), Audience::Nobody);
+        assert_eq!(audience(true, false), Audience::Only("main"));
+        assert_eq!(audience(false, true), Audience::Only("panel"));
+        assert_eq!(audience(true, true), Audience::Everyone, "one broadcast, not two sends");
+        assert_eq!(OnScreen::default().audience(), Audience::Nobody);
     }
 
     #[test]
