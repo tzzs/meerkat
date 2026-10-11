@@ -2,14 +2,14 @@
 //! publishes into.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::alerts::Watcher;
 use crate::history::History;
-use crate::menu;
+use crate::menu::{self, PanelAnchor};
 use crate::models::{Insight, QuitResult, Snapshot};
 use crate::settings::{Settings, SettingsStore};
 use crate::tray::TrayManager;
@@ -22,6 +22,13 @@ pub struct AppState {
     pub tray: Mutex<TrayManager>,
     pub interface_visible: AtomicBool,
     pub panel_pinned: AtomicBool,
+    /// What the panel was last opened against (the icon and the work area around it), so a
+    /// resize while it is open can keep the edge beside the icon attached.
+    pub panel_anchor: Mutex<Option<PanelAnchor>>,
+    /// The last size, in logical pixels, the panel's webview asked for.
+    pub panel_size: Mutex<Option<(u32, u32)>>,
+    /// `menu::now_ms()` when the panel was last hidden by losing focus; 0 = never.
+    pub panel_blurred_at: AtomicU64,
     pub data_dir: PathBuf,
     pub app: OnceLock<AppHandle>,
 }
@@ -194,12 +201,19 @@ pub fn show_window(app: AppHandle, destination: Option<String>) {
     menu::show_main(&app, destination.as_deref());
 }
 
+/// The webview reports its content size on every update; most of those are the size it already
+/// has, and those never reach the window system.
 #[tauri::command]
-pub fn set_panel_size(app: AppHandle, width: u32, height: u32) -> Result<(), String> {
-    let panel = app.get_webview_window("panel").ok_or("no panel")?;
-    panel
-        .set_size(tauri::LogicalSize::new(width as f64, height as f64))
-        .map_err(|e| e.to_string())
+pub fn set_panel_size(app: AppHandle, state: State<'_, AppState>, width: u32, height: u32) -> Result<(), String> {
+    let wanted = (width.max(1), height.max(1));
+    {
+        let mut last = state.panel_size.lock().unwrap_or_else(|p| p.into_inner());
+        if *last == Some(wanted) {
+            return Ok(());
+        }
+        *last = Some(wanted);
+    }
+    menu::resize_panel(&app, &state, wanted.0, wanted.1)
 }
 
 /// The report Settings → About copies: machine, settings, recent log. No app names.

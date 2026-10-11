@@ -15,7 +15,7 @@ mod toast;
 mod tray;
 mod tray_render;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
@@ -82,6 +82,11 @@ fn main() -> tauri::Result<()> {
             }
             WindowEvent::Focused(false) => {
                 if window.label() == "panel" && !panel_pinned(window) {
+                    // A press on the tray icon lands here first and its release afterwards;
+                    // the stamp is how that release knows it was a click to close.
+                    if window.is_visible().unwrap_or(false) {
+                        menu::note_panel_blur(window.app_handle());
+                    }
                     let _ = window.hide();
                 }
                 ipc::refresh_visibility(window.app_handle());
@@ -102,6 +107,9 @@ fn main() -> tauri::Result<()> {
                 tray: Mutex::new(TrayManager::new()),
                 interface_visible: AtomicBool::new(false),
                 panel_pinned: AtomicBool::new(false),
+                panel_anchor: Mutex::new(None),
+                panel_size: Mutex::new(None),
+                panel_blurred_at: AtomicU64::new(0),
                 data_dir: app_data,
                 app: OnceLock::new(),
             });
