@@ -157,6 +157,19 @@ export function cpuDisplay(processPercent: number, units: UnitPrefs): number {
   return units.cpuScale === "perCore" ? processPercent : processPercent / Math.max(1, countLogical());
 }
 
+/**
+ * A share of the whole machine, which is how the backend measures alert thresholds and hourly
+ * rankings (100% = every core busy), in the user's CPU unit: as it is, or - for someone who
+ * reads CPU per core (100% = one core busy) - that many times larger. Null for a figure that is
+ * not a number, so the caller can print a dash instead of a zero nobody measured; a negative
+ * share, which an old record can carry, is held at zero.
+ */
+export function machineShareDisplay(percent: number, units: UnitPrefs): number | null {
+  if (!Number.isFinite(percent)) return null;
+  const share = Math.max(0, percent);
+  return units.cpuScale === "perCore" ? share * Math.max(1, countLogical()) : share;
+}
+
 let cachedCores: number | null = null;
 function countLogical(): number {
   if (cachedCores === null) cachedCores = navigator.hardwareConcurrency || 1;

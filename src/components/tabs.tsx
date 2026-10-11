@@ -6,16 +6,19 @@ import {
   formatPercent,
   formatRate,
   formatTemp,
+  machineShareDisplay,
   type UnitPrefs,
 } from "../lib/format";
-import { forLists } from "../lib/apps";
+import { appLabel, forLists } from "../lib/apps";
 import { ipc } from "../lib/ipc";
+import { formatHourLabel, iconPathForKey, rankingByHour, type RankingMetric } from "../lib/ranking";
 import { buildSeries, formatAxisTime, formatHistoryValue, historyCeiling, historyUnit } from "../lib/series";
 import { SPARK_CEILING } from "../lib/spark";
 import { visibleSections } from "../lib/sections";
 import { useStore } from "../lib/store";
-import type { AppInfo, HistoryPoint, Insight, MetricKind } from "../lib/types";
+import type { AppInfo, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow } from "../lib/types";
 import type { Translate } from "../i18n";
+import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import {
   AppIcon,
@@ -51,6 +54,33 @@ const TONE: Record<MetricKind, string> = {
   temperature: "var(--m-temp)",
 };
 
+/**
+ * Runs `load` now, then every `intervalMs` while the window can be seen, and once more the moment
+ * it is shown again. These were bare intervals that kept calling into the backend for a window
+ * nobody could see, and left a window that had been hidden for a minute stale until the tick
+ * after it came back. `load` is told, through `alive`, whether its answer is still wanted.
+ */
+function usePolling(load: (alive: () => boolean) => void, intervalMs: number, deps: readonly unknown[]) {
+  useEffect(() => {
+    let wanted = true;
+    const alive = () => wanted;
+    const run = () => load(alive);
+    run();
+    const tick = () => {
+      if (document.visibilityState !== "hidden") run();
+    };
+    const timer = window.setInterval(tick, intervalMs);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      wanted = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+    // `load` is a closure over `deps`; it is replaced exactly when they change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
 /** One answer from history_series, with the moment it arrived: that is the window's right edge. */
 interface LoadedSeries {
   /** The request it answers, so an answer for another metric or range is never shown for this one. */
@@ -71,28 +101,31 @@ interface LoadedSeries {
 function useSeries(metric: string, rangeSeconds: number): LoadedSeries | null {
   const key = `${metric}@${rangeSeconds}`;
   const [loaded, setLoaded] = useState<LoadedSeries | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
+  usePolling(
+    (alive) => {
       void ipc.historySeries(metric, rangeSeconds).then((series) => {
-        if (alive) setLoaded({ key, points: series.points, bucketSeconds: series.bucketSeconds, atMs: Date.now() });
+        if (alive()) setLoaded({ key, points: series.points, bucketSeconds: series.bucketSeconds, atMs: Date.now() });
       });
-    };
-    load();
-    // A window nobody can see has no use for the next minute's answer; it is fetched when the
-    // window is shown again, or at the first tick after that.
-    const tick = () => {
-      if (document.visibilityState !== "hidden") load();
-    };
-    const timer = window.setInterval(tick, 60_000);
-    document.addEventListener("visibilitychange", tick);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
-    };
-  }, [metric, rangeSeconds, key]);
+    },
+    60_000,
+    [metric, rangeSeconds],
+  );
   return loaded?.key === key ? loaded : null;
+}
+
+/** The hourly record of the busiest apps: it gains one hour an hour, so it is asked for rarely. */
+function useRanking(hours: number): RankingRow[] | null {
+  const [rows, setRows] = useState<RankingRow[] | null>(null);
+  usePolling(
+    (alive) => {
+      void ipc.historyRanking(hours).then((next) => {
+        if (alive()) setRows(next);
+      });
+    },
+    5 * 60_000,
+    [hours],
+  );
+  return rows;
 }
 
 export function RangePicker({ value, onChange }: { value: number; onChange: (seconds: number) => void }) {
@@ -269,16 +302,15 @@ function useTabState<T>(tab: string, field: string, initial: T): [T, (next: T) =
 
 function useInsights(): Insight[] {
   const [list, setList] = useState<Insight[]>([]);
-  useEffect(() => {
-    let alive = true;
-    const load = () => void ipc.insights().then((v) => alive && setList(v));
-    load();
-    const timer = window.setInterval(load, 15_000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, []);
+  usePolling(
+    (alive) => {
+      void ipc.insights().then((next) => {
+        if (alive()) setList(next);
+      });
+    },
+    15_000,
+    [],
+  );
   return list;
 }
 
@@ -432,6 +464,7 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
               <VolumeList />
             </Card>
           ),
+          byHour: <HourlyApps />,
         }}
       />
     </div>
@@ -980,20 +1013,26 @@ function ago(atMs: number, t: Translate): string {
 function InsightRows({ insights }: { insights: Insight[] }) {
   const { t, units, settings } = useStore();
   const a = settings.alerts;
+  // A figure that is not a number is a dash: an old record can carry one, and "0%" would be a
+  // reading nobody took.
+  const share = (percent: number) => {
+    const shown = machineShareDisplay(percent, units);
+    return shown === null ? "—" : formatPercent(shown, units.locale);
+  };
   // Each line states the measurement and the limit it crossed, because "CPU above 388%" read
   // as though 388% were the threshold. The heat rule has no user-set limit, and it names the
-  // busiest application rather than the one heating the machine, so that one says so.
+  // busiest application rather than the one heating the machine, so that one says so. Memory
+  // growth is a change over a stretch of time and says which stretch; it has no sustained
+  // "hold" to report, and nothing here claims it is still going.
   const detail = (insight: Insight) => {
     switch (insight.kind) {
       case "highCpu":
-        return t("alert.highCpu", {
-          value: formatPercent(insight.value, units.locale),
-          limit: formatPercent(a.cpuPercent, units.locale),
-        });
+        // Measured against the whole machine, shown in the unit the rest of the window uses.
+        return t("alert.highCpu", { value: share(insight.value), limit: share(a.cpuPercent) });
       case "growingMemory":
         return t("alert.growingMemory", {
-          value: formatBytes(insight.value, units),
-          limit: formatBytes(a.memoryGrowBytes, units),
+          value: Number.isFinite(insight.value) ? formatBytes(Math.max(0, insight.value), units) : "—",
+          duration: formatDuration(insight.sustainedSeconds, units.locale, { short: true }),
         });
       case "heavyDisk":
         return t("alert.heavyDisk", {
@@ -1009,6 +1048,16 @@ function InsightRows({ insights }: { insights: Insight[] }) {
         return t("alert.heat", { value: formatTemp(insight.value, units) });
     }
   };
+  const subline = (insight: Insight) =>
+    [
+      insight.kind === "growingMemory"
+        ? null
+        : t("alert.for", { duration: formatDuration(insight.sustainedSeconds, units.locale, { short: true }) }),
+      t("alert.lastSeen", { when: ago(insight.atMs, t) }),
+      insight.kind === "heat" ? t("alert.busiest", { name: insight.appName }) : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   return (
     <div className="rows">
       {insights.map((insight) => (
@@ -1025,11 +1074,7 @@ function InsightRows({ insights }: { insights: Insight[] }) {
               )}
             </span>
             <span className="row-sub faint" title={new Date(insight.atMs).toLocaleString(units.locale)}>
-              {t("alert.for", {
-                duration: formatDuration(insight.sustainedSeconds, units.locale, { short: true }),
-              })}{" "}
-              · {t("alert.lastSeen", { when: ago(insight.atMs, t) })}
-              {insight.kind === "heat" ? ` · ${t("alert.busiest", { name: insight.appName })}` : ""}
+              {subline(insight)}
             </span>
           </div>
           <button
@@ -1043,6 +1088,85 @@ function InsightRows({ insights }: { insights: Insight[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * The spec's "busiest apps by hour": for each of the last 48 hours, the three apps that used
+ * the most, by memory or by CPU. It comes from the hourly record rather than from anything live,
+ * so it answers "what was eating the machine at 3am", which the table above cannot.
+ *
+ * Twelve hours are shown and the rest are one click away: forty-eight rows of three apps would
+ * push everything below this card off the screen.
+ */
+const HOURS_SHOWN = 12;
+
+function HourlyApps() {
+  const { units, t } = useStore();
+  const rows = useRanking(48);
+  const [metric, setMetric] = useTabState<RankingMetric>("overview", "hourMetric", "memory");
+  const [expanded, setExpanded] = useState(false);
+  const hours = useMemo(() => rankingByHour(rows ?? [], metric), [rows, metric]);
+  const shown = expanded ? hours : hours.slice(0, HOURS_SHOWN);
+  const now = Date.now();
+
+  const value = (app: RankedApp) => {
+    if (metric === "memory") return formatBytes(app.value, units);
+    const percent = machineShareDisplay(app.value, units);
+    return percent === null ? "—" : formatPercent(percent, units.locale, percent < 10 ? 1 : 0);
+  };
+
+  return (
+    <Card
+      title={t("overview.byHour")}
+      right={
+        <ToggleGroup
+          type="single"
+          value={metric}
+          onValueChange={(next) => {
+            if (next) setMetric(next as RankingMetric);
+          }}
+          aria-label={t("overview.byHourMetric")}
+        >
+          <ToggleChip value="memory">{t("metric.memory")}</ToggleChip>
+          <ToggleChip value="cpu">{t("metric.cpu")}</ToggleChip>
+        </ToggleGroup>
+      }
+    >
+      <p className="hint faint">{t("overview.byHourHelp")}</p>
+      {rows === null ? (
+        <p className="empty">…</p>
+      ) : hours.length === 0 ? (
+        <p className="empty">{t("overview.byHourEmpty")}</p>
+      ) : (
+        <>
+          <div className="hour-list">
+            {shown.map((hour) => (
+              <div key={hour.hourStartMs} className="hour-row">
+                <span className="hour-label num faint">{formatHourLabel(hour.hourStartMs, now, units.locale)}</span>
+                <div className="hour-apps">
+                  {hour.apps.map((app) => {
+                    const label = appLabel(app, t);
+                    return (
+                      <span key={app.key} className="hour-app" title={label}>
+                        <AppIcon name={label} seed={app.key} exePath={iconPathForKey(app.key)} />
+                        <span className="hour-app-name">{label}</span>
+                        <span className="hour-app-value num faint">{value(app)}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          {hours.length > HOURS_SHOWN && (
+            <Button variant="chip" className="hour-more" onClick={() => setExpanded(!expanded)}>
+              {expanded ? t("overview.byHourLess") : t("overview.byHourMore", { count: hours.length })}
+            </Button>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 

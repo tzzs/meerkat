@@ -11,6 +11,7 @@ import {
   formatRate,
   formatRateShort,
   formatTemp,
+  machineShareDisplay,
   setCores,
   type UnitPrefs,
 } from "./format";
@@ -146,6 +147,32 @@ describe("cpuDisplay", () => {
     setCores(20);
     expect(cpuDisplay(100, units())).toBe(5);
     expect(cpuDisplay(100, units({ cpuScale: "perCore" }))).toBe(100);
+  });
+});
+
+describe("machineShareDisplay", () => {
+  it("leaves a share of the whole machine alone when that is the scale", () => {
+    setCores(20);
+    expect(machineShareDisplay(25, units())).toBe(25);
+  });
+
+  // 25% of a twenty-thread machine is five cores busy, which is 500% when 100% is one core.
+  it("multiplies by the core count when the scale is per core", () => {
+    setCores(20);
+    expect(machineShareDisplay(25, units({ cpuScale: "perCore" }))).toBe(500);
+  });
+
+  it("holds a negative share at zero and does not turn garbage into a number", () => {
+    setCores(8);
+    expect(machineShareDisplay(-4, units())).toBe(0);
+    expect(machineShareDisplay(-4, units({ cpuScale: "perCore" }))).toBe(0);
+    expect(machineShareDisplay(Number.NaN, units())).toBeNull();
+    expect(machineShareDisplay(Number.POSITIVE_INFINITY, units())).toBeNull();
+  });
+
+  it("lets an old record above 100 through rather than inventing a correction", () => {
+    setCores(8);
+    expect(machineShareDisplay(388, units())).toBe(388);
   });
 });
 
