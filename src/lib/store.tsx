@@ -3,6 +3,7 @@ import { makeT, resolveLang, type Translate } from "../i18n";
 import type { Lang } from "../i18n";
 import { setCores, type UnitPrefs } from "./format";
 import { ipc, listenEvent, listenMetrics } from "./ipc";
+import type { ToastTone } from "./quit";
 import { subscribe } from "./subscribe";
 import type { AppInfo, Settings, Snapshot } from "./types";
 
@@ -72,10 +73,31 @@ interface StoreValue {
   t: Translate;
   connected: boolean;
   /** Vitals asks before anything is closed; so does Pulse. */
-  pendingQuit: AppInfo | null;
-  requestQuit: (app: AppInfo) => void;
+  pendingQuit: QuitRequest | null;
+  /** `preferForce` opens the dialog with force quit as the highlighted action. */
+  requestQuit: (app: AppInfo, preferForce?: boolean) => void;
   clearQuit: () => void;
+  toasts: Toast[];
+  pushToast: (toast: Omit<Toast, "id">) => void;
+  dismissToast: (id: number) => void;
 }
+
+export interface QuitRequest {
+  app: AppInfo;
+  preferForce: boolean;
+}
+
+/** A short notice that does not block anything: the outcome of an action, mostly. */
+export interface Toast {
+  id: number;
+  text: string;
+  tone: ToastTone;
+  action?: { label: string; run: () => void };
+}
+
+/** Long enough to read a sentence; a notice with a button stays a little longer. */
+const TOAST_MS = 6000;
+const TOAST_WITH_ACTION_MS = 10_000;
 
 const StoreContext = createContext<StoreValue | null>(null);
 
@@ -90,7 +112,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
-  const [pendingQuit, setPendingQuit] = useState<AppInfo | null>(null);
+  const [pendingQuit, setPendingQuit] = useState<QuitRequest | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastSeq = useRef(0);
   // Saves the backend has not answered yet. A settings value fetched meanwhile (because some
   // event asked for one) can predate them, and applying it would undo what was just chosen.
   const savesInFlight = useRef(0);
@@ -212,8 +236,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => light.removeEventListener("change", apply);
   }, [settings.theme]);
 
-  const requestQuit = useCallback((app: AppInfo) => setPendingQuit(app), []);
+  const requestQuit = useCallback(
+    (app: AppInfo, preferForce = false) => setPendingQuit({ app, preferForce }),
+    [],
+  );
   const clearQuit = useCallback(() => setPendingQuit(null), []);
+
+  const dismissToast = useCallback((id: number) => setToasts((list) => list.filter((toast) => toast.id !== id)), []);
+  const pushToast = useCallback(
+    (toast: Omit<Toast, "id">) => {
+      const id = ++toastSeq.current;
+      // Three at most: a burst of outcomes should not stack up the side of the window.
+      setToasts((list) => [...list, { ...toast, id }].slice(-3));
+      window.setTimeout(() => dismissToast(id), toast.action ? TOAST_WITH_ACTION_MS : TOAST_MS);
+    },
+    [dismissToast],
+  );
 
   const value = useMemo(
     () => ({
@@ -230,8 +268,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       pendingQuit,
       requestQuit,
       clearQuit,
+      toasts,
+      pushToast,
+      dismissToast,
     }),
     [
+      toasts,
+      pushToast,
+      dismissToast,
       snapshot,
       settings,
       settingsLoaded,

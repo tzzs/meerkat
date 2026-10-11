@@ -10,7 +10,7 @@ import { Hint } from "./components/ui/tooltip";
 import { useStore } from "./lib/store";
 import { powerTabMode, type TabId } from "./lib/types";
 import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab } from "./components/tabs";
-import { QuitDialog } from "./components/ui";
+import { QuitDialog, Toaster } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
 
@@ -276,6 +276,7 @@ export default function App() {
         </span>
       </footer>
       <QuitDialog />
+      <Toaster />
     </Tabs>
   );
 }

@@ -4,7 +4,7 @@ import { appLabel, canQuit, forLists, holdOrder, orderApps } from "../lib/apps";
 import { usePins } from "../lib/pins";
 import { cleanChipName, cpuDisplay, formatBytes, formatPercent, formatRateShort, formatTemp } from "../lib/format";
 import { ipc, listenEvent } from "../lib/ipc";
-import { AppIcon, QuitDialog, useHeldCeiling } from "../components/ui";
+import { AppIcon, QuitDialog, Toaster, useHeldCeiling } from "../components/ui";
 import { Hint, TooltipReset } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
 import { panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize, type PanelTab } from "../lib/panel";
@@ -261,6 +261,7 @@ export function PanelApp() {
         ))}
       </nav>
       <QuitDialog />
+      <Toaster />
     </div>
     </TooltipReset.Provider>
   );

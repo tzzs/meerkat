@@ -1,5 +1,5 @@
 import type { LogLevel } from "./report";
-import type { AudioState, HistorySeries, Insight, RankingRow, Settings, Snapshot } from "./types";
+import type { AudioState, HistorySeries, Insight, QuitResult, RankingRow, Settings, Snapshot } from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -71,8 +71,7 @@ export const ipc = {
     (await call<RankingRow[]>("history_ranking", { hours })) ?? [],
   insights: async () => (await call<Insight[]>("insights")) ?? [],
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
-  quitApp: (key: string, force: boolean) =>
-    call<{ asked: number; forceUsed: boolean; error: string | null }>("quit_app", { key, force }),
+  quitApp: (key: string, force: boolean) => call<QuitResult>("quit_app", { key, force }),
   /**
    * Writes a line to Pulse's own log. Never throws and never reports its own failure through
    * the error path it serves, so a broken bridge cannot turn one error into a loop.

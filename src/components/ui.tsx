@@ -15,7 +15,8 @@ import {
 import { Card as UICard, CardHeader, CardTitle, CardTools } from "./ui/card";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { Hint } from "./ui/tooltip";
-import { useStore } from "../lib/store";
+import { useStore, type QuitRequest } from "../lib/store";
+import { quitMessageKey } from "../lib/quit";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import { holdCeiling, niceCeiling, type HeldCeiling } from "../lib/spark";
 import {
@@ -735,26 +736,43 @@ export function AppTable({
  * and a dialog that empties itself while sliding away is worse than no animation.
  */
 export function QuitDialog() {
-  const { pendingQuit, clearQuit, t } = useStore();
-  const lastAskedAbout = useRef<AppInfo | null>(null);
+  const { pendingQuit, clearQuit, requestQuit, pushToast, t } = useStore();
+  const lastAskedAbout = useRef<QuitRequest | null>(null);
   if (pendingQuit) lastAskedAbout.current = pendingQuit;
-  const app = pendingQuit ?? lastAskedAbout.current;
-  if (!app) return null;
-  const title = t("action.confirmQuit", { name: app.name });
+  const request = pendingQuit ?? lastAskedAbout.current;
+  if (!request) return null;
+  const { app, preferForce } = request;
+  const name = appLabel(app, t);
+  const title = t(preferForce ? "action.confirmForceQuit" : "action.confirmQuit", { name });
+
+  // The answer used to be discarded, so an app with no visible window ignored Quit in silence.
+  // It now comes back as a notice, and "no window" offers the one thing that can still work.
+  const run = (force: boolean) => {
+    clearQuit();
+    void ipc.quitApp(app.key, force).then((result) => {
+      const outcome = quitMessageKey(result);
+      pushToast({
+        tone: outcome.tone,
+        text: t(outcome.key, { name, count: outcome.count }),
+        action: outcome.offerForce
+          ? { label: t("action.forceQuit"), run: () => requestQuit(app, true) }
+          : undefined,
+      });
+    });
+  };
+
   return (
     <Dialog open={Boolean(pendingQuit)} onOpenChange={(next) => !next && clearQuit()}>
       <DialogContent label={title}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            {t("action.confirmQuitBody", { count: app.processCount })}
+            {preferForce
+              ? t("action.confirmForceQuitBody", { count: app.processCount })
+              : t("action.confirmQuitBody", { count: app.processCount })}
           </DialogDescription>
           <DialogDescription className="mt-1.5 truncate text-[11.5px] text-ink-3">
-            {app.windows
-              .filter((w) => w.visible)
-              .slice(0, 3)
-              .map((w) => w.title)
-              .join(" · ")}
+            {visibleWindowTitles(app).slice(0, 3).join(" · ")}
           </DialogDescription>
         </DialogHeader>
         <DialogActions>
@@ -765,26 +783,54 @@ export function QuitDialog() {
             </Button>
           </DialogClose>
           <span className="spacer" />
+          {/* After "no window to close", force quit is the answer being offered, so it is the
+              filled button and Quit steps back - but focus still starts on Cancel. */}
           <Button
             variant="danger"
-            onClick={() => {
-              void ipc.quitApp(app.key, true);
-              clearQuit();
-            }}
+            className={
+              preferForce ? "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive" : undefined
+            }
+            onClick={() => run(true)}
           >
             {t("action.forceQuit")}
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              void ipc.quitApp(app.key, false);
-              clearQuit();
-            }}
-          >
+          <Button variant={preferForce ? "chip" : "primary"} onClick={() => run(false)}>
             {t("action.quitApp")}
           </Button>
         </DialogActions>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Outcomes that need saying but not answering: they sit in a corner, go away on their own,
+ * and are read out politely by a screen reader rather than interrupting it.
+ */
+export function Toaster() {
+  const { toasts, dismissToast, t } = useStore();
+  return (
+    <div className="toaster" role="status" aria-live="polite">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast ${toast.tone}`}>
+          <span className="toast-text">{toast.text}</span>
+          {toast.action && (
+            <Button
+              variant="chip"
+              className="border-input"
+              onClick={() => {
+                dismissToast(toast.id);
+                toast.action?.run();
+              }}
+            >
+              {toast.action.label}
+            </Button>
+          )}
+          <button className="toast-close" aria-label={t("action.dismiss")} onClick={() => dismissToast(toast.id)}>
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

@@ -54,6 +54,18 @@ const zh: Record<Key, string> = {
   "crash.copyDetails": "复制详细信息",
   "action.confirmQuit": "结束 {name}？",
   "action.confirmQuitBody": "{count, plural, other {# 个进程}}将被要求关闭，未保存的内容会丢失。",
+  "action.confirmForceQuit": "强制结束 {name}？",
+  "action.confirmForceQuitBody": "它没有可以请求关闭的窗口，只能直接结束它的 {count} 个进程，未保存的内容会丢失。",
+
+  "quit.asked": "已请求 {name} 的 {count} 个窗口关闭。",
+  "quit.forced": "已结束 {name} 的 {count} 个进程。",
+  "quit.noWindow": "{name} 没有可关闭的窗口。要强制结束吗？",
+  "quit.protected": "{name} 是受保护的系统进程，Pulse 不会结束它。",
+  "quit.denied": "访问被拒绝：Windows 不允许 Pulse 关闭 {name}。",
+  "quit.gone": "{name} 已经关闭了。",
+  "quit.noReading": "Pulse 还没有读数，请稍后再试。",
+  "quit.notAnApp": "这一行是进程计数，不是应用，没有可以关闭的东西。",
+  "quit.failed": "Pulse 没能关闭 {name}。",
   "action.search": "查找应用",
   "action.searchPlaceholder": "输入应用或进程名",
 

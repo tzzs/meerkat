@@ -51,6 +51,18 @@ const en = {
   "crash.copyDetails": "Copy details",
   "action.confirmQuit": "Quit {name}?",
   "action.confirmQuitBody": "{count, plural, one {1 process} other {# processes}} will be asked to close. Anything it has not saved is lost.",
+  "action.confirmForceQuit": "Force quit {name}?",
+  "action.confirmForceQuitBody": "It has no window to ask, so {count, plural, one {its process} other {its # processes}} can only be ended. Anything it has not saved is lost.",
+
+  "quit.asked": "Asked {count, plural, one {# window} other {# windows}} of {name} to close.",
+  "quit.forced": "Ended {count, plural, one {# process} other {# processes}} of {name}.",
+  "quit.noWindow": "{name} has no window to close. Force quit it?",
+  "quit.protected": "{name} is a protected system process, so Pulse will not end it.",
+  "quit.denied": "Access denied: Windows did not let Pulse close {name}.",
+  "quit.gone": "{name} had already closed.",
+  "quit.noReading": "Pulse has no reading yet. Try again in a moment.",
+  "quit.notAnApp": "That row is a count of processes, not an application, so there is nothing to close.",
+  "quit.failed": "Pulse could not close {name}.",
   "action.search": "Find an app",
   "action.searchPlaceholder": "Type an app or process name",
 

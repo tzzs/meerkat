@@ -230,6 +230,16 @@ export interface Insight {
   resolved: boolean;
 }
 
+/**
+ * The answer to quit_app. `error` is a code - "no-reading", "gone", "not-an-application",
+ * "protected", "no-window", "denied" - or null; the UI owns the words.
+ */
+export interface QuitResult {
+  asked: number;
+  forceUsed: boolean;
+  error: string | null;
+}
+
 export type TrayStyle = "value" | "graph" | "both";
 export type PanelLayout = "tiles" | "list";
 
