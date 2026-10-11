@@ -17,6 +17,7 @@ import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { Hint } from "./ui/tooltip";
 import { useStore } from "../lib/store";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
+import { holdCeiling, niceCeiling, type HeldCeiling } from "../lib/spark";
 import type { UnitPrefs } from "../lib/format";
 import type { Translate } from "../i18n";
 import type { AppInfo, Availability } from "../lib/types";
@@ -75,45 +76,23 @@ export function Stat({
   );
 }
 
-/** Rounds up to the next 1/2/5 step, so an axis ceiling is a number a person can read. */
-function niceCeiling(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 1;
-  const base = 10 ** Math.floor(Math.log10(value));
-  const step = [1, 2, 5, 10].find((s) => value <= s * base) ?? 10;
-  return step * base;
-}
-
 /**
- * A chart ceiling that rises at once and falls slowly.
- *
- * Rescaling to the visible maximum on every sample makes the entire curve change height each
- * second even when the data did not move, which is what reads as the graph bouncing. Holding a
- * rounded ceiling keeps the shape steady, and a new peak still raises it immediately because
- * understating a spike would be a lie about the measurement.
+ * A chart ceiling that rises at once and falls slowly (see `holdCeiling`). The rise is applied
+ * in the same render that brings the peak, not one effect later: for that one frame the spike
+ * used to be drawn flattened against the old ceiling.
  */
-function useHeldCeiling(observed: number, holdSamples = 6): number {
-  const [ceiling, setCeiling] = useState(() => niceCeiling(observed));
-  const below = useRef(0);
+export function useHeldCeiling(observed: number, holdSamples = 6): number {
+  const held = useRef<HeldCeiling | null>(null);
+  if (held.current === null) held.current = { ceiling: niceCeiling(observed), below: 0 };
+  const [ceiling, setCeiling] = useState(held.current.ceiling);
 
   useEffect(() => {
-    const next = niceCeiling(observed);
-    if (next > ceiling) {
-      below.current = 0;
-      setCeiling(next);
-      return;
-    }
-    if (next === ceiling) {
-      below.current = 0;
-      return;
-    }
-    below.current += 1;
-    if (below.current >= holdSamples) {
-      below.current = 0;
-      setCeiling(next);
-    }
-  }, [observed, ceiling, holdSamples]);
+    const next = holdCeiling(held.current ?? { ceiling: niceCeiling(observed), below: 0 }, observed, holdSamples);
+    held.current = next;
+    setCeiling(next.ceiling);
+  }, [observed, holdSamples]);
 
-  return ceiling;
+  return Math.max(ceiling, niceCeiling(observed));
 }
 
 export function Chart({

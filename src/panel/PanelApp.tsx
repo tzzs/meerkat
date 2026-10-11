@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cpuDisplay, formatBytes, formatPercent, formatTemp } from "../lib/format";
-import { ipc } from "../lib/ipc";
-import { AppIcon, QuitDialog } from "../components/ui";
-import { Hint } from "../components/ui/tooltip";
+import { cleanChipName, cpuDisplay, formatBytes, formatPercent, formatRateShort, formatTemp } from "../lib/format";
+import { ipc, listenEvent } from "../lib/ipc";
+import { AppIcon, QuitDialog, useHeldCeiling } from "../components/ui";
+import { Hint, TooltipReset } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
-import { headline, isMetricKind, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
+import { panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize, type PanelTab } from "../lib/panel";
+import { SPARK_CEILING, sparkPoints, windowPeak } from "../lib/spark";
+import { subscribe } from "../lib/subscribe";
+import { headline, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
 
 const HUES: Record<MetricKind, string> = {
   cpu: "#5ecb8f",
@@ -19,35 +22,85 @@ const HUES: Record<MetricKind, string> = {
 export function PanelApp() {
   const { snapshot, settings, t, units, connected, requestQuit } = useStore();
   const [pinned, setPinned] = useState(false);
-  const [tab, setTab] = useState<MetricKind | "top">("top");
+  const [tab, setTab] = useState<PanelTab>("top");
+  const [tooltipReset, setTooltipReset] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const lastSize = useRef<{ width: number; height: number } | null>(null);
+  const nav = panelNav(snapshot);
+  const navKey = nav.join(" ");
 
+  // The digits follow the strip on screen, which changes with the hardware.
   useEffect(() => {
+    const strip = navKey.split(" ") as PanelTab[];
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") void ipc.hidePanel();
-      if (event.key >= "1" && event.key <= "9") {
-        const order: (MetricKind | "top")[] = ["top", "cpu", "memory", "disk", "network", "gpu", "battery", "temperature"];
-        const target = order[Number(event.key) - 1];
-        if (target) setTab(target);
-      }
+      // A dialog that took Escape for itself has already marked it handled; closing the whole
+      // panel as well would throw away the answer the dialog was waiting for.
+      if (event.key === "Escape" && !event.defaultPrevented) void ipc.hidePanel();
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      const target = panelTabForKey(event.key, strip);
+      if (target) setTab(target);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [navKey]);
 
+  // Left on a tab the hardware stopped justifying, the panel would show a heading over nothing.
   useEffect(() => {
+    if (!navKey.split(" ").includes(tab)) setTab("top");
+  }, [navKey, tab]);
+
+  // The window follows the card only when the card's size really changed. This used to run
+  // after every snapshot and send the same two numbers across the bridge once a second.
+  useEffect(() => {
+    const node = bodyRef.current;
+    if (!node) return;
+    let timer = 0;
     const measure = () => {
-      const node = bodyRef.current;
-      if (!node) return;
-      const width = Math.max(320, node.scrollWidth);
-      const height = Math.min(760, Math.max(220, node.scrollHeight));
-      void ipc.setPanelSize(width, height);
+      timer = 0;
+      const style = getComputedStyle(node);
+      const px = (value: string) => Number.parseFloat(value) || 0;
+      const size = panelWindowSize({
+        scrollWidth: node.scrollWidth,
+        scrollHeight: node.scrollHeight,
+        borderX: node.offsetWidth - node.clientWidth,
+        borderY: node.offsetHeight - node.clientHeight,
+        marginX: px(style.marginLeft) + px(style.marginRight),
+        marginY: px(style.marginTop) + px(style.marginBottom),
+      });
+      const last = lastSize.current;
+      if (last && last.width === size.width && last.height === size.height) return;
+      lastSize.current = size;
+      ipc.setPanelSize(size.width, size.height);
+    };
+    // A tab switch or a row appearing is a burst of layout changes; it settles into one resize.
+    const schedule = () => {
+      if (!timer) timer = window.setTimeout(measure, 50);
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    if (bodyRef.current) observer.observe(bodyRef.current);
-    return () => observer.disconnect();
-  }, [snapshot, settings.panel.layout, tab]);
+    const observer = new ResizeObserver(schedule);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
+  // The panel is hidden, never unmounted, so whatever tooltip was up when it lost focus would
+  // otherwise greet the next opening. Close them on the way out and again on the way in.
+  useEffect(() => {
+    const reset = () => setTooltipReset((n) => n + 1);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") reset();
+    };
+    window.addEventListener("blur", reset);
+    document.addEventListener("visibilitychange", onVisibility);
+    const stop = subscribe(() => listenEvent("panel-shown", reset));
+    return () => {
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
+  }, []);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -59,13 +112,12 @@ export function PanelApp() {
     return [...list].sort((a, b) => b.memoryBytes - a.memoryBytes);
   }, [snapshot]);
 
-  const tiles = settings.panel.tiles
-    .filter((x) => x.visible)
-    .map((x) => x.id)
-    .filter(isMetricKind);
-  const shown = tab === "top" ? [] : [tab];
+  const tiles = snapshot ? panelTiles(settings.panel.tiles, snapshot) : [];
+  const shown: MetricKind[] = tab === "top" ? tiles : [tab];
+  const chip = snapshot ? cleanChipName(snapshot.machine.chipName) : "";
 
   return (
+    <TooltipReset.Provider value={tooltipReset}>
     <div className="panel" ref={bodyRef}>
       <header className="panel-head">
         <span className="brand">
@@ -73,9 +125,17 @@ export function PanelApp() {
           Pulse
         </span>
         <span className="panel-machine">
-          {snapshot
-            ? `${snapshot.machine.chipName.split(" ").slice(0, 3).join(" ")} · ${formatBytes(snapshot.memory.inUseBytes, units)}`
-            : t("state.noData")}
+          {snapshot ? (
+            <>
+              {/* The whole name, marks stripped, cut by the box rather than by a word count. */}
+              <Hint label={chip}>
+                <span className="panel-chip">{chip}</span>
+              </Hint>
+              <span className="panel-total num">{formatBytes(snapshot.machine.totalMemoryBytes, units)}</span>
+            </>
+          ) : (
+            t("state.noData")
+          )}
         </span>
         <Hint label={t("panel.pin")}>
           <button
@@ -98,15 +158,14 @@ export function PanelApp() {
       </header>
 
       <div className={`panel-metrics ${settings.panel.layout}`}>
-        {(shown.length ? shown : tiles).map((metric) =>
-          snapshot ? (
+        {snapshot &&
+          shown.map((metric) =>
             settings.panel.layout === "list" ? (
               <ListRow key={metric} metric={metric} snapshot={snapshot} t={t} units={units} />
             ) : (
               <Tile key={metric} metric={metric} snapshot={snapshot} t={t} units={units} />
-            )
-          ) : null,
-        )}
+            ),
+          )}
       </div>
 
       {tab === "top" && (
@@ -137,17 +196,43 @@ export function PanelApp() {
       )}
 
       <nav className="panel-tabs">
-        <button className={tab === "top" ? "on" : ""} onClick={() => setTab("top")}>
-          {t("tab.overview")}
-        </button>
-        {(["cpu", "memory", "disk", "network", "gpu", "battery"] as MetricKind[]).map((metric) => (
-          <button key={metric} className={tab === metric ? "on" : ""} onClick={() => setTab(metric)}>
-            {t(`metric.${metric}`)}
+        {nav.map((id) => (
+          <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
+            {id === "top" ? t("tab.overview") : t(`metric.${id}`)}
           </button>
         ))}
       </nav>
       <QuitDialog />
     </div>
+    </TooltipReset.Provider>
+  );
+}
+
+/**
+ * The last minute of one metric. Percentages sit on a fixed 0–100 scale, where an idle machine
+ * draws a line near the floor; rates scale to what the minute held, with a ceiling that only
+ * comes down after a few calm samples so the line does not bounce.
+ */
+function Spark({ metric, snapshot, height, className, strokeWidth }: {
+  metric: MetricKind;
+  snapshot: Snapshot;
+  height: number;
+  className: string;
+  strokeWidth: number;
+}) {
+  const values = panelSeries(metric, snapshot);
+  const held = useHeldCeiling(windowPeak(values));
+  const ceiling = SPARK_CEILING[metric] ?? held;
+  return (
+    <svg className={className} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
+      <polyline
+        points={sparkPoints(values, 100, height, ceiling)}
+        fill="none"
+        stroke={HUES[metric]}
+        strokeWidth={strokeWidth}
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
   );
 }
 
@@ -162,21 +247,11 @@ function Tile({
   t: ReturnType<typeof useStore>["t"];
   units: ReturnType<typeof useStore>["units"];
 }) {
-  const value = textFor(metric, snapshot, units);
-  const series = seriesFor(metric, snapshot);
   return (
     <div className="tile" style={{ ["--hue" as string]: HUES[metric] }}>
       <span className="tile-label">{t(`metric.${metric}`)}</span>
-      <span className="tile-value num">{value}</span>
-      <svg className="tile-spark" viewBox="0 0 100 22" preserveAspectRatio="none">
-        <polyline
-          points={spark(series, 100, 22)}
-          fill="none"
-          stroke={HUES[metric]}
-          strokeWidth={1.2}
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
+      <span className="tile-value num">{textFor(metric, snapshot, units)}</span>
+      <Spark metric={metric} snapshot={snapshot} height={22} className="tile-spark" strokeWidth={1.2} />
     </div>
   );
 }
@@ -196,39 +271,32 @@ function ListRow({
     <div className="list-row" style={{ ["--hue" as string]: HUES[metric] }}>
       <span className="list-label">{t(`metric.${metric}`)}</span>
       <span className="list-value num">{textFor(metric, snapshot, units)}</span>
-      <svg className="list-spark" viewBox="0 0 100 14" preserveAspectRatio="none">
-        <polyline points={spark(seriesFor(metric, snapshot), 100, 14)} fill="none" stroke={HUES[metric]} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-      </svg>
+      <Spark metric={metric} snapshot={snapshot} height={14} className="list-spark" strokeWidth={1} />
     </div>
   );
 }
 
-function spark(values: number[], width: number, height: number): string {
-  if (values.length < 2) return `0,${height} ${width},${height}`;
-  const max = Math.max(...values, 1);
-  const step = width / (values.length - 1);
-  return values
-    .slice(-60)
-    .map((v, i) => `${(i * step).toFixed(1)},${(height - (v / max) * height).toFixed(1)}`)
-    .join(" ");
-}
-
+/** A reading the hardware did not give is a dash, never a zero that looks measured. */
 function textFor(metric: MetricKind, snapshot: Snapshot, units: ReturnType<typeof useStore>["units"]): string {
   switch (metric) {
     case "cpu":
-      return `${Math.round(headline("cpu", snapshot))}%`;
+      return formatPercent(snapshot.cpu.totalPercent, units.locale);
     case "memory":
-      return `${formatPercent(headline("memory", snapshot), units.locale)} · ${formatBytes(snapshot.memory.inUseBytes, units)}`;
+      return snapshot.memory.totalBytes
+        ? `${formatPercent(headline("memory", snapshot), units.locale)} · ${formatBytes(snapshot.memory.inUseBytes, units)}`
+        : "—";
     case "disk":
-      return `↓${shortRate(snapshot.disk.readBytesPerSecond, units)} ↑${shortRate(snapshot.disk.writeBytesPerSecond, units)}`;
+      return `↓${formatRateShort(snapshot.disk.readBytesPerSecond, units, "storage")} ↑${formatRateShort(snapshot.disk.writeBytesPerSecond, units, "storage")}`;
     case "network":
-      return `↓${shortRate(snapshot.network.downloadBytesPerSecond, units)} ↑${shortRate(snapshot.network.uploadBytesPerSecond, units)}`;
+      return `↓${formatRateShort(snapshot.network.downloadBytesPerSecond, units, "network")} ↑${formatRateShort(snapshot.network.uploadBytesPerSecond, units, "network")}`;
     case "gpu":
-      return `${Math.round(headline("gpu", snapshot))}%`;
+      return snapshot.gpu.totalPercent === null ? "—" : formatPercent(snapshot.gpu.totalPercent, units.locale);
     case "battery":
-      return snapshot.battery.hasBattery ? `${Math.round(headline("battery", snapshot))}%` : "—";
+      return snapshot.battery.hasBattery && snapshot.battery.chargePercent !== null
+        ? formatPercent(snapshot.battery.chargePercent, units.locale)
+        : "—";
     case "temperature":
-      return snapshot.temperature.hottest ? formatTemp(snapshot.temperature.hottest, units) : "—";
+      return snapshot.temperature.hottest !== null ? formatTemp(snapshot.temperature.hottest, units) : "—";
   }
 }
 

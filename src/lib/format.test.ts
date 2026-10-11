@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanChipName,
   cpuDisplay,
   defaultUnits,
   formatBytes,
@@ -8,6 +9,7 @@ import {
   formatLinkSpeed,
   formatPercent,
   formatRate,
+  formatRateShort,
   formatTemp,
   setCores,
   type UnitPrefs,
@@ -47,6 +49,33 @@ describe("formatRate", () => {
   it("multiplies by eight and switches to bit labels for network rates", () => {
     expect(formatRate(1_000_000, units({ network: "bits" }), "network")).toBe(`8.00${NBSP}Mbit/s`);
     expect(formatRate(1_000_000, units({ network: "bytes" }), "network")).toBe(`1.00${NBSP}MB/s`);
+  });
+});
+
+describe("formatRateShort", () => {
+  it("fits a tile and counts in the storage unit the user chose", () => {
+    expect(formatRateShort(1_200_000, units(), "storage")).toBe("1.2M");
+    expect(formatRateShort(1_258_291, units({ storage: "binary" }), "storage")).toBe("1.2M");
+    expect(formatRateShort(380_000, units(), "storage")).toBe("380K");
+    expect(formatRateShort(0, units(), "storage")).toBe("0.0B");
+  });
+
+  // The panel's old helper read the network setting for every rate, so choosing bits for the
+  // network made the disk tile report its bytes multiplied by eight.
+  it("only switches network rates to bits", () => {
+    expect(formatRateShort(1_000_000, units({ network: "bits" }), "network")).toBe("8.0Mb");
+    expect(formatRateShort(1_000_000, units({ network: "bits" }), "storage")).toBe("1.0M");
+  });
+});
+
+describe("cleanChipName", () => {
+  it("drops the registered marks and keeps the model number", () => {
+    expect(cleanChipName("Intel(R) Core(TM) Ultra 7 265K")).toBe("Intel Core Ultra 7 265K");
+    expect(cleanChipName("Intel® Core™ i5-8250U CPU @ 1.60GHz")).toBe("Intel Core i5-8250U CPU @ 1.60GHz");
+  });
+
+  it("leaves a name without marks alone", () => {
+    expect(cleanChipName("AMD Ryzen 9 7950X 16-Core Processor ")).toBe("AMD Ryzen 9 7950X 16-Core Processor");
   });
 });
 

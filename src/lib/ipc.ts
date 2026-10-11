@@ -121,9 +121,17 @@ export async function listenMetrics(handler: (snapshot: Snapshot) => void): Prom
 }
 
 export async function listenNavigate(handler: (destination: string) => void): Promise<() => void> {
+  return listenEvent<string>("navigate", handler);
+}
+
+/**
+ * Any backend event by name. Outside Tauri nothing is ever emitted, so the subscription is a
+ * no-op rather than an error: the dev browser simply never hears these.
+ */
+export async function listenEvent<T = unknown>(name: string, handler: (payload: T) => void): Promise<() => void> {
   if (!inTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<string>("navigate", (event) => handler(event.payload));
+  return listen<T>(name, (event) => handler(event.payload));
 }
 
 function emptySeries(metric: string, rangeSeconds: number): HistorySeries {

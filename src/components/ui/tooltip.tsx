@@ -1,3 +1,4 @@
+import { createContext, useContext, useEffect, useState } from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,13 @@ export function TooltipContent({
   );
 }
 
+/**
+ * Changing this number closes every Hint below it. The tray panel is hidden rather than
+ * unmounted, so a tooltip that was up when it lost focus used to be the first thing on screen
+ * the next time it opened, pointing at a row that had since moved.
+ */
+export const TooltipReset = createContext(0);
+
 /** A tooltip around a control that already exists and already knows how to be clicked. */
 export function Hint({
   label,
@@ -43,8 +51,11 @@ export function Hint({
   className?: string;
   children: React.ReactElement;
 }) {
+  const reset = useContext(TooltipReset);
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [reset]);
   return (
-    <Tooltip delayDuration={delayDuration}>
+    <Tooltip open={open} onOpenChange={setOpen} delayDuration={delayDuration}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent className={className}>{label}</TooltipContent>
     </Tooltip>

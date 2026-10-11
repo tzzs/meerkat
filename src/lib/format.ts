@@ -83,6 +83,33 @@ export function formatRate(
   return `${formatBytes(bytesPerSecond, units)}/s`;
 }
 
+/**
+ * A rate short enough for a 140px tile: "1.2M", "380K". Storage rates count in the unit the
+ * user chose (1000 or 1024); only network rates switch to bits. The panel's own version used
+ * to multiply disk rates by eight whenever the network setting said bits.
+ */
+export function formatRateShort(bytesPerSecond: number, units: UnitPrefs, kind: "storage" | "network"): string {
+  const bits = kind === "network" && units.network === "bits";
+  const value = bits ? bytesPerSecond * 8 : bytesPerSecond;
+  const step = bits || units.storage === "decimal" ? 1000 : 1024;
+  const labels = bits ? ["b", "Kb", "Mb", "Gb", "Tb"] : ["B", "K", "M", "G", "T"];
+  const { index, divisor } = scaleFor(Math.abs(value), step, labels);
+  const scaled = value / divisor;
+  return `${nf(units.locale, Math.abs(scaled) >= 100 ? 0 : 1).format(scaled)}${labels[index]}`;
+}
+
+/**
+ * The processor's name as a person would say it. Windows reports the registered marks inline
+ * ("Intel(R) Core(TM) Ultra 7 265K"), and the panel used to make room for them by keeping only
+ * the first three words — which dropped the model number, the one part that tells chips apart.
+ */
+export function cleanChipName(name: string): string {
+  return name
+    .replace(/\((?:R|TM|C)\)|[®™©]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function formatCompact(n: number, locale: string, digits = 1): string {
   return new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: digits }).format(n);
 }

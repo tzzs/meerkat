@@ -38,13 +38,27 @@
   padding: 10px 12px 8px;
   border-bottom: 1px solid var(--hairline);
 }
+/* The chip name takes whatever room is left and ellipsises; the memory total never yields. */
 .panel-machine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-3);
   margin-left: var(--sp-2);
-  overflow: hidden;
   white-space: nowrap;
+}
+.panel-chip {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.panel-total {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-2);
 }
 .icon-btn {
   width: 24px;
