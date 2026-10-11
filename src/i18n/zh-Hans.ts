@@ -45,6 +45,12 @@ const zh: Record<Key, string> = {
   "action.done": "完成",
   "action.cancel": "取消",
   "action.dismiss": "关闭",
+  "action.copied": "已复制",
+
+  "crash.title": "Pulse 的这个界面出错了",
+  "crash.body": "Pulse 本身仍在运行、仍在采样。重新加载通常就能恢复这个窗口；详细信息已写入 Pulse 的日志。",
+  "crash.reload": "重新加载",
+  "crash.copyDetails": "复制详细信息",
   "action.confirmQuit": "结束 {name}？",
   "action.confirmQuitBody": "{count, plural, other {# 个进程}}将被要求关闭，未保存的内容会丢失。",
   "action.search": "查找应用",

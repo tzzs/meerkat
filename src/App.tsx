@@ -47,10 +47,6 @@ export default function App() {
   // Temperature instead, and only vanishes when there is neither.
   const powerMode = powerTabMode(snapshot);
 
-  useEffect(() => {
-    document.documentElement.dataset.pulse = "window";
-  }, []);
-
   // "Open window on" used to be read in the initial state, i.e. before the settings had loaded,
   // so it was always the fallback's Overview and the setting did nothing. It is applied once,
   // when the real settings first arrive.

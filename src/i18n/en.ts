@@ -42,6 +42,12 @@ const en = {
   "action.done": "Done",
   "action.cancel": "Cancel",
   "action.dismiss": "Dismiss",
+  "action.copied": "Copied",
+
+  "crash.title": "This part of Pulse stopped drawing",
+  "crash.body": "Pulse itself is still running and still sampling. Reloading usually brings this window back; the details have been written to Pulse's log.",
+  "crash.reload": "Reload",
+  "crash.copyDetails": "Copy details",
   "action.confirmQuit": "Quit {name}?",
   "action.confirmQuitBody": "{count, plural, one {1 process} other {# processes}} will be asked to close. Anything it has not saved is lost.",
   "action.search": "Find an app",

@@ -1,3 +1,4 @@
+import type { LogLevel } from "./report";
 import type { AudioState, HistorySeries, Insight, RankingRow, Settings, Snapshot } from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -72,6 +73,16 @@ export const ipc = {
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
   quitApp: (key: string, force: boolean) =>
     call<{ asked: number; forceUsed: boolean; error: string | null }>("quit_app", { key, force }),
+  /**
+   * Writes a line to Pulse's own log. Never throws and never reports its own failure through
+   * the error path it serves, so a broken bridge cannot turn one error into a loop.
+   */
+  logFrontend: (level: LogLevel, message: string) => {
+    if (!inTauri) return;
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke("log_frontend", { level, message }))
+      .catch(() => undefined);
+  },
   hidePanel: () => void call("hide_panel"),
   showWindow: (destination?: string) => void call("show_window", { destination: destination ?? null }),
   setPanelSize: (width: number, height: number) => void call("set_panel_size", { width, height }),

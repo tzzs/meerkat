@@ -1,3 +1,36 @@
+/* ---------- what a render exception leaves on screen ---------- */
+
+/* Opaque and self-contained: in the tray panel the page behind it is transparent. */
+.crash {
+  margin: 10px 12px 14px;
+  padding: var(--sp-5);
+  max-width: 460px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+[data-pulse="window"] .crash {
+  margin: 12vh auto 0;
+}
+.crash-title {
+  margin: 0 0 var(--sp-2);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 650;
+}
+.crash-body {
+  margin: 0 0 var(--sp-4);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.crash-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
 /* ---------- window chrome ---------- */
 
 .brand {
