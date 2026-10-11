@@ -44,6 +44,7 @@ const zh: Record<Key, string> = {
   "action.unpin": "取消置顶",
   "action.done": "完成",
   "action.cancel": "取消",
+  "action.dismiss": "关闭",
   "action.confirmQuit": "结束 {name}？",
   "action.confirmQuitBody": "{count, plural, other {# 个进程}}将被要求关闭，未保存的内容会丢失。",
   "action.search": "查找应用",
@@ -245,6 +246,7 @@ const zh: Record<Key, string> = {
   "settings.aboutCopyReport": "复制诊断报告",
   "settings.aboutReportHelp": "包含机器型号、Pulse 设置和近期日志，不含任何应用名或文件路径。",
   "settings.privacy": "Pulse 只在本地读取这台机器，不发送任何数据。无账号、无统计。",
+  "settings.saveFailed": "Pulse 没能保存这项更改，已恢复为之前的设置。",
 
   "panel.openWindow": "打开窗口",
   "panel.pin": "保持打开",

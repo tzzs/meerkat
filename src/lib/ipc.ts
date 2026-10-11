@@ -13,16 +13,30 @@ async function fixture<T>(name: string): Promise<T | null> {
   }
 }
 
-async function call<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
-  if (inTauri) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    try {
-      return (await invoke<T>(command, args)) as T;
-    } catch (error) {
-      console.error(`${command} failed`, error);
-      return null;
-    }
+/**
+ * What a command answered, or why it did not. `call` below folds a failure into null, which is
+ * right for a reading that simply is not there yet and wrong for a write: a settings save or a
+ * volume change that was refused has to be able to say so.
+ */
+export type IpcResult<T> = { ok: true; value: T | null } | { ok: false; error: string };
+
+async function attempt<T>(command: string, args?: Record<string, unknown>): Promise<IpcResult<T>> {
+  if (!inTauri) return { ok: true, value: await fixtureFor<T>(command, args) };
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    return { ok: true, value: (await invoke<T>(command, args)) as T };
+  } catch (error) {
+    console.error(`${command} failed`, error);
+    return { ok: false, error: typeof error === "string" ? error : String(error) };
   }
+}
+
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
+  const result = await attempt<T>(command, args);
+  return result.ok ? result.value : null;
+}
+
+function fixtureFor<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
   switch (command) {
     case "snapshot":
       return fixture<T>("latest.json");
@@ -33,10 +47,10 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     case "history_series": {
       const metric = String(args?.metric ?? "cpu");
       const range = Number(args?.rangeSeconds ?? 3600);
-      return (await fixture<T>(`series-${metric}-${range}.json`)) ?? null;
+      return fixture<T>(`series-${metric}-${range}.json`);
     }
     default:
-      return null;
+      return Promise.resolve(null);
   }
 }
 
@@ -44,7 +58,11 @@ export const ipc = {
   enabled: inTauri,
   snapshot: () => call<Snapshot>("snapshot"),
   settingsGet: () => call<Settings>("settings_get"),
-  settingsSet: (settings: Settings) => call<Settings>("settings_set", { next: settings }),
+  /**
+   * Saves and answers with what was stored, which the backend may have corrected (a threshold
+   * clamped into range), or with the reason it was not stored at all.
+   */
+  settingsSave: (settings: Settings) => attempt<Settings>("settings_set", { next: settings }),
   historySeries: async (metric: string, rangeSeconds: number) =>
     (await call<HistorySeries>("history_series", { metric, rangeSeconds })) ??
     emptySeries(metric, rangeSeconds),

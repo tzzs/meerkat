@@ -705,6 +705,33 @@
   font-size: 12px;
   color: var(--text-2);
 }
+.settings-error {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--danger-edge);
+  border-radius: var(--r-sm);
+  background: var(--danger-tint);
+  font-size: 12px;
+}
+.settings-error .dot {
+  background: var(--m-danger);
+}
+.settings-error-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-error button {
+  color: var(--text-3);
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+}
+.settings-error button:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
 .reset {
   margin-top: var(--sp-4);
   align-self: flex-start;

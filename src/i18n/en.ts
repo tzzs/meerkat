@@ -41,6 +41,7 @@ const en = {
   "action.unpin": "Unpin",
   "action.done": "Done",
   "action.cancel": "Cancel",
+  "action.dismiss": "Dismiss",
   "action.confirmQuit": "Quit {name}?",
   "action.confirmQuitBody": "{count, plural, one {1 process} other {# processes}} will be asked to close. Anything it has not saved is lost.",
   "action.search": "Find an app",
@@ -244,6 +245,7 @@ const en = {
   "settings.aboutCopyReport": "Copy report",
   "settings.aboutReportHelp": "Machine model, Pulse settings and the recent log. It names none of your apps or files.",
   "settings.privacy": "Pulse reads this machine locally and sends nothing. No account, no analytics.",
+  "settings.saveFailed": "Pulse could not save that change, so the previous setting is back in effect.",
 
   "panel.openWindow": "Open window",
   "panel.pin": "Keep open",

@@ -1,12 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { makeT, resolveLang, type Translate } from "../i18n";
 import type { Lang } from "../i18n";
 import { setCores, type UnitPrefs } from "./format";
-import { ipc, listenMetrics } from "./ipc";
+import { ipc, listenEvent, listenMetrics } from "./ipc";
+import { subscribe } from "./subscribe";
 import type { AppInfo, Settings, Snapshot } from "./types";
 
+/** What the window shows before the backend has answered. Mirrors `Settings::default()` in Rust. */
 export const fallbackSettings: Settings = {
-  version: 1,
+  version: 2,
   language: "auto",
   temperatureUnit: "celsius",
   networkUnit: "bytes",
@@ -47,7 +49,8 @@ export const fallbackSettings: Settings = {
   },
   alerts: {
     enabled: true,
-    cpuPercent: 80,
+    // Percent of the whole machine, not of one core.
+    cpuPercent: 25,
     memoryGrowBytes: 1073741824,
     diskBytesPerSecond: 40000000,
     networkBytesPerSecond: 20000000,
@@ -58,7 +61,12 @@ export const fallbackSettings: Settings = {
 interface StoreValue {
   snapshot: Snapshot | null;
   settings: Settings;
+  /** True once the backend has answered with real settings, not the fallback above. */
+  settingsLoaded: boolean;
   save: (next: Settings) => void;
+  /** Why the last save was refused (it has been rolled back), until dismissed or saved over. */
+  settingsError: string | null;
+  clearSettingsError: () => void;
   units: UnitPrefs;
   lang: Lang;
   t: Translate;
@@ -71,37 +79,106 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
+/** Keeps the newer of two snapshots: an answer to `snapshot` can land after a pushed one. */
+function newer(previous: Snapshot | null, next: Snapshot): Snapshot {
+  return previous && previous.takenAtMs > next.takenAtMs ? previous : next;
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [settings, setSettings] = useState<Settings>(fallbackSettings);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [pendingQuit, setPendingQuit] = useState<AppInfo | null>(null);
+  // Saves the backend has not answered yet. A settings value fetched meanwhile (because some
+  // event asked for one) can predate them, and applying it would undo what was just chosen.
+  const savesInFlight = useRef(0);
+  const saveSeq = useRef(0);
+  // The last value the backend confirmed, which is what a refused save rolls back to.
+  const confirmed = useRef<Settings>(fallbackSettings);
+
+  const loadSettings = useCallback(async () => {
+    const loaded = await ipc.settingsGet();
+    if (!loaded || savesInFlight.current > 0) return;
+    confirmed.current = loaded;
+    setSettings(loaded);
+    setSettingsLoaded(true);
+  }, []);
 
   useEffect(() => {
-    let stop: (() => void) | null = null;
-    void (async () => {
-      const loaded = await ipc.settingsGet();
-      if (loaded) setSettings(loaded);
-      const first = await ipc.snapshot();
-      if (first) {
-        setSnapshot(first);
-        setConnected(true);
-      }
-      stop = await listenMetrics((next) => {
-        setSnapshot(next);
-        setConnected(true);
-      });
-    })();
-    return () => stop?.();
-  }, []);
+    let alive = true;
+    const loadSnapshot = async () => {
+      const next = await ipc.snapshot();
+      if (!alive || !next) return;
+      setSnapshot((previous) => newer(previous, next));
+      setConnected(true);
+    };
+    // The backend only pushes snapshots to a window that is on screen, so one that has just
+    // been shown is up to a minute stale and catches up at once rather than at the next tick.
+    // Its settings may be older still: the panel lives for the whole session and used to keep
+    // the language, theme and units it was started with until Pulse restarted.
+    const catchUp = () => {
+      void loadSnapshot();
+      void loadSettings();
+    };
+    catchUp();
+    const stops = [
+      subscribe(() =>
+        listenMetrics((next) => {
+          if (!alive) return;
+          setSnapshot((previous) => newer(previous, next));
+          setConnected(true);
+        }),
+      ),
+      subscribe(() => listenEvent("settings-changed", () => void loadSettings())),
+      subscribe(() => listenEvent("panel-shown", catchUp)),
+      subscribe(() => listenEvent("window-shown", catchUp)),
+    ];
+    return () => {
+      alive = false;
+      for (const stop of stops) stop();
+    };
+  }, [loadSettings]);
 
   const save = useCallback((next: Settings) => {
+    const seq = ++saveSeq.current;
+    savesInFlight.current += 1;
     setSettings(next);
-    void ipc.settingsSet(next);
+    setSettingsError(null);
+    void ipc.settingsSave(next).then(async (result) => {
+      savesInFlight.current -= 1;
+      // A later save owns the state now; its own answer will settle it.
+      if (seq !== saveSeq.current) return;
+      if (result.ok) {
+        // What Rust stored after sanitising, which is not always what was sent. Outside Tauri
+        // there is no backend to answer, and the choice simply stands.
+        if (result.value) {
+          confirmed.current = result.value;
+          setSettings(result.value);
+        }
+        return;
+      }
+      // Refused: say so, and put back what is really in effect instead of leaving a control
+      // showing a value Pulse is not using.
+      setSettingsError(result.error);
+      const current = await ipc.settingsGet();
+      if (seq !== saveSeq.current || savesInFlight.current > 0) return;
+      if (current) confirmed.current = current;
+      setSettings(confirmed.current);
+    });
   }, []);
+
+  const clearSettingsError = useCallback(() => setSettingsError(null), []);
 
   const lang = resolveLang(settings.language === "auto" ? "auto" : settings.language === "zhHans" ? "zh-Hans" : "en");
   const t = useMemo(() => makeT(lang), [lang]);
+
+  // The pages ship as lang="en" so the first paint has a language; this follows the setting,
+  // which is what screen readers and CJK font selection read.
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
   const units = useMemo<UnitPrefs>(
     () => ({
       storage: settings.storageUnit,
@@ -139,8 +216,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const clearQuit = useCallback(() => setPendingQuit(null), []);
 
   const value = useMemo(
-    () => ({ snapshot, settings, save, units, lang, t, connected, pendingQuit, requestQuit, clearQuit }),
-    [snapshot, settings, save, units, lang, t, connected, pendingQuit, requestQuit, clearQuit],
+    () => ({
+      snapshot,
+      settings,
+      settingsLoaded,
+      save,
+      settingsError,
+      clearSettingsError,
+      units,
+      lang,
+      t,
+      connected,
+      pendingQuit,
+      requestQuit,
+      clearQuit,
+    }),
+    [
+      snapshot,
+      settings,
+      settingsLoaded,
+      save,
+      settingsError,
+      clearSettingsError,
+      units,
+      lang,
+      t,
+      connected,
+      pendingQuit,
+      requestQuit,
+      clearQuit,
+    ],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

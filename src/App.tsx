@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { ipc, listenNavigate } from "./lib/ipc";
+import { isTabId, openingTab, readLastTab, writeLastTab } from "./lib/navigation";
+import { subscribe } from "./lib/subscribe";
 import { TAB_LABEL } from "./i18n";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Button } from "./components/ui/button";
@@ -12,11 +14,18 @@ import { QuitDialog } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
 
+/** `?tab=` lets a probe open the window on a given tab; it outranks the setting. */
+function tabFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("tab");
+}
+
 export default function App() {
-  const { snapshot, settings, t, units, connected, pendingQuit } = useStore();
-  const [tab, setTab] = useState(
-    () => new URLSearchParams(window.location.search).get("tab") || settings.openWindowOn || "overview",
-  );
+  const { snapshot, settings, settingsLoaded, t, units, connected, pendingQuit } = useStore();
+  const [tab, setTab] = useState(() => tabFromUrl() || "overview");
+  // Read during the first render, before the effect below can record the tab the window
+  // merely started on as if it had been the user's choice.
+  const [launchLastTab] = useState(() => readLastTab());
+  const openingApplied = useRef(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState<null | "general" | "layout" | "about">(null);
   const [maximized, setMaximized] = useState(false);
@@ -42,14 +51,33 @@ export default function App() {
     document.documentElement.dataset.pulse = "window";
   }, []);
 
+  // "Open window on" used to be read in the initial state, i.e. before the settings had loaded,
+  // so it was always the fallback's Overview and the setting did nothing. It is applied once,
+  // when the real settings first arrive.
   useEffect(() => {
-    let stop: (() => void) | null = null;
-    void listenNavigate((destination) => {
-      if (destination === "settings") setPage("general");
-      else setTab(destination);
-    }).then((un) => (stop = un));
-    return () => stop?.();
-  }, []);
+    if (openingApplied.current || !settingsLoaded) return;
+    openingApplied.current = true;
+    if (tabFromUrl()) return;
+    setTab(openingTab(settings.openWindowOn, launchLastTab, settings.window.tabs));
+  }, [settingsLoaded, settings.openWindowOn, settings.window.tabs, launchLastTab]);
+
+  useEffect(() => {
+    if (openingApplied.current) writeLastTab(tab);
+  }, [tab]);
+
+  useEffect(
+    () =>
+      subscribe(() =>
+        listenNavigate((destination) => {
+          if (destination === "settings") setPage("general");
+          else if (isTabId(destination)) {
+            setPage(null);
+            setTab(destination);
+          }
+        }),
+      ),
+    [],
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

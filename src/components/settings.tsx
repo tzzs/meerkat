@@ -22,7 +22,7 @@ const TRAY_METRICS: Record<MetricKind, Key> = {
 };
 
 export function SettingsPages({ page, setPage }: { page: Page; setPage: (p: Page | null) => void }) {
-  const { settings, save, t } = useStore();
+  const { settings, save, t, settingsError, clearSettingsError } = useStore();
   const pages: [Page, string][] = [
     ["general", t("settings.general")],
     ["layout", t("settings.layout")],
@@ -38,6 +38,19 @@ export function SettingsPages({ page, setPage }: { page: Page; setPage: (p: Page
         ))}
       </aside>
       <div className="settings-body">
+        {/* A refused save has already been rolled back; this says why the control moved. */}
+        {settingsError && (
+          <div className="settings-error" role="alert">
+            <span className="dot" />
+            <span className="settings-error-text">
+              {t("settings.saveFailed")}
+              <span className="faint"> {settingsError}</span>
+            </span>
+            <button onClick={clearSettingsError} aria-label={t("action.dismiss")}>
+              ×
+            </button>
+          </div>
+        )}
         {page === "general" && <General settings={settings} save={save} />}
         {page === "layout" && <Layout settings={settings} save={save} />}
         {page === "about" && <About />}
