@@ -111,11 +111,53 @@ pub enum Language {
 #[serde(rename_all = "camelCase")]
 pub struct AlertThresholds {
     pub enabled: bool,
+    /// Percent of the whole machine (all logical cores), 1–100.
     pub cpu_percent: f64,
+    /// Growth of one app's memory within the last 30 minutes, in bytes; at least 100 MB.
     pub memory_grow_bytes: u64,
     pub disk_bytes_per_second: f64,
     pub network_bytes_per_second: f64,
+    /// How long CPU, disk or network has to stay over its threshold, 5–3600 s.
     pub sustained_seconds: u64,
+}
+
+/// The smallest growth the memory rule accepts: below it, ordinary churn would qualify.
+pub const MEMORY_GROW_FLOOR_BYTES: u64 = 100 * 1_048_576;
+
+impl Default for AlertThresholds {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cpu_percent: 25.0,
+            memory_grow_bytes: 1_073_741_824,
+            disk_bytes_per_second: 40_000_000.0,
+            network_bytes_per_second: 20_000_000.0,
+            sustained_seconds: 30,
+        }
+    }
+}
+
+impl AlertThresholds {
+    /// The thresholds the rules can actually use. A threshold of 0 used to make every app hit
+    /// at once (137 notifications in one tick), so each one is clamped: CPU to 1–100 % of the
+    /// machine, the sustain to 5–3600 s, memory growth to at least 100 MB and the rates to at
+    /// least 1 B/s. A value that is not a number at all (NaN, ±∞) falls back to its default.
+    pub fn sanitized(&self) -> AlertThresholds {
+        let defaults = AlertThresholds::default();
+        let rate = |value: f64, default: f64| if value.is_finite() { value.max(1.0) } else { default };
+        AlertThresholds {
+            enabled: self.enabled,
+            cpu_percent: if self.cpu_percent.is_finite() {
+                self.cpu_percent.clamp(1.0, 100.0)
+            } else {
+                defaults.cpu_percent
+            },
+            memory_grow_bytes: self.memory_grow_bytes.max(MEMORY_GROW_FLOOR_BYTES),
+            disk_bytes_per_second: rate(self.disk_bytes_per_second, defaults.disk_bytes_per_second),
+            network_bytes_per_second: rate(self.network_bytes_per_second, defaults.network_bytes_per_second),
+            sustained_seconds: self.sustained_seconds.clamp(5, 3600),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -205,14 +247,7 @@ impl Default for Settings {
                     })
                     .collect(),
             },
-            alerts: AlertThresholds {
-                enabled: true,
-                cpu_percent: 80.0,
-                memory_grow_bytes: 1_073_741_824,
-                disk_bytes_per_second: 40_000_000.0,
-                network_bytes_per_second: 20_000_000.0,
-                sustained_seconds: 30,
-            },
+            alerts: AlertThresholds::default(),
         }
     }
 }
