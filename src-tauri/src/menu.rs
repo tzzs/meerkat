@@ -309,6 +309,10 @@ pub fn resize_panel(app: &AppHandle, state: &AppState, width: u32, height: u32) 
     }
 }
 
+/// Brings the main window up, optionally on one of its pages. Every way in (the tray menu, a
+/// second launch, a toast) comes through here; "window-shown" is not sent from here but by
+/// `refresh_visibility`, which sees the window go from hidden or minimised to shown no matter
+/// who showed it, so un-minimising from the taskbar is covered too.
 pub fn show_main(app: &AppHandle, destination: Option<&str>) {
     if let Some(panel) = app.get_webview_window("panel") {
         let _ = panel.hide();
@@ -318,7 +322,7 @@ pub fn show_main(app: &AppHandle, destination: Option<&str>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
         if let Some(destination) = destination {
-            let _ = window.emit("navigate", destination);
+            let _ = app.emit_to("main", "navigate", destination);
         }
     }
     crate::ipc::refresh_visibility(app);

@@ -91,6 +91,12 @@ fn main() -> tauri::Result<()> {
                 }
                 ipc::refresh_visibility(window.app_handle());
             }
+            // Minimising and restoring arrive as a resize (to nothing and back), and a window
+            // that is minimised is still "visible" to Windows; this is how the sampler learns
+            // that nobody is looking, and that somebody is again.
+            WindowEvent::Resized(_) | WindowEvent::Focused(true) => {
+                ipc::refresh_visibility(window.app_handle());
+            }
             _ => {}
         })
         .setup(|app| {
@@ -106,6 +112,8 @@ fn main() -> tauri::Result<()> {
                 history: Mutex::new(History::open(&app_data)),
                 watcher: Mutex::new(Watcher::open(&app_data)),
                 tray: Mutex::new(TrayManager::new()),
+                main_visible: AtomicBool::new(false),
+                panel_visible: AtomicBool::new(false),
                 interface_visible: AtomicBool::new(false),
                 panel_pinned: AtomicBool::new(false),
                 panel_anchor: Mutex::new(None),
@@ -208,9 +216,7 @@ fn spawn_sampler(app: AppHandle) {
                 // and does not stand in the shell's queue.
                 tray::update(&app, &snapshot, &settings);
 
-                if state.visible() {
-                    let _ = app.emit("metrics", &snapshot);
-                }
+                ipc::publish_metrics(&app, &state, &snapshot);
                 #[cfg(debug_assertions)]
                 dump_for_dev_browser(&state, &snapshot);
 
@@ -483,5 +489,18 @@ mod autostart {
             assert_eq!(launches(r"C:\Program Files\Pulse\pulse.exe.bak --autostart", installed), None);
             assert_eq!(launches(r"C:\Program", installed), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tick_ms;
+
+    #[test]
+    fn the_sampler_slows_down_when_nothing_is_on_screen_and_again_on_battery() {
+        assert_eq!(tick_ms(true, true), 1000);
+        assert_eq!(tick_ms(false, true), 2000, "no window to feed");
+        assert_eq!(tick_ms(true, false), 2000, "on battery");
+        assert_eq!(tick_ms(false, false), 4000);
     }
 }

@@ -24,6 +24,10 @@ pub struct AppState {
     pub history: Mutex<History>,
     pub watcher: Mutex<Watcher>,
     pub tray: Mutex<TrayManager>,
+    /// Whether anyone can look at the window: shown, and not minimised. Kept per window so the
+    /// sampler sends a tick only where it can be seen; `interface_visible` is "either".
+    pub main_visible: AtomicBool,
+    pub panel_visible: AtomicBool,
     pub interface_visible: AtomicBool,
     pub panel_pinned: AtomicBool,
     /// What the panel was last opened against (the icon and the work area around it), so a
@@ -38,24 +42,82 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Something is on screen: the sampler ticks at its normal pace and sends full snapshots.
     pub fn visible(&self) -> bool {
         self.interface_visible.load(Ordering::Relaxed)
     }
+
+    pub fn on_screen(&self) -> OnScreen {
+        OnScreen {
+            main: self.main_visible.load(Ordering::Relaxed),
+            panel: self.panel_visible.load(Ordering::Relaxed),
+        }
+    }
 }
 
-/// The sampler only pushes full snapshots while something is on screen, so every path
-/// that shows or hides a window has to update this.
+/// Which of Pulse's two windows somebody can look at right now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OnScreen {
+    pub main: bool,
+    pub panel: bool,
+}
+
+impl OnScreen {
+    pub fn any(self) -> bool {
+        self.main || self.panel
+    }
+
+    /// The labels of the windows that should receive this tick's metrics.
+    pub fn labels(self) -> impl Iterator<Item = &'static str> {
+        [(self.main, "main"), (self.panel, "panel")]
+            .into_iter()
+            .filter_map(|(shown, label)| shown.then_some(label))
+    }
+}
+
+/// A window somebody can see: shown, and not minimised. A minimised window is still "visible" as
+/// far as Windows is concerned, and used to be sent a full snapshot a second for nobody.
+pub fn is_on_screen(shown: bool, minimised: bool) -> bool {
+    shown && !minimised
+}
+
+/// The sampler only pushes full snapshots while something is on screen, so every path that shows,
+/// hides, minimises or restores a window has to run this. It also says "window-shown" to the main
+/// window the moment it comes back, wherever that came from (the tray, a second launch, the
+/// taskbar button): the frontend refetches the snapshot and settings, which it could not have been
+/// kept current on while nothing was sent.
 pub fn refresh_visibility(app: &AppHandle) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    let visible = ["main", "panel"]
-        .into_iter()
-        .filter_map(|label| app.get_webview_window(label))
-        .any(|w| w.is_visible().unwrap_or(false));
-    state
-        .interface_visible
-        .store(visible, std::sync::atomic::Ordering::Relaxed);
+    let look = |label: &str| {
+        app.get_webview_window(label).is_some_and(|window| {
+            is_on_screen(window.is_visible().unwrap_or(false), window.is_minimized().unwrap_or(false))
+        })
+    };
+    let (main, panel) = (look("main"), look("panel"));
+    let main_was = state.main_visible.swap(main, Ordering::Relaxed);
+    state.panel_visible.store(panel, Ordering::Relaxed);
+    state.interface_visible.store(main || panel, Ordering::Relaxed);
+    if main && !main_was {
+        let _ = app.emit_to("main", "window-shown", ());
+    }
+}
+
+/// One tick's snapshot to the windows that are on screen, serialised once however many there
+/// are. `emit_to` with a label reaches the listeners registered for that window; a listener
+/// registered without a target hears every window's events (see `listenEvent` in the frontend).
+pub fn publish_metrics(app: &AppHandle, state: &AppState, snapshot: &Snapshot) {
+    let on_screen = state.on_screen();
+    if !on_screen.any() {
+        return;
+    }
+    let Ok(json) = serde_json::to_string(snapshot) else {
+        return;
+    };
+    for label in on_screen.labels() {
+        let _ = app.emit_str_to(label, "metrics", json.clone());
+    }
 }
 
 // A plain `fn` command runs on the main thread, which is also the one that paints and takes input:
@@ -393,5 +455,34 @@ fn parse_role(role: &str) -> Result<crate::audio::Role, String> {
         "render" => Ok(crate::audio::Role::Render),
         "capture" => Ok(crate::audio::Role::Capture),
         other => Err(format!("unknown audio role {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(main: bool, panel: bool) -> Vec<&'static str> {
+        OnScreen { main, panel }.labels().collect()
+    }
+
+    // The old code sent the same 125 KB to both webviews whenever either was shown, and counted a
+    // minimised window as shown.
+    #[test]
+    fn a_tick_goes_only_to_the_windows_somebody_can_see() {
+        assert!(labels(false, false).is_empty());
+        assert_eq!(labels(true, false), ["main"]);
+        assert_eq!(labels(false, true), ["panel"]);
+        assert_eq!(labels(true, true), ["main", "panel"]);
+        assert!(!OnScreen::default().any());
+        assert!(OnScreen { main: false, panel: true }.any());
+    }
+
+    #[test]
+    fn a_minimised_window_is_not_on_screen() {
+        assert!(is_on_screen(true, false));
+        assert!(!is_on_screen(true, true), "visible to Windows, but nobody is looking at it");
+        assert!(!is_on_screen(false, false));
+        assert!(!is_on_screen(false, true));
     }
 }
