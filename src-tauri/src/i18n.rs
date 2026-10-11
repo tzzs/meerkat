@@ -39,6 +39,11 @@ pub enum Text {
     QuitPulse,
     /// The product name, which is also the tray icon's tooltip when no readout is enabled.
     Pulse,
+    /// After a share of memory: "38% available".
+    Available,
+    /// The disk tooltip's "Reading 12 MB/s, Writing 4 MB/s".
+    Reading,
+    Writing,
 }
 
 pub fn text(lang: Lang, text: Text) -> &'static str {
@@ -47,9 +52,15 @@ pub fn text(lang: Lang, text: Text) -> &'static str {
         (Lang::En, Text::Settings) => "Settings",
         (Lang::En, Text::QuitPulse) => "Quit Pulse",
         (Lang::En, Text::Pulse) | (Lang::ZhHans, Text::Pulse) => "Pulse",
+        (Lang::En, Text::Available) => "available",
+        (Lang::En, Text::Reading) => "Reading",
+        (Lang::En, Text::Writing) => "Writing",
         (Lang::ZhHans, Text::OpenPulse) => "打开 Pulse",
         (Lang::ZhHans, Text::Settings) => "设置",
         (Lang::ZhHans, Text::QuitPulse) => "退出 Pulse",
+        (Lang::ZhHans, Text::Available) => "可用",
+        (Lang::ZhHans, Text::Reading) => "读取",
+        (Lang::ZhHans, Text::Writing) => "写入",
     }
 }
 
@@ -132,7 +143,11 @@ fn digits(value: f64) -> usize {
 
 /// `Intl.NumberFormat("en-US")` for the fixed digit counts used here: grouped thousands.
 fn number(value: f64, digits: usize) -> String {
-    let raw = format!("{:.*}", digits, value);
+    // Rounded half away from zero first, as Intl does: Rust's own formatting rounds a tie to
+    // even and would print 62.5 as "62" next to a label that rounded it to 63.
+    let scale = 10f64.powi(digits as i32);
+    let rounded = (value * scale).round() / scale;
+    let raw = format!("{:.*}", digits, rounded);
     let (sign, unsigned) = match raw.strip_prefix('-') {
         Some(rest) => ("-", rest),
         None => ("", raw.as_str()),

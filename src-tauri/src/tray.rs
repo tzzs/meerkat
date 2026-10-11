@@ -5,27 +5,47 @@
 //! involved, so the readout keeps updating while every window is hidden. The tooltip carries
 //! the full value text, so the readout is never empty even before the first bitmap.
 
+use std::collections::HashMap;
+
 use tauri::{image::Image, tray::TrayIconBuilder, AppHandle, Manager};
 
-use crate::i18n::{self, Lang, Text};
-use crate::models::{MetricKind, Snapshot};
-use crate::settings::{Settings, Theme, TrayReadout, TrayStyle};
+use crate::i18n::{self, Lang, Text, Units};
+use crate::models::{Availability, MetricKind, Snapshot};
+use crate::settings::{NetworkUnit, Settings, StorageUnit, TemperatureUnit, TrayReadout, TrayStyle};
+use crate::tray_render::{self, Frame, Layout};
 
 /// The icon kept when no readout is enabled. Every way into Pulse (the panel, the window, the
 /// menu with its Quit) hangs off a tray icon, and the window may be hidden and out of the
 /// taskbar, so an app with none would be running and unreachable.
 pub const FALLBACK_ID: &str = "tray-pulse";
 
+/// What a reading says when there is no reading. Never a zero: a machine without a battery is
+/// not at 0 %.
+const ABSENT: &str = "\u{2014}";
+
+/// A rate's sparkline never zooms in below this, so a quiet line stays quiet.
+const NETWORK_FLOOR: f64 = 100_000.0;
+const DISK_FLOOR: f64 = 1_000_000.0;
+
 pub struct TrayManager {
     /// Tray ids in the order the icons were created, which is the order Windows lists them.
     live: Vec<String>,
     /// The language the live menus were built in, so a changed setting rebuilds them.
     lang: Lang,
+    /// The last bitmap and tooltip handed to each icon. Every call into the shell costs a round
+    /// trip to the main thread, and most seconds a readout is exactly what it was.
+    shown: HashMap<String, Shown>,
+}
+
+#[derive(Default)]
+struct Shown {
+    rgba: Vec<u8>,
+    tooltip: String,
 }
 
 impl TrayManager {
     pub fn new() -> Self {
-        Self { live: Vec::new(), lang: Lang::En }
+        Self { live: Vec::new(), lang: Lang::En, shown: HashMap::new() }
     }
 
     /// Brings the icons in line with the settings. Windows appends every new icon to the end of
@@ -40,9 +60,10 @@ impl TrayManager {
             for id in self.live.drain(..) {
                 app.remove_tray_by_id(&id);
             }
+            self.shown.clear();
             for id in &wanted {
                 let tip = match readout_for(settings, id) {
-                    Some(readout) => tooltip(lang, readout.metric, "\u{2014}"),
+                    Some(readout) => format!("{} {ABSENT}", i18n::metric(lang, readout.metric)),
                     None => i18n::text(lang, Text::Pulse).to_string(),
                 };
                 match build_icon(app, id, &tip, lang) {
@@ -66,39 +87,47 @@ impl TrayManager {
         }
     }
 
-    pub fn update(&self, app: &AppHandle, snapshot: &Snapshot, settings: &Settings) {
-        let dark_taskbar = match settings.theme {
-            Theme::Light => false,
-            Theme::Dark => true,
-            // The Windows taskbar is dark for most installs, and a light guess on a dark
-            // bar would make the readout disappear entirely.
-            Theme::Auto => true,
-        };
-        let icon_height = crate::tray_render::icon_height();
+    pub fn update(&mut self, app: &AppHandle, snapshot: &Snapshot, settings: &Settings) {
         let lang = i18n::resolve(settings.language);
+        let units = Units::of(settings);
+        // The taskbar's theme is Windows' own system theme: Pulse's theme setting is about its
+        // windows, and a dark default on a light bar is how the readout used to vanish.
+        let light_bar = tray_render::taskbar_is_light();
+        let size = tray_render::icon_size();
+
         for readout in settings.tray.iter().filter(|r| r.enabled) {
             let id = tray_id(readout);
             let Some(tray) = app.tray_by_id(&id) else { continue };
-            let text = value_text(readout, snapshot);
-            let _ = tray.set_tooltip(Some(tooltip(lang, readout.metric, &text)));
-            let show_value = matches!(readout.style, TrayStyle::Value | TrayStyle::Both);
-            let show_graph = matches!(readout.style, TrayStyle::Graph | TrayStyle::Both);
-            let rendered = crate::tray_render::render(
-                &text,
-                &series_for(readout.metric, snapshot),
-                hue(readout.metric),
-                show_value,
-                show_graph,
-                dark_taskbar,
-                icon_height,
-            );
-            let image = Image::new(&rendered.rgba, rendered.width, rendered.height);
-            if let Err(error) = tray.set_icon(Some(image)) {
-                eprintln!("tray icon {id}: {error}");
+            let reading = reading(readout, snapshot, lang, units);
+            let rendered = tray_render::render(&Frame {
+                label: &reading.label,
+                series: &reading.series,
+                range: reading.range,
+                hue: hue(readout.metric),
+                layout: layout_of(readout.style),
+                light_bar,
+                size,
+            });
+
+            let shown = self.shown.entry(id.clone()).or_default();
+            if shown.tooltip != reading.tooltip {
+                match tray.set_tooltip(Some(reading.tooltip.clone())) {
+                    Ok(()) => shown.tooltip = reading.tooltip,
+                    Err(error) => eprintln!("tray tooltip {id}: {error}"),
+                }
             }
-            #[cfg(debug_assertions)]
-            if let Ok(dir) = app.path().app_data_dir() {
-                crate::tray_render::dump_debug(&id, &rendered, &dir.join("dev"));
+            if shown.rgba != rendered.rgba {
+                let image = Image::new(&rendered.rgba, rendered.width, rendered.height);
+                match tray.set_icon(Some(image)) {
+                    Ok(()) => {
+                        #[cfg(debug_assertions)]
+                        if let Ok(dir) = app.path().app_data_dir() {
+                            tray_render::dump_debug(&id, &rendered, &dir.join("dev"));
+                        }
+                        shown.rgba = rendered.rgba;
+                    }
+                    Err(error) => eprintln!("tray icon {id}: {error}"),
+                }
             }
         }
     }
@@ -140,62 +169,183 @@ fn build_icon(app: &AppHandle, id: &str, tooltip: &str, lang: Lang) -> Result<()
     builder.build(app).map(|_| ()).map_err(|e| e.to_string())
 }
 
-fn tooltip(lang: Lang, metric: MetricKind, value: &str) -> String {
-    format!("{} {}", i18n::metric(lang, metric), value)
+fn layout_of(style: TrayStyle) -> Layout {
+    match style {
+        TrayStyle::Value => Layout::Value,
+        TrayStyle::Graph => Layout::Graph,
+        TrayStyle::Both => Layout::Both,
+    }
 }
 
-pub fn value_text(readout: &TrayReadout, snapshot: &Snapshot) -> String {
-    match readout.metric {
-        MetricKind::Cpu => format!("{}%", snapshot.cpu.total_percent.round()),
+// ---------------------------------------------------------------------------------------------
+// What a readout says
+// ---------------------------------------------------------------------------------------------
+
+/// One readout, ready to draw: the sentence for its tooltip, the few characters that fit on the
+/// icon, and the samples of its sparkline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reading {
+    pub tooltip: String,
+    pub label: String,
+    /// Empty when the metric has no reading: a flat zero line would be a made-up one.
+    pub series: Vec<f64>,
+    /// The values on the bottom and the top of the sparkline.
+    pub range: (f64, f64),
+}
+
+fn absent(lang: Lang, metric: MetricKind) -> Reading {
+    Reading {
+        tooltip: format!("{} {ABSENT}", i18n::metric(lang, metric)),
+        label: ABSENT.to_string(),
+        series: Vec::new(),
+        range: (0.0, 100.0),
+    }
+}
+
+/// A share of something, 0-100, on the fixed scale every percentage uses.
+fn percentage(lang: Lang, metric: MetricKind, percent: f64, suffix: Option<&str>, series: Vec<f64>) -> Reading {
+    let percent = percent.clamp(0.0, 100.0);
+    let mut tooltip = format!("{} {}", i18n::metric(lang, metric), i18n::percent(percent));
+    if let Some(suffix) = suffix {
+        tooltip.push(' ');
+        tooltip.push_str(suffix);
+    }
+    Reading { tooltip, label: format!("{}", percent.round() as i64), series, range: (0.0, 100.0) }
+}
+
+pub fn reading(readout: &TrayReadout, snapshot: &Snapshot, lang: Lang, units: Units) -> Reading {
+    let metric = readout.metric;
+    let name = i18n::metric(lang, metric);
+    match metric {
+        MetricKind::Cpu => {
+            let total = snapshot.cpu.total_percent;
+            if !total.is_finite() {
+                return absent(lang, metric);
+            }
+            percentage(lang, metric, total, None, snapshot.cpu.history.clone())
+        }
         MetricKind::Memory => {
-            let used = snapshot.memory.in_use_bytes;
-            let total = snapshot.memory.total_bytes.max(1);
+            let memory = &snapshot.memory;
+            if memory.total_bytes == 0 {
+                return absent(lang, metric);
+            }
+            let total = memory.total_bytes as f64;
             if readout.invert {
-                format!("{}%", (snapshot.memory.available_bytes as f64 / total as f64 * 100.0).round())
+                let available = memory.available_bytes as f64 / total * 100.0;
+                let inverted = memory.history.iter().map(|v| 100.0 - v).collect();
+                percentage(lang, metric, available, Some(i18n::text(lang, Text::Available)), inverted)
             } else {
-                format!("{}%", (used as f64 / total as f64 * 100.0).round())
+                let used = memory.in_use_bytes as f64 / total * 100.0;
+                percentage(lang, metric, used, None, memory.history.clone())
             }
         }
-        MetricKind::Disk => format!(
-            "{} {}  {}",
-            compact(snapshot.disk.read_bytes_per_second),
-            "\u{2191}",
-            compact(snapshot.disk.write_bytes_per_second)
-        ),
-        MetricKind::Network => format!(
-            "{} {} {}",
-            "\u{2193}",
-            compact(snapshot.network.download_bytes_per_second),
-            compact(snapshot.network.upload_bytes_per_second)
-        ),
-        MetricKind::Gpu => format!(
-            "{}%",
-            snapshot.gpu.total_percent.unwrap_or(0.0).round()
-        ),
-        MetricKind::Battery => format!(
-            "{}%",
-            snapshot.battery.charge_percent.unwrap_or(0.0).round()
-        ),
-        MetricKind::Temperature => match snapshot.temperature.cpu_celsius {
-            Some(c) => format!("{}°", c.round()),
-            None => "—".to_string(),
+        MetricKind::Disk => {
+            let disk = &snapshot.disk;
+            if disk.availability == Availability::Unavailable {
+                return absent(lang, metric);
+            }
+            let series = larger_of(&disk.history_read, &disk.history_write);
+            let ceiling = tray_render::nice_ceiling(series.iter().cloned().fold(0.0, f64::max), DISK_FLOOR);
+            Reading {
+                tooltip: format!(
+                    "{name} {} {} \u{b7} {} {}",
+                    i18n::text(lang, Text::Reading),
+                    i18n::rate(disk.read_bytes_per_second, units, false),
+                    i18n::text(lang, Text::Writing),
+                    i18n::rate(disk.write_bytes_per_second, units, false),
+                ),
+                label: compact_rate(disk.read_bytes_per_second.max(disk.write_bytes_per_second), units, false),
+                series,
+                range: (0.0, ceiling),
+            }
+        }
+        MetricKind::Network => {
+            let network = &snapshot.network;
+            let series = larger_of(&network.history_download, &network.history_upload);
+            let ceiling = tray_render::nice_ceiling(series.iter().cloned().fold(0.0, f64::max), NETWORK_FLOOR);
+            Reading {
+                tooltip: format!(
+                    "{name} \u{2193} {} \u{b7} \u{2191} {}",
+                    i18n::rate(network.download_bytes_per_second, units, true),
+                    i18n::rate(network.upload_bytes_per_second, units, true),
+                ),
+                label: compact_rate(
+                    network.download_bytes_per_second.max(network.upload_bytes_per_second),
+                    units,
+                    true,
+                ),
+                series,
+                range: (0.0, ceiling),
+            }
+        }
+        MetricKind::Gpu => match snapshot.gpu.total_percent {
+            Some(percent) if percent.is_finite() => {
+                percentage(lang, metric, percent, None, snapshot.gpu.history.clone())
+            }
+            _ => absent(lang, metric),
+        },
+        MetricKind::Battery => match snapshot.battery.charge_percent {
+            Some(percent) if snapshot.battery.has_battery && percent.is_finite() => {
+                percentage(lang, metric, percent, None, snapshot.battery.history.clone())
+            }
+            _ => absent(lang, metric),
+        },
+        MetricKind::Temperature => match snapshot.temperature.hottest {
+            Some(celsius) if celsius.is_finite() => {
+                let shown = match units.temperature {
+                    TemperatureUnit::Fahrenheit => celsius * 1.8 + 32.0,
+                    TemperatureUnit::Celsius => celsius,
+                };
+                Reading {
+                    tooltip: format!("{name} {}", i18n::temperature(celsius, units)),
+                    label: format!("{}\u{b0}", shown.round() as i64),
+                    series: snapshot.temperature.history.clone(),
+                    // Celsius whatever the unit shown: the sparkline's scale is a shape, not a figure.
+                    range: (0.0, 100.0),
+                }
+            }
+            _ => absent(lang, metric),
         },
     }
 }
 
-fn compact(bytes_per_second: f64) -> String {
-    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
-    let mut value = bytes_per_second;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if value >= 100.0 {
-        format!("{:.0}{}", value, UNITS[unit])
+/// The per-sample larger of two aligned histories, which is what a combined readout's number is.
+/// The newest samples line up, so a shorter history is matched from the end.
+fn larger_of(a: &[f64], b: &[f64]) -> Vec<f64> {
+    let len = a.len().min(b.len());
+    a[a.len() - len..]
+        .iter()
+        .zip(&b[b.len() - len..])
+        .map(|(x, y)| x.max(*y))
+        .collect()
+}
+
+/// A rate in as few characters as it can be read in: "0B", "512B", "1.2M", "345K", "12G". Steps
+/// and units follow the settings (decimal or binary storage, bytes or bits for the network);
+/// the exact figure is in the tooltip.
+pub fn compact_rate(bytes_per_second: f64, units: Units, network: bool) -> String {
+    let (mut value, step, letters) = if network && units.network == NetworkUnit::Bits {
+        (bytes_per_second * 8.0, 1000.0, ["b", "k", "M", "G", "T"])
     } else {
-        format!("{:.1}{}", value, UNITS[unit])
+        let step = match units.storage {
+            StorageUnit::Binary => 1024.0,
+            StorageUnit::Decimal => 1000.0,
+        };
+        (bytes_per_second, step, ["B", "K", "M", "G", "T"])
+    };
+    let mut index = 0;
+    while value.round() >= 1000.0 && index < letters.len() - 1 {
+        value /= step;
+        index += 1;
     }
+    let number = if value < 0.05 {
+        "0".to_string()
+    } else if (value * 10.0).round() / 10.0 < 10.0 {
+        format!("{value:.1}").trim_end_matches(".0").to_string()
+    } else {
+        format!("{value:.0}")
+    };
+    format!("{number}{}", letters[index])
 }
 
 fn hue(metric: MetricKind) -> (u8, u8, u8) {
@@ -210,21 +360,13 @@ fn hue(metric: MetricKind) -> (u8, u8, u8) {
     }
 }
 
-fn series_for(metric: MetricKind, snapshot: &Snapshot) -> Vec<f64> {
-    match metric {
-        MetricKind::Cpu => snapshot.cpu.history.clone(),
-        MetricKind::Memory => snapshot.memory.history.clone(),
-        MetricKind::Disk => snapshot.disk.history_write.clone(),
-        MetricKind::Network => snapshot.network.history_download.clone(),
-        MetricKind::Gpu => snapshot.gpu.history.clone(),
-        MetricKind::Battery => snapshot.battery.history.clone(),
-        MetricKind::Temperature => snapshot.temperature.history.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{
+        BatteryMetric, CpuMetric, DiskMetric, GpuMetric, MachineInfo, MemoryMetric, NetworkMetric,
+        TemperatureMetric,
+    };
 
     fn readout(id: &str, metric: MetricKind, enabled: bool, style: TrayStyle) -> TrayReadout {
         TrayReadout {
@@ -242,6 +384,53 @@ mod tests {
         let mut settings = Settings::default();
         settings.tray = readouts;
         settings
+    }
+
+    fn snapshot() -> Snapshot {
+        Snapshot {
+            taken_at_ms: 0,
+            machine: MachineInfo {
+                hostname: "host".into(),
+                os_version: "Windows 11".into(),
+                chip_name: "CPU".into(),
+                physical_cores: Some(8),
+                logical_cores: 16,
+                total_memory_bytes: 32_000_000_000,
+                uptime_seconds: 0,
+            },
+            cpu: CpuMetric { total_percent: 16.4, history: vec![10.0, 20.0, 16.4], ..Default::default() },
+            memory: MemoryMetric {
+                total_bytes: 32_000_000_000,
+                in_use_bytes: 20_000_000_000,
+                available_bytes: 12_000_000_000,
+                history: vec![60.0, 62.5],
+                ..Default::default()
+            },
+            disk: DiskMetric {
+                read_bytes_per_second: 12_300_000.0,
+                write_bytes_per_second: 4_500_000.0,
+                history_read: vec![1.0e6, 12.3e6],
+                history_write: vec![2.0e6, 4.5e6],
+                ..Default::default()
+            },
+            network: NetworkMetric {
+                download_bytes_per_second: 1_234_567.0,
+                upload_bytes_per_second: 45_000.0,
+                history_download: vec![1.0e6, 1_234_567.0],
+                history_upload: vec![10_000.0, 45_000.0],
+                ..Default::default()
+            },
+            gpu: GpuMetric::default(),
+            battery: BatteryMetric::default(),
+            temperature: TemperatureMetric::default(),
+            apps: Vec::new(),
+            process_count: 0,
+            sampler_cost_microseconds: 0,
+        }
+    }
+
+    fn read(metric: MetricKind) -> Reading {
+        reading(&readout("x", metric, true, TrayStyle::Both), &snapshot(), Lang::En, Units::default())
     }
 
     // The settings file this was reported from had every readout switched off, no taskbar entry
@@ -303,5 +492,120 @@ mod tests {
             readout("cpu", MetricKind::Cpu, true, TrayStyle::Value),
         ]);
         assert_eq!(wanted_ids(&twice), ["tray-cpu"]);
+    }
+
+    #[test]
+    fn percentages_are_whole_numbers_on_the_icon_and_carry_the_sign_in_the_tooltip() {
+        let cpu = read(MetricKind::Cpu);
+        assert_eq!(cpu.label, "16");
+        assert_eq!(cpu.tooltip, "CPU 16%");
+        assert_eq!(cpu.range, (0.0, 100.0), "a percentage is always on the 0-100 scale");
+        let memory = read(MetricKind::Memory);
+        assert_eq!(memory.label, "63");
+        assert_eq!(memory.tooltip, "Memory 63%");
+        assert_eq!(memory.series, vec![60.0, 62.5]);
+    }
+
+    #[test]
+    fn inverted_memory_reads_what_is_free_and_says_so() {
+        let mut flipped = readout("memory", MetricKind::Memory, true, TrayStyle::Value);
+        flipped.invert = true;
+        let reading = reading(&flipped, &snapshot(), Lang::En, Units::default());
+        assert_eq!(reading.label, "38");
+        assert_eq!(reading.tooltip, "Memory 38% available");
+        assert_eq!(reading.series, vec![40.0, 37.5], "the sparkline is inverted with the number");
+        let zh = super::reading(&flipped, &snapshot(), Lang::ZhHans, Units::default());
+        assert_eq!(zh.tooltip, "\u{5185}\u{5b58} 38% \u{53ef}\u{7528}");
+    }
+
+    // The old text printed "0%" for a machine without a battery and for a GPU with no reading,
+    // and drew a flat line from the zero its history was padded with.
+    #[test]
+    fn a_missing_reading_is_a_dash_and_has_no_graph() {
+        for metric in [MetricKind::Battery, MetricKind::Gpu, MetricKind::Temperature] {
+            let reading = read(metric);
+            assert_eq!(reading.label, "\u{2014}", "{metric:?}");
+            assert!(reading.series.is_empty(), "{metric:?} has no line to draw");
+            assert!(reading.tooltip.ends_with('\u{2014}'), "{}", reading.tooltip);
+        }
+        let mut with_battery = snapshot();
+        with_battery.battery.has_battery = true;
+        with_battery.battery.charge_percent = Some(80.0);
+        with_battery.battery.history = vec![79.0, 80.0];
+        let battery = readout("b", MetricKind::Battery, true, TrayStyle::Both);
+        let present = reading(&battery, &with_battery, Lang::En, Units::default());
+        assert_eq!((present.label.as_str(), present.tooltip.as_str()), ("80", "Battery 80%"));
+
+        let mut unmeasured = snapshot();
+        unmeasured.memory.total_bytes = 0;
+        let memory = readout("m", MetricKind::Memory, true, TrayStyle::Both);
+        let none = reading(&memory, &unmeasured, Lang::En, Units::default());
+        assert_eq!(none.label, "\u{2014}");
+    }
+
+    #[test]
+    fn temperature_is_the_hottest_sensor_in_the_chosen_unit() {
+        let mut hot = snapshot();
+        hot.temperature.cpu_celsius = Some(48.0);
+        hot.temperature.hottest = Some(71.4);
+        hot.temperature.history = vec![60.0, 71.4];
+        let readout = readout("t", MetricKind::Temperature, true, TrayStyle::Both);
+        let celsius = reading(&readout, &hot, Lang::En, Units::default());
+        assert_eq!(celsius.label, "71\u{b0}");
+        assert_eq!(celsius.tooltip, "Temperature 71\u{b0}C");
+        let fahrenheit = Units { temperature: TemperatureUnit::Fahrenheit, ..Units::default() };
+        let f = reading(&readout, &hot, Lang::En, fahrenheit);
+        assert_eq!(f.label, "161\u{b0}");
+        assert_eq!(f.tooltip, "Temperature 161\u{b0}F");
+        // The headline used to be cpu_celsius, which is absent on most machines and not the hottest.
+        hot.temperature.cpu_celsius = None;
+        assert_eq!(reading(&readout, &hot, Lang::En, Units::default()).label, "71\u{b0}");
+    }
+
+    #[test]
+    fn rates_follow_the_storage_and_network_units() {
+        assert_eq!(compact_rate(0.0, Units::default(), false), "0B");
+        assert_eq!(compact_rate(512.0, Units::default(), false), "512B");
+        assert_eq!(compact_rate(1_234_567.0, Units::default(), true), "1.2M");
+        assert_eq!(compact_rate(345_000.0, Units::default(), true), "345K");
+        assert_eq!(compact_rate(12_400_000_000.0, Units::default(), false), "12G");
+        assert_eq!(compact_rate(999_600.0, Units::default(), false), "1M", "never 1000K");
+        assert_eq!(compact_rate(1_000_000.0, Units::default(), false), "1M");
+
+        let binary = Units { storage: StorageUnit::Binary, ..Units::default() };
+        assert_eq!(compact_rate(1_048_576.0, binary, false), "1M");
+        assert_eq!(compact_rate(1_000.0, binary, false), "1K", "1000 B is 0.98 KiB");
+        assert_eq!(compact_rate(1_024.0 * 1_000.0, binary, false), "1M", "1000 KiB is 0.98 MiB, one decimal of which is 1.0");
+
+        let bits = Units { network: NetworkUnit::Bits, ..Units::default() };
+        assert_eq!(compact_rate(1_500_000.0, bits, true), "12M", "12 Mbit/s, not 1.5 MB/s");
+        assert_eq!(compact_rate(1_500_000.0, bits, false), "1.5M", "a disk rate is never in bits");
+    }
+
+    #[test]
+    fn tooltips_carry_both_directions_in_the_users_units() {
+        let network = read(MetricKind::Network);
+        assert_eq!(network.label, "1.2M", "the larger direction");
+        assert_eq!(network.tooltip, "Network \u{2193} 1.23\u{a0}MB/s \u{b7} \u{2191} 45.0\u{a0}KB/s");
+        let bits = Units { network: NetworkUnit::Bits, ..Units::default() };
+        let in_bits = reading(&readout("n", MetricKind::Network, true, TrayStyle::Both), &snapshot(), Lang::En, bits);
+        assert_eq!(in_bits.label, "9.9M");
+        assert!(in_bits.tooltip.contains("9.88\u{a0}Mbit/s"), "{}", in_bits.tooltip);
+
+        let disk = read(MetricKind::Disk);
+        assert_eq!(disk.label, "12M");
+        assert_eq!(disk.tooltip, "Disk Reading 12.3\u{a0}MB/s \u{b7} Writing 4.50\u{a0}MB/s");
+    }
+
+    #[test]
+    fn a_combined_rate_graphs_the_larger_direction_per_sample_with_a_round_ceiling() {
+        let disk = read(MetricKind::Disk);
+        assert_eq!(disk.series, vec![2.0e6, 12.3e6]);
+        assert_eq!(disk.range, (0.0, 20_000_000.0));
+        let network = read(MetricKind::Network);
+        assert_eq!(network.series, vec![1.0e6, 1_234_567.0]);
+        assert_eq!(network.range, (0.0, 2_000_000.0));
+        // Histories of different lengths are matched from the newest end.
+        assert_eq!(larger_of(&[1.0, 5.0, 2.0], &[3.0, 1.0]), vec![5.0, 2.0]);
     }
 }
