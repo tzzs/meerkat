@@ -103,7 +103,7 @@ impl HealthReader {
                     slot.finished_at = Some(Instant::now());
                 });
             if let Err(error) = spawned {
-                eprintln!("battery report: no worker thread: {error}");
+                crate::diag::warn(format!("battery report: no worker thread: {error}"));
                 slot.in_flight = false;
                 slot.finished_at = Some(Instant::now());
             }

@@ -140,7 +140,9 @@ pub fn settings_get(state: State<'_, AppState>) -> Settings {
 pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) -> Result<Settings, String> {
     let _one_at_a_time = state.settings_saving.lock().unwrap_or_else(|p| p.into_inner());
     let previous = state.settings.get();
-    let saved = state.settings.set(next)?;
+    let saved = state.settings.set(next).inspect_err(|error| {
+        crate::diag::error(format!("settings: could not be saved: {error}"));
+    })?;
     // Waits for the main thread, which does the icons. The store's own lock is long released;
     // `settings_saving` is held, and the main thread never takes it.
     crate::tray::rebuild(&app);
@@ -204,14 +206,20 @@ pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitRes
     };
 
     let family = quit::own_family();
-    if let Err(why) = quit::quit_policy(&app, &family).permits(force) {
-        return why.refusal(force);
-    }
-    if force {
-        quit::force_quit(&app, taken_at_ms, &family)
-    } else {
-        quit::ask_to_close(&app, taken_at_ms)
-    }
+    let result = match quit::quit_policy(&app, &family).permits(force) {
+        Err(why) => why.refusal(force),
+        Ok(()) if force => quit::force_quit(&app, taken_at_ms, &family),
+        Ok(()) => quit::ask_to_close(&app, taken_at_ms),
+    };
+    // Counts and a code, never the application's name: this line ends up in a report.
+    crate::diag::info(format!(
+        "quit: {} asked {} of {} processes, {}",
+        if force { "force" } else { "graceful" },
+        result.asked,
+        app.process_count,
+        result.error.as_deref().unwrap_or("ok"),
+    ));
+    result
 }
 
 /// A clean exit for the window's own Quit: closing the window only hides it, so without this a
@@ -255,18 +263,24 @@ pub fn set_panel_size(app: AppHandle, state: State<'_, AppState>, width: u32, he
     menu::resize_panel(&app, &state, wanted.0, wanted.1)
 }
 
-/// The report Settings → About copies: machine, settings, recent log. No app names.
+/// How many of the log's last lines the report carries.
+const REPORT_LOG_LINES: usize = 40;
+
+/// The report Settings → About copies: version, the machine's OS build and CPU, a few figures,
+/// the settings, and the tail of Pulse's own log. No host name, no user name (paths in the log
+/// are scrubbed), no app names.
 #[tauri::command(async)]
 pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
     let snapshot = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone();
     let settings = state.settings.get();
+    let build = if cfg!(debug_assertions) { "debug build" } else { "release build" };
     let mut lines = Vec::new();
-    lines.push(format!("Pulse {}", app.package_info().version));
+    lines.push(format!("Pulse {} ({build})", app.package_info().version));
     if let Some(snapshot) = snapshot.as_ref() {
         lines.push(format!(
             "{} | {} | {} logical cores | {} bytes RAM",
-            snapshot.machine.hostname,
             snapshot.machine.os_version,
+            snapshot.machine.chip_name,
             snapshot.machine.logical_cores,
             snapshot.machine.total_memory_bytes
         ));
@@ -283,7 +297,22 @@ pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
         lines.push(format!("sampler cost {} µs", snapshot.sampler_cost_microseconds));
     }
     lines.push(serde_json::to_string(&settings).unwrap_or_default());
-    lines.join("\n")
+    lines.push(format!("--- last {REPORT_LOG_LINES} log lines"));
+    let log = crate::diag::tail_for_report(REPORT_LOG_LINES);
+    if log.is_empty() {
+        lines.push("(the log is empty)".to_string());
+    }
+    lines.extend(log);
+    lines.join("
+")
+}
+
+/// A line from a window's own error handling, so a failure in the interface is in the same log
+/// (and the same report) as the backend's. The level is "error", "warn" or "info"; the message is
+/// cut at 2 KiB and at most 20 lines per 10 seconds are kept.
+#[tauri::command(async)]
+pub fn log_frontend(level: String, message: String) -> Result<(), String> {
+    crate::diag::from_frontend(&level, &message)
 }
 
 #[tauri::command]
@@ -363,7 +392,10 @@ pub fn relaunch_elevated(app: AppHandle) -> Result<(), String> {
     Err(match code {
         // The user pressed No on the consent dialog, or it was blocked by policy.
         5 | 1223 => "cancelled".to_string(),
-        other => format!("ShellExecute failed: {other}"),
+        other => {
+            crate::diag::warn(format!("relaunch as administrator: ShellExecute failed with {other}"));
+            format!("ShellExecute failed: {other}")
+        }
     })
 }
 

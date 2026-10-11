@@ -2,6 +2,7 @@
 
 mod alerts;
 mod audio;
+mod diag;
 mod history;
 mod i18n;
 mod icons;
@@ -29,6 +30,17 @@ use crate::settings::SettingsStore;
 use crate::tray::TrayManager;
 
 fn main() -> tauri::Result<()> {
+    // Before anything that can fail: this is a build with no console, and a Pulse that does not
+    // start (no WebView2 runtime is the usual reason) has nowhere else to say why.
+    diag::init_early(toast::AUMID);
+    let result = run();
+    if let Err(error) = &result {
+        diag::error(format!("Pulse stopped: {error}"));
+    }
+    result
+}
+
+fn run() -> tauri::Result<()> {
     tauri::Builder::default()
         // First on purpose: plugins set up in registration order, and a second launch exits
         // inside this one's setup, before any other plugin, window, tray icon or sampler of its
@@ -36,6 +48,7 @@ fn main() -> tauri::Result<()> {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A login item firing while Pulse already runs has nothing to show.
             if !args.iter().any(|a| a == autostart::FLAG) {
+                diag::info("a second launch: showing the window of the running instance");
                 menu::show_main(app, None);
             }
         }))
@@ -56,6 +69,7 @@ fn main() -> tauri::Result<()> {
             ipc::insight_dismiss,
             ipc::quit_app,
             ipc::quit_pulse,
+            ipc::log_frontend,
             ipc::hide_panel,
             ipc::show_window,
             ipc::set_panel_size,
@@ -103,6 +117,19 @@ fn main() -> tauri::Result<()> {
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data).ok();
+            // Before the settings and the history are read: what they have to say about a damaged
+            // file is exactly what a report should carry.
+            diag::init(&app_data);
+            diag::info(format!(
+                "Pulse {} starting ({}, {})",
+                app.package_info().version,
+                if cfg!(debug_assertions) { "debug build" } else { "release build" },
+                if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
+                    "elevated"
+                } else {
+                    "not elevated"
+                },
+            ));
             toast::register(&app_data);
             let settings = SettingsStore::open(&app_data);
             let initial = settings.get();
@@ -140,8 +167,8 @@ fn main() -> tauri::Result<()> {
                 if let Ok(dir) = handle.path().app_data_dir() {
                     match audio::apply_saved_volumes(&dir.join("audio-volumes.json")) {
                         Ok(0) => {}
-                        Ok(count) => println!("restored {count} saved app volumes"),
-                        Err(error) => eprintln!("restore saved volumes: {error}"),
+                        Ok(count) => crate::diag::info(format!("restored {count} saved app volumes")),
+                        Err(error) => crate::diag::warn(format!("restore saved volumes: {error}")),
                     }
                 }
             }
@@ -169,7 +196,7 @@ fn main() -> tauri::Result<()> {
 /// The last thing that runs, on the main thread, once the event loop has stopped: every
 /// clean way out (the tray menu, `quit_pulse`, a relaunch) passes through here.
 fn on_exit(_app: &AppHandle) {
-    eprintln!("exit");
+    crate::diag::info("exit");
 }
 
 fn panel_pinned(window: &tauri::Window) -> bool {
@@ -267,7 +294,7 @@ fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
                 let _ = std::fs::write(dir.join("audio.json"), raw);
             }
         }
-        Err(error) => eprintln!("audio snapshot: {error}"),
+        Err(error) => crate::diag::warn(format!("audio snapshot: {error}")),
     }
     let now = history::now_seconds();
     let store = state.history.lock().unwrap_or_else(|p| p.into_inner());
@@ -312,8 +339,8 @@ mod autostart {
             return;
         }
         match delete_run_value(name) {
-            Ok(()) => eprintln!("removed the login item a debug build had registered: {command}"),
-            Err(error) => eprintln!("could not remove the debug build's login item: {error}"),
+            Ok(()) => crate::diag::info(format!("removed the login item a debug build had registered: {command}")),
+            Err(error) => crate::diag::warn(format!("could not remove the debug build's login item: {error}")),
         }
     }
 
@@ -355,20 +382,20 @@ mod autostart {
         // sensor relaunch) is: that would start Pulse at every user's sign-in. The next normal
         // start writes the per-user value instead.
         if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
-            eprintln!("running elevated; the login item is left to the next normal start");
+            crate::diag::info("running elevated; the login item is left to the next normal start");
             return;
         }
         match app.autolaunch().enable() {
-            Ok(()) => eprintln!("registered the login item"),
-            Err(error) => eprintln!("could not register the login item: {error}"),
+            Ok(()) => crate::diag::info("registered the login item"),
+            Err(error) => crate::diag::warn(format!("could not register the login item: {error}")),
         }
     }
 
     #[cfg(not(debug_assertions))]
     fn disable(app: &AppHandle) {
         match app.autolaunch().disable() {
-            Ok(()) => eprintln!("removed the login item"),
-            Err(error) => eprintln!("could not remove the login item: {error}"),
+            Ok(()) => crate::diag::info("removed the login item"),
+            Err(error) => crate::diag::warn(format!("could not remove the login item: {error}")),
         }
     }
 

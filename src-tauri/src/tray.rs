@@ -190,7 +190,7 @@ pub fn rebuild(app: &AppHandle) {
         }
     });
     if done.is_none() {
-        eprintln!("tray: the main thread did not answer the rebuild");
+        crate::diag::warn("tray: the main thread did not answer the rebuild");
     }
 }
 
@@ -265,7 +265,7 @@ fn reconcile(app: &AppHandle, settings: &Settings) {
                 };
                 match build_icon(app, id, &tip, lang) {
                     Ok(()) => manager.live.push(id.clone()),
-                    Err(error) => eprintln!("tray {id}: {error}"),
+                    Err(error) => crate::diag::error(format!("tray {id}: {error}")),
                 }
             }
             manager.lang = lang;
@@ -278,7 +278,7 @@ fn reconcile(app: &AppHandle, settings: &Settings) {
                     Ok(menu) => {
                         let _ = tray.set_menu(Some(menu));
                     }
-                    Err(error) => eprintln!("tray menu {id}: {error}"),
+                    Err(error) => crate::diag::warn(format!("tray menu {id}: {error}")),
                 }
             }
             manager.lang = lang;
@@ -300,7 +300,7 @@ fn paint(app: &AppHandle, frames: Vec<IconFrame>) {
         let mut refused = false;
         if let Some(tooltip) = write.tooltip {
             if let Err(error) = tray.set_tooltip(Some(tooltip)) {
-                eprintln!("tray tooltip {}: {error}", write.id);
+                crate::diag::warn(format!("tray tooltip {}: {error}", write.id));
                 refused = true;
             }
         }
@@ -310,7 +310,7 @@ fn paint(app: &AppHandle, frames: Vec<IconFrame>) {
                 tray_render::dump_debug(&write.id, &rgba, &dir.join("dev"));
             }
             if let Err(error) = tray.set_icon(Some(Image::new_owned(rgba, width, height))) {
-                eprintln!("tray icon {}: {error}", write.id);
+                crate::diag::warn(format!("tray icon {}: {error}", write.id));
                 refused = true;
             }
         }

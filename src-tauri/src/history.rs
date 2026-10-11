@@ -221,7 +221,7 @@ impl History {
                 // Anything still queued for the background writer is older and is dropped.
                 self.disk.write(self.generation, &bytes);
             }
-            Err(error) => eprintln!("history: could not serialise for flush: {error}"),
+            Err(error) => crate::diag::error(format!("history: could not serialise for flush: {error}")),
         }
     }
 
@@ -416,7 +416,7 @@ impl History {
                 self.dirty = false;
                 save_in_background(&self.disk, self.generation, bytes);
             }
-            Err(error) => eprintln!("history: could not serialise: {error}"),
+            Err(error) => crate::diag::error(format!("history: could not serialise: {error}")),
         }
     }
 
@@ -691,7 +691,7 @@ impl Disk {
         tmp.set_extension("json.tmp");
         match fs::write(&tmp, bytes).and_then(|_| fs::rename(&tmp, &self.path)) {
             Ok(()) => *written = generation,
-            Err(error) => eprintln!("history: could not write {}: {error}", self.path.display()),
+            Err(error) => crate::diag::error(format!("history: could not write {}: {error}", self.path.display())),
         }
     }
 }
@@ -728,7 +728,7 @@ fn save_in_background(disk: &Arc<Disk>, generation: u64, bytes: Vec<u8>) {
             worker.write(job.0, &job.1);
         });
     if let Err(error) = spawned {
-        eprintln!("history: no writer thread ({error}); writing inline");
+        crate::diag::warn(format!("history: no writer thread ({error}); writing inline"));
         let job = {
             let mut queue = lock(&disk.queue);
             queue.running = false;

@@ -40,7 +40,7 @@ impl Toaster {
             }
         });
         if let Err(error) = spawned {
-            eprintln!("toast thread: {error}");
+            crate::diag::error(format!("toast thread: {error}"));
         }
         Self { queue }
     }
@@ -66,7 +66,7 @@ fn show(app: &AppHandle, note: &Note) {
         })
         .show();
     if let Err(error) = shown {
-        eprintln!("toast: {error}");
+        crate::diag::warn(format!("toast: {error}"));
     }
 }
 
@@ -76,12 +76,12 @@ pub fn register(app_data: &Path) {
     let icon = match write_icon(app_data) {
         Ok(path) => Some(path),
         Err(error) => {
-            eprintln!("toast icon: {error}");
+            crate::diag::warn(format!("toast icon: {error}"));
             None
         }
     };
     if let Err(error) = write_identity(&identity_key(AUMID), "Pulse", icon.as_deref()) {
-        eprintln!("toast identity: {error}");
+        crate::diag::warn(format!("toast identity: {error}"));
     }
 }
 

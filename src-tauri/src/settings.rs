@@ -421,7 +421,7 @@ fn adopt(root: &mut Value, path: &mut Vec<String>, incoming: &Value) {
                         .collect();
                     try_set(root, path, Value::Array(kept));
                 }
-                _ => eprintln!("settings: ignoring an unreadable {}", path.join(".")),
+                _ => crate::diag::warn(format!("settings: ignoring an unreadable {}", path.join("."))),
             }
         }
         path.pop();
@@ -502,16 +502,16 @@ impl SettingsStore {
             Ok(raw) => raw,
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!("settings: {} could not be read ({e}); defaults for this run, file left alone", path.display());
+                    crate::diag::warn(format!("settings: {} could not be read ({e}); defaults for this run, file left alone", path.display()));
                 }
                 return Settings::default();
             }
         };
         let Some((decoded, lossy)) = decode(&raw) else {
-            eprintln!("settings.json is not a settings file; keeping a backup and using defaults");
+            crate::diag::warn("settings.json is not a settings file; keeping a backup and using defaults");
             if fs::write(path.with_extension("json.bad"), &raw).is_ok() {
                 if let Err(e) = write_atomically(path, &Settings::default()) {
-                    eprintln!("settings: could not write the defaults back: {e}");
+                    crate::diag::error(format!("settings: could not write the defaults back: {e}"));
                 }
             }
             return Settings::default();
@@ -535,11 +535,11 @@ impl SettingsStore {
         };
         if kept {
             match write_atomically(path, &settings) {
-                Ok(()) => eprintln!("settings: {} brought up to date (was version {found})", path.display()),
-                Err(e) => eprintln!("settings: could not write the migrated file: {e}"),
+                Ok(()) => crate::diag::info(format!("settings: {} brought up to date (was version {found})", path.display())),
+                Err(e) => crate::diag::error(format!("settings: could not write the migrated file: {e}")),
             }
         } else {
-            eprintln!("settings: could not keep a copy of the old file, so it is left as it is");
+            crate::diag::warn("settings: could not keep a copy of the old file, so it is left as it is");
         }
         settings
     }

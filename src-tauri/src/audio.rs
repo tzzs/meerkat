@@ -1078,7 +1078,7 @@ static WATCHER: OnceLock<()> = OnceLock::new();
 /// two seconds.
 fn watch(state_path: PathBuf, mut seen: SeenSessions) {
     if let Err(e) = init_com() {
-        eprintln!("audio: the volume watcher could not start COM: {e}");
+        crate::diag::error(format!("audio: the volume watcher could not start COM: {e}"));
         return;
     }
     let mut rules: Vec<VolumeRule> = Vec::new();
@@ -1089,7 +1089,7 @@ fn watch(state_path: PathBuf, mut seen: SeenSessions) {
             Ok(store) => rules = store.rules,
             Err(e) => {
                 if e != last_problem {
-                    eprintln!("audio: saved volumes not read, keeping the last ones: {e}");
+                    crate::diag::warn(format!("audio: saved volumes not read, keeping the last ones: {e}"));
                     last_problem = e;
                 }
             }
@@ -1098,11 +1098,11 @@ fn watch(state_path: PathBuf, mut seen: SeenSessions) {
             Ok(0) => last_problem.clear(),
             Ok(count) => {
                 last_problem.clear();
-                eprintln!("audio: restored the saved volume of {count} new session(s)");
+                crate::diag::info(format!("audio: restored the saved volume of {count} new session(s)"));
             }
             Err(e) => {
                 if e != last_problem {
-                    eprintln!("audio: restoring saved volumes: {e}");
+                    crate::diag::warn(format!("audio: restoring saved volumes: {e}"));
                     last_problem = e;
                 }
             }
@@ -1137,7 +1137,7 @@ pub fn apply_saved_volumes(state_path: &Path) -> Result<usize, String> {
             .name("pulse-audio-restore".into())
             .spawn(move || watch(path, seen));
         if let Err(e) = started {
-            eprintln!("audio: the volume watcher could not start: {e}");
+            crate::diag::error(format!("audio: the volume watcher could not start: {e}"));
         }
     }
     first
