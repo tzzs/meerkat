@@ -155,6 +155,11 @@
 .tabbar::-webkit-scrollbar {
   display: none;
 }
+/* Carries a tab's shortcut tooltip; a box of its own, so the tooltip has something to anchor to. */
+.tab-hint {
+  display: inline-flex;
+  flex: none;
+}
 
 /* The selection draws itself in, so switching tabs has a beginning rather than only a
    result. Keyed on Radix's data-state, scaled from the centre under the label. */

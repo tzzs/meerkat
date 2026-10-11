@@ -76,8 +76,7 @@ function usePolling(load: (alive: () => boolean) => void, intervalMs: number, de
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", tick);
     };
-    // `load` is a closure over `deps`; it is replaced exactly when they change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `load` is a closure over `deps`: the effect is rebuilt exactly when they change.
   }, deps);
 }
 

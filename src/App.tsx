@@ -230,9 +230,11 @@ export default function App() {
             );
             // Ctrl+1 to Ctrl+8 pick the tab at that place in the bar, so the bar says which.
             const hint = shortcutHint(index);
+            // The tooltip goes on a wrapper, not on the tab: both write `data-state` onto the
+            // element they own, and the tooltip's "closed" would replace the tab's "active".
             return hint ? (
               <Hint key={x.id} label={hint}>
-                {trigger}
+                <span className="tab-hint">{trigger}</span>
               </Hint>
             ) : (
               <Fragment key={x.id}>{trigger}</Fragment>
