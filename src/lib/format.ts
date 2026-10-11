@@ -148,8 +148,8 @@ export function formatTime(atMs: number, locale: string): string {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(atMs);
 }
 
-export function formatDay(atMs: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", weekday: "short" }).format(atMs);
+export function formatDay(atMs: number, locale: string, timeZone?: string): string {
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", weekday: "short", timeZone }).format(atMs);
 }
 
 /** CPU percent is either 0–100 across the machine or 0–100 per core. */

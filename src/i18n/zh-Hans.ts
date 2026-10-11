@@ -170,6 +170,9 @@ const zh: Record<Key, string> = {
   "range.24h": "最近 24 小时",
   "range.7d": "最近 7 天",
   "range.30d": "最近 30 天",
+  "history.low": "最低",
+  "history.average": "平均",
+  "history.now": "现在",
 
   "overview.title": "这台机器正在做什么",
   "overview.topApps": "最忙的应用",

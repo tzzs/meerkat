@@ -168,6 +168,9 @@ const en = {
   "range.24h": "Last 24 hours",
   "range.7d": "Last 7 days",
   "range.30d": "Last 30 days",
+  "history.low": "Low",
+  "history.average": "Average",
+  "history.now": "now",
 
   "overview.title": "What this machine is doing",
   "overview.topApps": "Busiest apps",

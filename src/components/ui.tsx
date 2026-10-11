@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ipc } from "../lib/ipc";
 import { Badge, type BadgeProps } from "./ui/badge";
@@ -19,6 +19,7 @@ import { useStore, type QuitRequest } from "../lib/store";
 import { quitMessageKey } from "../lib/quit";
 import { formatBytes, formatPercent, formatRate, cpuDisplay } from "../lib/format";
 import { holdCeiling, niceCeiling, type HeldCeiling } from "../lib/spark";
+import { seriesPaths, type BuiltSeries } from "../lib/series";
 import {
   appLabel,
   appValue,
@@ -107,28 +108,38 @@ export function useHeldCeiling(observed: number, holdSamples = 6): number {
   return Math.max(ceiling, niceCeiling(observed));
 }
 
+/**
+ * The live chart: the last few minutes at one sample a second, so the samples are evenly
+ * spaced and the index is the time axis. History has gaps and is drawn by HistoryPlot instead.
+ *
+ * `ceiling` fixes the top of the scale, which is right for a percentage: fitted to the data, an
+ * idle machine's 3% filled the card. Without it the scale follows the data with a held ceiling.
+ */
 export function Chart({
   values,
-  max,
+  ceiling,
   color,
   variant = "area",
   height = 56,
-  invertAxis = false,
 }: {
   values: number[];
-  max?: number;
+  ceiling?: number;
   color: string;
   variant?: "area" | "line" | "bars";
   height?: number;
-  invertAxis?: boolean;
 }) {
   const width = 240;
-  const data = values.length > 0 ? values : [0];
-  const top = useHeldCeiling(Math.max(max ?? 0, ...data));
-  const normalized = data.map((v) => {
-    const r = Math.min(1, v / top);
-    return invertAxis ? 1 - r : r;
-  });
+  const held = useHeldCeiling(values.length > 0 ? Math.max(...values) : 0);
+  const top = ceiling ?? held;
+  // No samples yet draws an empty chart, not a line along zero that nobody measured.
+  if (values.length === 0) {
+    return variant === "bars" ? (
+      <div className="bars" style={{ height }} />
+    ) : (
+      <svg className="chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" />
+    );
+  }
+  const normalized = values.map((v) => Math.min(1, Math.max(0, v / top)));
 
   if (variant === "bars") {
     return (
@@ -155,6 +166,51 @@ export function Chart({
     </svg>
   );
 }
+
+/**
+ * A stretch of history on its real time axis (see buildSeries): each run of buckets is its own
+ * subpath, so a stretch with no record is blank rather than joined up. The lighter band behind
+ * the line is the highest value each bucket reached, which is what an average hides.
+ */
+export const HistoryPlot = memo(function HistoryPlot({
+  built,
+  ceiling,
+  color,
+  height,
+  label,
+}: {
+  built: BuiltSeries;
+  ceiling: number;
+  color: string;
+  height: number;
+  label?: string;
+}) {
+  const width = 240;
+  const paths = useMemo(() => seriesPaths(built, width, height, ceiling), [built, height, ceiling]);
+  return (
+    <svg
+      className="chart history-plot"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={label}
+      style={{ height }}
+    >
+      {paths.envelope && <path d={paths.envelope} fill={color} opacity={0.1} />}
+      {paths.area && <path d={paths.area} fill={color} opacity={0.18} />}
+      {paths.line && (
+        <path
+          d={paths.line}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+    </svg>
+  );
+});
 
 export function CoreGrid({ values, units }: { values: number[]; units: UnitPrefs }) {
   const { t } = useStore();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   formatBytes,
   formatDuration,
@@ -6,11 +6,14 @@ import {
   formatPercent,
   formatRate,
   formatTemp,
+  type UnitPrefs,
 } from "../lib/format";
 import { forLists } from "../lib/apps";
 import { ipc } from "../lib/ipc";
+import { buildSeries, formatAxisTime, formatHistoryValue, historyCeiling, historyUnit } from "../lib/series";
+import { SPARK_CEILING } from "../lib/spark";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
-import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
+import type { AppInfo, HistoryPoint, Insight, MetricKind } from "../lib/types";
 import type { Translate } from "../i18n";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import {
@@ -20,6 +23,7 @@ import {
   Card,
   Chart,
   CoreGrid,
+  HistoryPlot,
   Meter,
   Pill,
   Stat,
@@ -45,19 +49,48 @@ const TONE: Record<MetricKind, string> = {
   temperature: "var(--m-temp)",
 };
 
-function useSeries(metric: string, rangeSeconds: number): HistorySeries | null {
-  const [series, setSeries] = useState<HistorySeries | null>(null);
+/** One answer from history_series, with the moment it arrived: that is the window's right edge. */
+interface LoadedSeries {
+  /** The request it answers, so an answer for another metric or range is never shown for this one. */
+  key: string;
+  points: HistoryPoint[];
+  bucketSeconds: number;
+  atMs: number;
+}
+
+/**
+ * The record of one metric over one range, refreshed every minute.
+ *
+ * The previous answer used to stay on screen until the next one arrived, so choosing "last 7
+ * days" showed an hour of data under a seven-day label for as long as the call took. An answer
+ * is kept with the request it belongs to and handed out only for that request; a refresh of the
+ * same request keeps showing the old drawing until the new one replaces it.
+ */
+function useSeries(metric: string, rangeSeconds: number): LoadedSeries | null {
+  const key = `${metric}@${rangeSeconds}`;
+  const [loaded, setLoaded] = useState<LoadedSeries | null>(null);
   useEffect(() => {
     let alive = true;
-    const load = () => void ipc.historySeries(metric, rangeSeconds).then((s) => alive && setSeries(s));
+    const load = () => {
+      void ipc.historySeries(metric, rangeSeconds).then((series) => {
+        if (alive) setLoaded({ key, points: series.points, bucketSeconds: series.bucketSeconds, atMs: Date.now() });
+      });
+    };
     load();
-    const timer = window.setInterval(load, 60_000);
+    // A window nobody can see has no use for the next minute's answer; it is fetched when the
+    // window is shown again, or at the first tick after that.
+    const tick = () => {
+      if (document.visibilityState !== "hidden") load();
+    };
+    const timer = window.setInterval(tick, 60_000);
+    document.addEventListener("visibilitychange", tick);
     return () => {
       alive = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
     };
-  }, [metric, rangeSeconds]);
-  return series;
+  }, [metric, rangeSeconds, key]);
+  return loaded?.key === key ? loaded : null;
 }
 
 export function RangePicker({ value, onChange }: { value: number; onChange: (seconds: number) => void }) {
@@ -80,34 +113,118 @@ export function RangePicker({ value, onChange }: { value: number; onChange: (sec
   );
 }
 
-function HistoryChart({ metric, range }: { metric: string; range: number }) {
-  const { units, t } = useStore();
-  const series = useSeries(metric, range);
-  const tone = TONE[metric as MetricKind] ?? "var(--accent)";
-  const points = series?.points ?? [];
-  const rangeLabel = RANGES.find((r) => r.seconds === range);
-  if (points.length < 2) {
+/**
+ * One metric's history: the means as a line, the highest value of each bucket as a lighter band
+ * behind it, and the low, average and peak of the window in words.
+ *
+ * The window is [now - range, now] on a real time axis, so a machine that slept for three hours
+ * has three blank hours and "last 7 days" is seven days wide. It takes `units` and `t` as props
+ * rather than reading the store: the store changes every second, and a chart that subscribes
+ * to it redraws every second for a picture that changes once a minute.
+ */
+const HistoryChart = memo(function HistoryChart({
+  metric,
+  range,
+  tone,
+  units,
+  t,
+  label,
+  height = 110,
+  scale = true,
+}: {
+  metric: string;
+  range: number;
+  tone: string;
+  units: UnitPrefs;
+  t: Translate;
+  /** Names the series when a card holds more than one. */
+  label?: string;
+  height?: number;
+  /** The time labels under the plot; a stack of charts on one axis needs them once. */
+  scale?: boolean;
+}) {
+  const loaded = useSeries(metric, range);
+  const built = useMemo(
+    () => (loaded ? buildSeries(loaded.points, loaded.atMs - range * 1000, loaded.atMs, loaded.bucketSeconds) : null),
+    [loaded, range],
+  );
+  // Still asking is not the same as nothing recorded, and neither is drawn as a flat line.
+  if (!loaded || !built) {
     return (
-      <div className="chart-placeholder">
-        <span>{points.length === 0 ? t("state.noData") : "…"}</span>
+      <div className="chart-placeholder" style={{ height }}>
+        <span>…</span>
       </div>
     );
   }
-  const isBytes = /diskRead|diskWrite|download|upload/.test(metric);
-  const max = Math.max(...points.map((p) => p.value));
-  const peak = isBytes
-    ? formatRate(max, units, isBytes && /download|upload/.test(metric) ? "network" : "storage")
-    : `${Math.round(max)}${metric === "temp" ? "°" : "%"}`;
+  if (!built.stats) {
+    return (
+      <div className="chart-placeholder" style={{ height }}>
+        <span>{t("state.noData")}</span>
+      </div>
+    );
+  }
+  const { min, avg, peak } = built.stats;
+  const show = (value: number) => formatHistoryValue(metric, value, units);
   return (
     <div className="history">
-      <Chart values={points.map((p) => p.value)} max={max} color={tone} height={110} />
-      <div className="history-scale">
-        <span className="faint">
-          {t("label.peak")} {peak}
+      <div className="history-stats">
+        {label && (
+          <span className="history-label">
+            <i className="swatch" style={{ background: tone }} />
+            {label}
+          </span>
+        )}
+        <span className="history-figures faint num">
+          {t("history.low")} {show(min)} · {t("history.average")} {show(avg)} · {t("label.peak")} {show(peak)}
         </span>
-        <span className="faint">{rangeLabel ? t(rangeLabel.key) : ""}</span>
       </div>
+      <HistoryPlot
+        built={built}
+        ceiling={historyCeiling(historyUnit(metric), peak)}
+        color={tone}
+        height={height}
+        label={label}
+      />
+      {scale && (
+        <div className="history-scale faint">
+          <span>{formatAxisTime(loaded.atMs - range * 1000, range, units.locale)}</span>
+          <span>{t("history.now")}</span>
+        </div>
+      )}
     </div>
+  );
+});
+
+/** The history card every tab ends with: the range picker and its series on one time axis. */
+function HistoryCard({
+  range,
+  onRangeChange,
+  series,
+}: {
+  range: number;
+  onRangeChange: (seconds: number) => void;
+  series: { metric: string; tone: string; label?: string }[];
+}) {
+  const { units, t } = useStore();
+  const stacked = series.length > 1;
+  return (
+    <Card right={<RangePicker value={range} onChange={onRangeChange} />}>
+      <div className="history-stack">
+        {series.map((entry, index) => (
+          <HistoryChart
+            key={entry.metric}
+            metric={entry.metric}
+            range={range}
+            tone={entry.tone}
+            units={units}
+            t={t}
+            label={entry.label}
+            height={stacked ? 72 : 110}
+            scale={index === series.length - 1}
+          />
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -252,7 +369,13 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
               <span className="metric-value num">{card.value}</span>
             </span>
             <span className="metric-sub">{card.sub}</span>
-            <Chart values={historyFor(snapshot, card.metric)} color={TONE[card.metric]} variant="line" height={30} />
+            <Chart
+              values={historyFor(snapshot, card.metric)}
+              ceiling={SPARK_CEILING[card.metric]}
+              color={TONE[card.metric]}
+              variant="line"
+              height={30}
+            />
           </button>
         ))}
       </div>
@@ -262,11 +385,11 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
           <div className="two-col">
             <div>
               <h4 className="section-title">{t("metric.cpu")}</h4>
-              <HistoryChart metric="cpu" range={range} />
+              <HistoryChart metric="cpu" range={range} tone={TONE.cpu} units={units} t={t} />
             </div>
             <div>
               <h4 className="section-title">{t("metric.memory")}</h4>
-              <HistoryChart metric="memory" range={range} />
+              <HistoryChart metric="memory" range={range} tone={TONE.memory} units={units} t={t} />
             </div>
           </div>
         </Card>
@@ -347,7 +470,7 @@ export function CpuTab() {
             <Tween className="huge num" value={snapshot.cpu.totalPercent} format={(n) => formatPercent(n, units.locale)} />
             <span className="faint">{t("label.loadQueue")}: {snapshot.cpu.processorQueueLength ?? "—"}</span>
           </div>
-          <Chart values={snapshot.cpu.history} max={100} color={TONE.cpu} height={80} />
+          <Chart values={snapshot.cpu.history} ceiling={100} color={TONE.cpu} height={80} />
         </Card>
         <Card title={t("label.userTime")} tone={TONE.cpu}>
           <div className="split-bar">
@@ -370,9 +493,7 @@ export function CpuTab() {
       )}
 
       {sectionShown(shown, "history") && (
-        <Card right={<RangePicker value={range} onChange={setRange} />}>
-          <HistoryChart metric="cpu" range={range} />
-        </Card>
+        <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "cpu", tone: TONE.cpu }]} />
       )}
 
       {sectionShown(shown, "apps") && (
@@ -417,7 +538,7 @@ export function MemoryTab({ search }: { search?: string }) {
           <div className="hero-figure">
             <Tween className="huge num" style={{ fontSize: 30 }} value={m.pressurePercent} format={(n) => formatPercent(n, units.locale)} />
           </div>
-          <Chart values={m.history} max={100} color={TONE.memory} height={72} />
+          <Chart values={m.history} ceiling={100} color={TONE.memory} height={72} />
           <div className="legend">
             <span>
               {t("label.committed")} {formatPercent((m.committedBytes / Math.max(1, m.commitLimitBytes)) * 100, units.locale)}
@@ -444,9 +565,7 @@ export function MemoryTab({ search }: { search?: string }) {
       )}
 
       {sectionShown(shown, "history") && (
-        <Card right={<RangePicker value={range} onChange={setRange} />}>
-          <HistoryChart metric="memory" range={range} />
-        </Card>
+        <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "memory", tone: TONE.memory }]} />
       )}
 
       {sectionShown(shown, "apps") && (
@@ -516,9 +635,14 @@ export function DiskTab() {
       )}
 
       {sectionShown(shown, "history") && (
-        <Card right={<RangePicker value={range} onChange={setRange} />}>
-          <HistoryChart metric="diskWrite" range={range} />
-        </Card>
+        <HistoryCard
+          range={range}
+          onRangeChange={setRange}
+          series={[
+            { metric: "diskRead", tone: TONE.disk, label: t("label.read") },
+            { metric: "diskWrite", tone: TONE.disk, label: t("label.write") },
+          ]}
+        />
       )}
 
       {sectionShown(shown, "apps") && (
@@ -612,9 +736,14 @@ export function NetworkTab() {
       )}
 
       {sectionShown(shown, "history") && (
-        <Card right={<RangePicker value={range} onChange={setRange} />}>
-          <HistoryChart metric="download" range={range} />
-        </Card>
+        <HistoryCard
+          range={range}
+          onRangeChange={setRange}
+          series={[
+            { metric: "download", tone: TONE.network, label: t("label.download") },
+            { metric: "upload", tone: TONE.network, label: t("label.upload") },
+          ]}
+        />
       )}
 
       {sectionShown(shown, "connections") && (
@@ -642,7 +771,7 @@ export function GpuTab() {
             <Tween className="huge num" value={g.totalPercent} format={(n) => formatPercent(n, units.locale)} />
             <span className="faint">{t("label.adapters", { count: g.adapters.length })}</span>
           </div>
-          <Chart values={g.history} max={100} color={TONE.gpu} height={80} />
+          <Chart values={g.history} ceiling={100} color={TONE.gpu} height={80} />
           <AvailabilityNote state={g.availability} t={t} />
         </Card>
         <Card title={t("label.dedicated")} tone={TONE.gpu}>
@@ -703,9 +832,7 @@ export function GpuTab() {
       )}
 
       {sectionShown(shown, "history") && (
-        <Card right={<RangePicker value={range} onChange={setRange} />}>
-          <HistoryChart metric="gpu" range={range} />
-        </Card>
+        <HistoryCard range={range} onRangeChange={setRange} series={[{ metric: "gpu", tone: TONE.gpu }]} />
       )}
     </div>
   );
@@ -768,9 +895,15 @@ export function BatteryTab() {
       )}
 
       {sectionShown(shown, "history") && (
-        <Card right={<RangePicker value={range} onChange={setRange} />}>
-          <HistoryChart metric={b.hasBattery ? "battery" : "temp"} range={range} />
-        </Card>
+        <HistoryCard
+          range={range}
+          onRangeChange={setRange}
+          series={
+            b.hasBattery
+              ? [{ metric: "battery", tone: TONE.battery }]
+              : [{ metric: "temp", tone: TONE.temperature }]
+          }
+        />
       )}
     </div>
   );

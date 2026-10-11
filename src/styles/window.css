@@ -246,6 +246,31 @@
   justify-content: space-between;
   font-size: 10.5px;
 }
+/* A card with two series (read and write, down and up) stacks them on one time axis. */
+.history-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.history-stats {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px var(--sp-3);
+  font-size: 11px;
+}
+.history-label {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.history-figures {
+  margin-left: auto;
+}
+/* The plot is stretched to its card, so its floor is what tells a quiet series from a missing one. */
+.history-plot {
+  border-bottom: 1px solid var(--hairline-strong);
+}
 .chart-placeholder {
   height: 110px;
   display: grid;
