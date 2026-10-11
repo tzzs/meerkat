@@ -45,6 +45,8 @@ function fixtureFor<T>(command: string, args?: Record<string, unknown>): Promise
       return fixture<T>("insights.json");
     case "audio_state":
       return fixture<T>("audio.json");
+    case "history_ranking":
+      return fixture<T>("ranking.json");
     case "history_series": {
       const metric = String(args?.metric ?? "cpu");
       const range = Number(args?.rangeSeconds ?? 3600);

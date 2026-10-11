@@ -254,7 +254,7 @@ const en = {
   "settings.alerts": "Alerts for misbehaving apps",
   "settings.alertsEnabled": "Notify me when an app misbehaves",
   "settings.alertCpuMachine": "CPU above, as a share of the whole machine",
-  "settings.alertCpuCores": "About {cores} of this machine's {total} logical cores",
+  "settings.alertCpuCores": "≈ {cores} of this machine's {total} logical cores",
   "settings.alertMemoryWindow": "Memory growth within 30 minutes",
   "settings.alertDisk": "Disk above",
   "settings.alertNetwork": "Network above",

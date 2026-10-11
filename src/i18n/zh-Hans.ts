@@ -255,7 +255,7 @@ const zh: Record<Key, string> = {
   "settings.alerts": "异常应用提醒",
   "settings.alertsEnabled": "应用异常时通知我",
   "settings.alertCpuMachine": "处理器高于（占整机的百分比）",
-  "settings.alertCpuCores": "约相当于这台机器 {total} 个逻辑核心中的 {cores} 个",
+  "settings.alertCpuCores": "≈ {cores} 个核心（这台机器共 {total} 个逻辑核心）",
   "settings.alertMemoryWindow": "30 分钟内的内存增长",
   "settings.alertDisk": "磁盘高于",
   "settings.alertNetwork": "网络高于",
