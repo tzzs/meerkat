@@ -54,8 +54,6 @@ export const ipc = {
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
   quitApp: (key: string, force: boolean) =>
     call<{ asked: number; forceUsed: boolean; error: string | null }>("quit_app", { key, force }),
-  trayIds: async () => (await call<string[]>("tray_ids")) ?? [],
-  setTrayBitmap: (id: string, png: number[]) => call("set_tray_bitmap", { id, png }),
   hidePanel: () => void call("hide_panel"),
   showWindow: (destination?: string) => void call("show_window", { destination: destination ?? null }),
   setPanelSize: (width: number, height: number) => void call("set_panel_size", { width, height }),
