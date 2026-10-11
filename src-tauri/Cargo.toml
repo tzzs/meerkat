@@ -8,7 +8,11 @@ rust-version = "1.85"
 
 [dependencies]
 tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
-tauri-plugin-notification = "2.5"
+# Toasts are sent straight to WinRT under Pulse's own AppUserModelID (src/toast.rs). The
+# notification plugin only knew that ID outside target/debug and target/release and headed
+# every other toast "Windows PowerShell"; this is the crate it wraps, at the version already
+# locked.
+tauri-winrt-notification = "0.8"
 tauri-plugin-dialog = "2.8"
 tauri-plugin-autostart = "2.7"
 # A second launch (a Start-menu click while Pulse sits in the tray) must surface the running
@@ -25,6 +29,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system", "d
 version = "0.62"
 features = [
   "Win32_Foundation",
+  "Win32_Globalization",
   "Win32_System_Power",
   "Win32_System_Performance",
   "Win32_Graphics_Dxgi",

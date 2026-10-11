@@ -1,18 +1,22 @@
-//! Tray menu, the panel/window show-hide plumbing, and the readout value text.
+//! Tray menu and the panel/window show-hide plumbing.
 
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Wry};
 
-pub fn tray_menu(app: &AppHandle) -> Result<Menu<Wry>, String> {
-    let open: MenuItem<Wry> =
-        MenuItem::with_id(app, "open", "Open Pulse", true, None::<&str>).map_err(|e| e.to_string())?;
-    let settings: MenuItem<Wry> = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)
+use crate::i18n::{self, Lang, Text};
+
+pub fn tray_menu(app: &AppHandle, lang: Lang) -> Result<Menu<Wry>, String> {
+    let open: MenuItem<Wry> = MenuItem::with_id(app, "open", i18n::text(lang, Text::OpenPulse), true, None::<&str>)
         .map_err(|e| e.to_string())?;
+    let settings: MenuItem<Wry> =
+        MenuItem::with_id(app, "settings", i18n::text(lang, Text::Settings), true, None::<&str>)
+            .map_err(|e| e.to_string())?;
     let separator: PredefinedMenuItem<Wry> =
         PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
     let quit: MenuItem<Wry> =
-        MenuItem::with_id(app, "quit", "Quit Pulse", true, None::<&str>).map_err(|e| e.to_string())?;
+        MenuItem::with_id(app, "quit", i18n::text(lang, Text::QuitPulse), true, None::<&str>)
+            .map_err(|e| e.to_string())?;
     Menu::with_items(app, &[&open, &settings, &separator, &quit]).map_err(|e| e.to_string())
 }
 

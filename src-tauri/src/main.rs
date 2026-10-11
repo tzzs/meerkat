@@ -3,6 +3,7 @@
 mod alerts;
 mod audio;
 mod history;
+mod i18n;
 mod icons;
 mod ipc;
 mod menu;
@@ -10,6 +11,7 @@ mod metrics;
 mod models;
 mod nvml;
 mod settings;
+mod toast;
 mod tray;
 mod tray_render;
 
@@ -17,7 +19,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
-use tauri_plugin_notification::NotificationExt;
 
 use crate::alerts::Watcher;
 use crate::history::History;
@@ -37,7 +38,6 @@ fn main() -> tauri::Result<()> {
                 menu::show_main(app, None);
             }
         }))
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         // The flag is what keeps a sign-in start in the tray; without it the login item opened
         // the window like a manual launch.
@@ -86,6 +86,7 @@ fn main() -> tauri::Result<()> {
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data).ok();
+            toast::register(&app_data);
             let settings = SettingsStore::open(&app_data);
             let initial = settings.get();
             app.manage(AppState {
@@ -166,6 +167,7 @@ fn spawn_sampler(app: AppHandle) {
         .spawn(move || {
             let state = app.state::<AppState>();
             let _ = state.app.set(app.clone());
+            let toaster = toast::Toaster::start(app.clone());
             let mut sampler = Sampler::new();
             loop {
                 let settings = state.settings.get();
@@ -174,15 +176,20 @@ fn spawn_sampler(app: AppHandle) {
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
                 state.history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot);
 
-                for insight in state.watcher.lock().unwrap_or_else(|p| p.into_inner()).evaluate(&snapshot, &settings) {
+                // The watcher's lock is released before anything is emitted or shown.
+                let insights = state
+                    .watcher
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .evaluate(&snapshot, &settings);
+                for insight in insights {
                     let _ = app.emit("insight", &insight);
                     if settings.alerts.enabled {
-                        let _ = app
-                            .notification()
-                            .builder()
-                            .title(format!("Pulse: {}", insight.app_name))
-                            .body(humanize(&insight))
-                            .show();
+                        let lang = i18n::resolve(settings.language);
+                        toaster.show(
+                            i18n::insight_title(&insight),
+                            i18n::insight_body(&insight, lang, i18n::Units::of(&settings)),
+                        );
                     }
                 }
 
@@ -254,34 +261,6 @@ fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
                 let _ = std::fs::write(dir.join(format!("series-{metric}-{range}.json")), raw);
             }
         }
-    }
-}
-
-fn humanize(insight: &models::Insight) -> String {
-    match insight.kind {
-        models::InsightKind::HighCpu => format!(
-            "has used {}% of the CPU for {}s",
-            insight.value.round(),
-            insight.sustained_seconds
-        ),
-        models::InsightKind::GrowingMemory => format!(
-            "grew by {:.0} MB and is still climbing",
-            insight.value / 1_048_576.0
-        ),
-        models::InsightKind::HeavyDisk => format!(
-            "has moved {:.1} MB/s to disk for {}s",
-            insight.value / 1_048_576.0,
-            insight.sustained_seconds
-        ),
-        models::InsightKind::HeavyNetwork => format!(
-            "this machine has been transferring {:.1} MB/s for {}s, and this app holds the most connections",
-            insight.value / 1_048_576.0,
-            insight.sustained_seconds
-        ),
-        models::InsightKind::Heat => format!(
-            "this machine reached {:.0}°C, and this app is using the most CPU",
-            insight.value
-        ),
     }
 }
 

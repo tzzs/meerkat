@@ -9,19 +9,23 @@ use std::collections::HashMap;
 
 use tauri::{image::Image, AppHandle, Manager, tray::TrayIconBuilder};
 
+use crate::i18n::{self, Lang};
 use crate::models::{MetricKind, Snapshot};
 use crate::settings::{Settings, Theme, TrayReadout, TrayStyle};
 
 pub struct TrayManager {
     icons: HashMap<String, String>,
+    /// The language the live menus were built in, so a changed setting rebuilds them.
+    lang: Lang,
 }
 
 impl TrayManager {
     pub fn new() -> Self {
-        Self { icons: HashMap::new() }
+        Self { icons: HashMap::new(), lang: Lang::En }
     }
 
     pub fn rebuild(&mut self, app: &AppHandle, settings: &Settings) {
+        let lang = i18n::resolve(settings.language);
         let wanted: Vec<&TrayReadout> = settings.tray.iter().filter(|r| r.enabled).collect();
 
         for (id, _) in self.icons.clone() {
@@ -37,11 +41,11 @@ impl TrayManager {
                 continue;
             }
             let built = (|| {
-                let menu = crate::menu::tray_menu(app)?;
+                let menu = crate::menu::tray_menu(app, lang)?;
                 let mut builder = TrayIconBuilder::with_id(&id)
                     .menu(&menu)
                     .show_menu_on_left_click(false)
-                    .tooltip(tooltip(readout.metric, "—"));
+                    .tooltip(tooltip(lang, readout.metric, "—"));
                 if let Some(icon) = app.default_window_icon() {
                     builder = builder.icon(icon.clone());
                 }
@@ -59,6 +63,20 @@ impl TrayManager {
                 Err(error) => eprintln!("tray {id}: {error}"),
             }
         }
+
+        // The menus are built once per icon, so a language change has to replace them.
+        if lang != self.lang {
+            for id in self.icons.keys() {
+                let Some(tray) = app.tray_by_id(id) else { continue };
+                match crate::menu::tray_menu(app, lang) {
+                    Ok(menu) => {
+                        let _ = tray.set_menu(Some(menu));
+                    }
+                    Err(error) => eprintln!("tray menu {id}: {error}"),
+                }
+            }
+            self.lang = lang;
+        }
     }
 
     pub fn update(&self, app: &AppHandle, snapshot: &Snapshot, settings: &Settings) {
@@ -70,11 +88,12 @@ impl TrayManager {
             Theme::Auto => true,
         };
         let icon_height = crate::tray_render::icon_height();
+        let lang = i18n::resolve(settings.language);
         for readout in settings.tray.iter().filter(|r| r.enabled) {
             let id = tray_id(readout);
             let Some(tray) = app.tray_by_id(&id) else { continue };
             let text = value_text(readout, snapshot);
-            let _ = tray.set_tooltip(Some(tooltip(readout.metric, &text)));
+            let _ = tray.set_tooltip(Some(tooltip(lang, readout.metric, &text)));
             let show_value = matches!(readout.style, TrayStyle::Value | TrayStyle::Both);
             let show_graph = matches!(readout.style, TrayStyle::Graph | TrayStyle::Both);
             let rendered = crate::tray_render::render(
@@ -103,20 +122,8 @@ fn tray_id(readout: &TrayReadout) -> String {
     format!("tray-{}", readout.id)
 }
 
-fn tooltip(metric: MetricKind, value: &str) -> String {
-    format!("{} {}", label(metric), value)
-}
-
-fn label(metric: MetricKind) -> &'static str {
-    match metric {
-        MetricKind::Cpu => "CPU",
-        MetricKind::Memory => "Memory",
-        MetricKind::Disk => "Disk",
-        MetricKind::Network => "Network",
-        MetricKind::Gpu => "GPU",
-        MetricKind::Battery => "Battery",
-        MetricKind::Temperature => "Temperature",
-    }
+fn tooltip(lang: Lang, metric: MetricKind, value: &str) -> String {
+    format!("{} {}", i18n::metric(lang, metric), value)
 }
 
 pub fn value_text(readout: &TrayReadout, snapshot: &Snapshot) -> String {
