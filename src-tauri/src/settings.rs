@@ -382,6 +382,10 @@ fn migrate(mut settings: Settings) -> Settings {
 /// The flag is true when some part of the file had to be left out. None when the text is not a
 /// JSON object at all.
 fn decode(raw: &str) -> Option<(Settings, bool)> {
+    // Notepad, and Windows PowerShell's `Set-Content -Encoding UTF8`, put a byte-order mark in
+    // front of the text. It is not JSON, so without this a hand-edited file was judged "not a
+    // settings file" and every setting in it went back to its default.
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let value: Value = serde_json::from_str(raw).ok()?;
     if !value.is_object() {
         return None;
@@ -581,6 +585,20 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("a temp dir to test against");
         dir
+    }
+
+    // Found by running the app against a settings file written by Windows PowerShell 5.1, which
+    // starts it with a UTF-8 byte-order mark: the file was judged "not a settings file", kept as
+    // .json.bad and replaced by defaults, taking the user's choices with it.
+    #[test]
+    fn a_byte_order_mark_does_not_make_the_file_unreadable() {
+        let plain = serde_json::to_string(&Settings::default()).expect("defaults serialize");
+        let with_mark = format!("\u{feff}{plain}");
+        let (decoded, lossy) = decode(&with_mark).expect("a BOM is not part of the JSON text");
+        assert!(!lossy, "nothing in the file had to be left out");
+        assert_eq!(raw(&decoded), raw(&Settings::default()));
+        // And a file that merely starts with something else is still refused.
+        assert!(decode(&format!("x{plain}")).is_none());
     }
 
     // The panel's default tiles were once built from TAB_IDS, which put "sound" among the
