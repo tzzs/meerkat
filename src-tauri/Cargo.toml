@@ -13,7 +13,6 @@ tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
 # every other toast "Windows PowerShell"; this is the crate it wraps, at the version already
 # locked.
 tauri-winrt-notification = "0.8"
-tauri-plugin-dialog = "2.8"
 tauri-plugin-autostart = "2.7"
 # A second launch (a Start-menu click while Pulse sits in the tray) must surface the running
 # instance instead of starting another sampler and another set of tray icons.

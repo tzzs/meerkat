@@ -54,7 +54,6 @@ fn run() -> tauri::Result<()> {
                 menu::show_main(app, None);
             }
         }))
-        .plugin(tauri_plugin_dialog::init())
         // The flag is what keeps a sign-in start in the tray; without it the login item opened
         // the window like a manual launch.
         .plugin(tauri_plugin_autostart::init(
