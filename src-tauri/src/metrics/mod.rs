@@ -8,13 +8,15 @@ pub mod battery;
 pub mod gpu;
 pub mod grouping;
 pub mod netinfo;
+pub mod ntproc;
 pub mod pdh;
+pub mod services;
 pub mod wins;
 
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use sysinfo::{Components, Disks, Networks, System};
+use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
@@ -73,6 +75,8 @@ pub struct Sampler {
     pdh: Option<PdhQuery>,
     pdh_index: HashMap<String, usize>,
     gpu_probe: Option<EngineProbe>,
+    processes: ntproc::Processes,
+    services: services::ServiceDirectory,
     io: grouping::IoRates,
     names: NameCache,
     previous_network: HashMap<String, (u64, u64)>,
@@ -118,7 +122,14 @@ impl Sampler {
             None => None,
         };
 
-        let system = System::new_all();
+        // Processes come from the kernel's table (see ntproc), so sysinfo only has to keep the
+        // processor and memory figures; asking it for processes too would open a handle on each
+        // of them every tick and still come back empty for most of the system.
+        let system = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
         let machine = machine_info(&system);
 
         Self {
@@ -129,6 +140,8 @@ impl Sampler {
             pdh,
             pdh_index,
             gpu_probe: EngineProbe::new(),
+            processes: ntproc::Processes::default(),
+            services: services::ServiceDirectory::default(),
             io: grouping::IoRates::default(),
             names: NameCache::default(),
             previous_network: HashMap::new(),
@@ -163,18 +176,29 @@ impl Sampler {
 
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
-        self.system
-            .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         // One PDH collection per tick: the values read below are whatever this collected.
         if let Some(query) = self.pdh.as_mut() {
             query.collect();
         }
 
-        let processes = grouping::collect(&self.system);
+        let processes = grouping::collect(&mut self.processes);
         let io = self.io.advance(&processes).clone();
         let windows_list = wins::toplevel_windows();
         let tcp = netinfo::collect();
-        let apps = grouping::group(&processes, &windows_list, &tcp, &io, &mut self.names);
+        let hosts: Vec<u32> = processes
+            .iter()
+            .filter(|p| p.name.eq_ignore_ascii_case("svchost.exe"))
+            .map(|p| p.pid)
+            .collect();
+        self.services.refresh(&hosts);
+        let apps = grouping::group(
+            &processes,
+            &windows_list,
+            &tcp,
+            &io,
+            &mut self.names,
+            self.services.by_pid(),
+        );
 
         let mut cpu = self.cpu();
         let mut memory = self.memory();

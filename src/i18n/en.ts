@@ -135,6 +135,16 @@ const en = {
   "list.unreadable": "Processes Pulse cannot open",
   "list.unreadableHint":
     "Reading these needs administrative rights, so Pulse has no figures for them and offers no way to close them.",
+  "list.moreServices": "{count, plural, one {+# more service} other {+# more services}}",
+  "list.servicesHeading": "Windows services in it:",
+  "list.cannotQuit": "Part of Windows or another account; ending it needs administrator rights.",
+
+  "process.system": "System (kernel and drivers)",
+  "process.registry": "Registry",
+  "process.memCompression": "Memory compression",
+  "process.secureSystem": "Secure System",
+  "process.vmmemWsl": "WSL virtual machine",
+  "process.vmmem": "Virtual machines (vmmem)",
 
   "kind.app": "App",
   "kind.background": "Background",

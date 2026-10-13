@@ -75,7 +75,7 @@ fn main() {
             _ => {}
         })
         .setup(|app| {
-            let app_data = app.path().app_data_dir()?;
+            let app_data = data_dir(app)?;
             std::fs::create_dir_all(&app_data).ok();
             let settings = SettingsStore::open(&app_data);
             let initial = settings.get();
@@ -107,12 +107,11 @@ fn main() {
 
             // Restore remembered app volumes before anything starts playing sound.
             if audio::init_com().is_ok() {
-                if let Ok(dir) = handle.path().app_data_dir() {
-                    match audio::apply_saved_volumes(&dir.join("audio-volumes.json")) {
-                        Ok(0) => {}
-                        Ok(count) => println!("restored {count} saved app volumes"),
-                        Err(error) => eprintln!("restore saved volumes: {error}"),
-                    }
+                let dir = handle.state::<AppState>().data_dir.clone();
+                match audio::apply_saved_volumes(&dir.join("audio-volumes.json")) {
+                    Ok(0) => {}
+                    Ok(count) => println!("restored {count} saved app volumes"),
+                    Err(error) => eprintln!("restore saved volumes: {error}"),
                 }
             }
 
@@ -129,6 +128,18 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("Pulse failed to start");
+}
+
+/// Where settings, history and alerts live. A debug build can be pointed elsewhere with
+/// `PULSE_DATA_DIR`, so a test instance can run beside the one in daily use without writing
+/// over its settings or history. Nothing else can redirect it: Windows answers the known-folder
+/// lookup from the user's token, not from APPDATA.
+fn data_dir(app: &tauri::App) -> tauri::Result<std::path::PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(dir) = std::env::var_os("PULSE_DATA_DIR") {
+        return Ok(std::path::PathBuf::from(dir));
+    }
+    app.path().app_data_dir()
 }
 
 fn panel_pinned(window: &tauri::Window) -> bool {

@@ -137,6 +137,16 @@ const zh: Record<Key, string> = {
   "list.sortBy": "排序",
   "list.unreadable": "Pulse 无法打开的进程",
   "list.unreadableHint": "读取这些进程需要管理员权限，所以 Pulse 没有它们的数据，也不提供关闭它们的方式。",
+  "list.moreServices": "另 {count} 项服务",
+  "list.servicesHeading": "其中运行的 Windows 服务：",
+  "list.cannotQuit": "属于 Windows 或其他账户，结束它需要管理员权限。",
+
+  "process.system": "系统（内核与驱动）",
+  "process.registry": "注册表",
+  "process.memCompression": "内存压缩",
+  "process.secureSystem": "安全系统",
+  "process.vmmemWsl": "WSL 虚拟机",
+  "process.vmmem": "虚拟机（vmmem）",
 
   "kind.app": "应用",
   "kind.background": "后台",

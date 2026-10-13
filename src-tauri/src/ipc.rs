@@ -127,6 +127,16 @@ pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitRes
             error: Some("not an application".into()),
         };
     }
+    // Service hosts and the rest of the system are listed now, and Windows refuses to let an
+    // ordinary user end them. The row does not offer it; this is the same answer for any caller
+    // that asks anyway.
+    if !app.can_quit {
+        return QuitResult {
+            asked: 0,
+            force_used: false,
+            error: Some("needs administrator rights".into()),
+        };
+    }
 
     if force {
         let pids: Vec<sysinfo::Pid> = app.pids.iter().map(|p| sysinfo::Pid::from(*p as usize)).collect();

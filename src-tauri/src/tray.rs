@@ -92,8 +92,8 @@ impl TrayManager {
                 eprintln!("tray icon {id}: {error}");
             }
             #[cfg(debug_assertions)]
-            if let Ok(dir) = app.path().app_data_dir() {
-                crate::tray_render::dump_debug(&id, &rendered, &dir.join("dev"));
+            if let Some(state) = app.try_state::<crate::ipc::AppState>() {
+                crate::tray_render::dump_debug(&id, &rendered, &state.data_dir.join("dev"));
             }
         }
     }

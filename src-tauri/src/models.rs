@@ -217,6 +217,10 @@ pub struct AppInfo {
     pub windows: Vec<WindowInfo>,
     pub pids: Vec<u32>,
     pub unmeasured_processes: usize,
+    /// The Windows services this app's processes run, by the name Windows shows for them.
+    pub services: Vec<String>,
+    /// Whether this user may end at least one of its processes. The system's own answer no.
+    pub can_quit: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -41,8 +41,10 @@ features = [
   "Win32_System_Com_StructuredStorage",
   "Win32_System_Variant",
   "Win32_System_Threading",
-  "Win32_System_Diagnostics_ToolHelp",
   "Win32_UI_Shell_PropertiesSystem",
+  "Win32_System_Services",
+  "Wdk_System_SystemInformation",
+  "Wdk_System_Threading",
 ]
 
 [build-dependencies]

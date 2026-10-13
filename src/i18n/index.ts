@@ -17,24 +17,26 @@ export function resolveLang(pref: "auto" | Lang): Lang {
 
 type Params = Record<string, string | number>;
 
+/**
+ * `{name}` or `{name, plural, one {# thing} other {# things}}`. The forms are matched as
+ * `word {text}` pairs: splitting them on whitespace, as this used to, broke every form that
+ * contained a space, which is all of them, and every plural in the app rendered as nothing.
+ */
+const PLACEHOLDER = /\{(\w+)(?:,\s*plural,\s*((?:[^{}]|\{[^{}]*\})*))?\}/g;
+const FORM = /(\w+)\s*\{([^{}]*)\}/g;
+
 function lookup(lang: Lang, key: Key, params?: Params): string {
-  let out: string = tables[lang][key] ?? tables.en[key] ?? String(key);
+  const out: string = tables[lang][key] ?? tables.en[key] ?? String(key);
   if (!params) return out;
-  out = out.replace(/\{(\w+)(?:,\s*plural,\s*(.+))?\}/g, (_m, name: string, forms?: string) => {
+  return out.replace(PLACEHOLDER, (_m, name: string, forms?: string) => {
     const raw = params[name];
-    if (!forms) return raw === undefined ? "" : String(raw);
+    if (forms === undefined) return raw === undefined ? "" : String(raw);
     const n = typeof raw === "number" ? raw : Number(raw);
     const map: Record<string, string> = {};
-    for (const part of forms.split(/\s+/)) {
-      const eq = part.indexOf(" ");
-      if (eq === -1) continue;
-      map[part.slice(0, eq)] = part.slice(eq + 1, -1).replace(/^['"]|['"]$/g, "");
-    }
+    for (const [, form, text] of forms.matchAll(FORM)) map[form] = text;
     const pick = lang === "en" && n === 1 ? "one" : "other";
-    const form = map[pick] ?? map.other ?? "";
-    return form.replace(/#/g, String(raw ?? ""));
+    return (map[pick] ?? map.other ?? "").replace(/#/g, String(raw ?? ""));
   });
-  return out;
 }
 
 /** The label each window tab carries. The power tab's real label depends on the hardware. */

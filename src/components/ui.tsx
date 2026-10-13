@@ -21,6 +21,7 @@ import type { UnitPrefs } from "../lib/format";
 import type { Translate } from "../i18n";
 import type { AppInfo, Availability } from "../lib/types";
 import { UNREADABLE_GROUP } from "../lib/types";
+import { appHint, appLabel, serviceNote } from "../lib/apps";
 
 /**
  * The card every tab is built from. Its parts are the shadcn primitives in ./ui/card; this
@@ -614,16 +615,13 @@ export function AppTable({
           // The synthetic row is a count of processes that need administrative rights to open,
           // not an application: it has no figures, and it must never offer to close anything.
           const unreadable = app.key === UNREADABLE_GROUP;
-          const label = unreadable ? t("list.unreadable") : app.name;
+          const label = appLabel(app, t);
+          const services = serviceNote(app, t);
           return (
             <Hint
               key={app.key}
               className="max-w-[420px] whitespace-pre-line text-left"
-              label={
-                unreadable
-                  ? t("list.unreadableHint")
-                  : app.windows.map((w) => w.title).join("\u000a") || app.exePath
-              }
+              label={appHint(app, t)}
             >
               <div
                 data-index={item.index}
@@ -647,6 +645,7 @@ export function AppTable({
                   <span className={`row-sub ${KIND_TONE[app.kind]}`}>
                     {t(`kind.${app.kind}`)}
                     {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
+                    {services ? ` · ${services}` : ""}
                     {app.listeningPorts.length > 0
                       ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
                       : ""}
@@ -656,7 +655,9 @@ export function AppTable({
                   <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
                 </div>
                 <span className="row-value num">{unreadable ? "—" : format(app)}</span>
-                {!unreadable && (
+                {/* Windows will not let this user end a service or another account's process,
+                    so those rows do not offer it; the hover text says why. */}
+                {app.canQuit && !unreadable && (
                   <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
                     ×
                   </button>
@@ -687,7 +688,7 @@ export function QuitDialog() {
   if (pendingQuit) lastAskedAbout.current = pendingQuit;
   const app = pendingQuit ?? lastAskedAbout.current;
   if (!app) return null;
-  const title = t("action.confirmQuit", { name: app.name });
+  const title = t("action.confirmQuit", { name: appLabel(app, t) });
   return (
     <Dialog open={Boolean(pendingQuit)} onOpenChange={(next) => !next && clearQuit()}>
       <DialogContent label={title}>

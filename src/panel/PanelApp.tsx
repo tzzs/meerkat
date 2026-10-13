@@ -4,6 +4,7 @@ import { ipc } from "../lib/ipc";
 import { AppIcon, QuitDialog } from "../components/ui";
 import { Hint } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
+import { appHint, appLabel, listedApps } from "../lib/apps";
 import { headline, isMetricKind, seriesFor, type MetricKind, type Snapshot, type TrayReadout } from "../lib/types";
 
 const HUES: Record<MetricKind, string> = {
@@ -55,9 +56,9 @@ export function PanelApp() {
   }, [snapshot, settings.tray, units]);
 
   const apps = useMemo(() => {
-    const list = snapshot?.apps ?? [];
+    const list = listedApps(snapshot?.apps ?? [], settings.showSystemAppsInLists);
     return [...list].sort((a, b) => b.memoryBytes - a.memoryBytes);
-  }, [snapshot]);
+  }, [snapshot, settings.showSystemAppsInLists]);
 
   const tiles = settings.panel.tiles
     .filter((x) => x.visible)
@@ -112,23 +113,28 @@ export function PanelApp() {
       {tab === "top" && (
         <div className="panel-apps">
           {apps.slice(0, 6).map((app) => (
-            <Hint key={app.key} className="max-w-[320px] break-all" label={app.exePath}>
+            <Hint key={app.key} className="max-w-[320px] whitespace-pre-line break-all" label={appHint(app, t)}>
               <div className="panel-app">
-                <AppIcon name={app.name} seed={app.key} exePath={app.exePath || undefined} />
-                <span className="panel-app-name">{app.name}</span>
+                <AppIcon name={appLabel(app, t)} seed={app.key} exePath={app.exePath || undefined} />
+                <span className="panel-app-name">{appLabel(app, t)}</span>
                 <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
                 <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>
-                <Hint label={t("action.quitApp")}>
-                  <button
-                    className="row-quit"
-                    aria-label={t("action.quitApp")}
-                    onClick={() => {
-                      requestQuit(app);
-                    }}
-                  >
-                    ×
-                  </button>
-                </Hint>
+                {app.canQuit ? (
+                  <Hint label={t("action.quitApp")}>
+                    <button
+                      className="row-quit"
+                      aria-label={t("action.quitApp")}
+                      onClick={() => {
+                        requestQuit(app);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </Hint>
+                ) : (
+                  // Holds the column so the figures stay aligned with the rows that have a ×.
+                  <span aria-hidden />
+                )}
               </div>
             </Hint>
           ))}

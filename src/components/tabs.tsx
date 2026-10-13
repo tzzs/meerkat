@@ -10,6 +10,7 @@ import {
 import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
+import { appLabel, listedApps } from "../lib/apps";
 import type { Translate } from "../i18n";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import {
@@ -110,15 +111,19 @@ function HistoryChart({ metric, range }: { metric: string; range: number }) {
   );
 }
 
-function useApps(sort: AppMetric, hideSystem: boolean): AppInfo[] {
+/**
+ * The apps a list shows, heaviest first. Every list honours "show Windows' own processes":
+ * it used to be passed a flag that every caller set to false, so the setting did nothing, which
+ * mattered little while Windows' processes read as zero and matters now that they are measured.
+ */
+function useApps(sort: AppMetric): AppInfo[] {
   const { snapshot, settings } = useStore();
   return useMemo(() => {
-    const apps = snapshot?.apps ?? [];
-    const pool = settings.showSystemAppsInLists || !hideSystem ? apps : apps.filter((a) => a.kind !== "system" && a.kind !== "service");
+    const pool = listedApps(snapshot?.apps ?? [], settings.showSystemAppsInLists);
     const weight = (a: AppInfo) =>
       sort === "cpu" ? a.cpuPercent : sort === "disk" ? a.readBytesPerSecond + a.writeBytesPerSecond : a.memoryBytes;
     return [...pool].sort((a, b) => weight(b) - weight(a));
-  }, [snapshot, sort, hideSystem, settings.showSystemAppsInLists]);
+  }, [snapshot, sort, settings.showSystemAppsInLists]);
 }
 
 /**
@@ -165,7 +170,7 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
   const shown = visibleSections(settings, "overview");
   const [range, setRange] = useTabState("overview", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("overview", "metric", "memory");
-  const apps = useApps(metric, false);
+  const apps = useApps(metric);
   const insights = useInsights().filter((i) => !i.resolved);
   if (!snapshot) return <Missing />;
 
@@ -332,7 +337,7 @@ export function CpuTab() {
   const shown = visibleSections(settings, "cpu");
   const [range, setRange] = useTabState("cpu", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("cpu", "metric", "cpu");
-  const apps = useApps("cpu", false);
+  const apps = useApps("cpu");
   if (!snapshot) return <Missing />;
   const totalBusy = snapshot.cpu.userPercent + snapshot.cpu.privilegedPercent;
 
@@ -386,7 +391,7 @@ export function MemoryTab({ search }: { search?: string }) {
   const shown = visibleSections(settings, "memory");
   const [range, setRange] = useTabState("memory", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("memory", "metric", "memory");
-  const apps = useApps("memory", false);
+  const apps = useApps("memory");
   if (!snapshot) return <Missing />;
   const m = snapshot.memory;
   const rows: [string, number, number][] = [
@@ -467,7 +472,7 @@ export function DiskTab() {
   const shown = visibleSections(settings, "disk");
   const [range, setRange] = useTabState("disk", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("disk", "metric", "disk");
-  const apps = useApps("disk", false);
+  const apps = useApps("disk");
   if (!snapshot) return <Missing />;
   const d = snapshot.disk;
 
@@ -532,7 +537,7 @@ export function NetworkTab() {
   const shown = visibleSections(settings, "network");
   const [range, setRange] = useTabState("network", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("network", "metric", "connections");
-  const apps = useApps("connections", false);
+  const apps = useApps("connections");
   if (!snapshot) return <Missing />;
   const n = snapshot.network;
 
@@ -682,7 +687,7 @@ export function GpuTab() {
           <div className="rows">
             {g.perProcess.slice(0, 20).map((row) => {
               const owner = appFor(row.pid);
-              const name = owner?.name?.trim() || `pid ${row.pid}`;
+              const name = (owner && appLabel(owner, t).trim()) || `pid ${row.pid}`;
               return (
                 <div key={row.pid} className="row">
                   <AppIcon name={name} seed={String(row.pid)} exePath={owner?.exePath || undefined} />

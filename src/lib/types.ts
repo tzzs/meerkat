@@ -173,6 +173,10 @@ export interface AppInfo {
   windows: WindowInfo[];
   pids: number[];
   unmeasuredProcesses: number;
+  /** The Windows services its processes run, by the name Windows shows for them. */
+  services: string[];
+  /** Whether this user may end at least one of its processes; the system's own answer no. */
+  canQuit: boolean;
 }
 
 export interface Snapshot {

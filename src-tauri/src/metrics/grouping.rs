@@ -3,19 +3,22 @@
 //!
 //! Rule: a process belongs to the nearest ancestor that lives in the same installation
 //! directory, so `chrome.exe --type=renderer`, `Code Helper (Plugin).exe` and
-//! `msedge.exe --type=utility` fold into the app the user can see. Where Windows itself
-//! splits one executable into many roles (`svchost.exe -k NetworkService`), the role is
-//! part of the key instead.
+//! `msedge.exe --type=utility` fold into the app the user can see. The Windows directory is the
+//! exception: everything in it shares one folder without being one program. Where Windows itself
+//! splits one executable into many roles (`svchost.exe`), the services it runs are part of the
+//! key instead, and name the row.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
-use sysinfo::{Pid, Process, System};
 use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
 
 use super::netinfo::TcpOwnership;
+use super::ntproc::{Processes, Sampled};
+use super::services::Service;
 use super::wins::TopWindow;
 use crate::models::{AppInfo, AppKind, WindowInfo};
 
@@ -34,109 +37,70 @@ pub struct ProcSample {
     pub started_at_ms: Option<u64>,
     pub args: Vec<String>,
     pub measurable: bool,
+    /// Whether this user may end the process. Service hosts and the rest of the system answer
+    /// no, and the list must not offer what Windows will refuse.
+    pub can_quit: bool,
 }
 
-pub fn collect(sys: &System) -> Vec<ProcSample> {
-    let snapshot = snapshot_names();
-    let mut out = Vec::with_capacity(sys.processes().len());
-    for (pid, p) in sys.processes() {
-        out.push(sample(pid, p, &snapshot));
-    }
-    out
+pub fn collect(processes: &mut Processes) -> Vec<ProcSample> {
+    let sampled = processes.sample();
+    let created: HashMap<u32, u64> = sampled
+        .iter()
+        .map(|s| (s.process.pid, s.process.create_time))
+        .collect();
+    sampled.into_iter().map(|s| sample(s, &created)).collect()
 }
 
-/// The image name of every process on the machine.
-///
-/// sysinfo can only describe a process it can open, and without administrative rights most
-/// of Session 0 cannot be opened — which left 181 of 285 rows in the app list with an empty
-/// name and an empty path. A Toolhelp snapshot needs no handle rights at all, so it supplies
-/// the name sysinfo has to leave blank.
-fn snapshot_names() -> HashMap<u32, String> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
-
-    let mut out = HashMap::new();
-    unsafe {
-        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return out;
-        };
-        let mut entry = PROCESSENTRY32W {
-            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
-        if Process32FirstW(snapshot, &mut entry).is_ok() {
-            loop {
-                let used = entry
-                    .szExeFile
-                    .iter()
-                    .position(|c| *c == 0)
-                    .unwrap_or(entry.szExeFile.len());
-                out.insert(
-                    entry.th32ProcessID,
-                    String::from_utf16_lossy(&entry.szExeFile[..used]),
-                );
-                if Process32NextW(snapshot, &mut entry).is_err() {
-                    break;
-                }
-            }
-        }
-        let _ = CloseHandle(snapshot);
-    }
-    out
-}
-
-fn sample(pid: &Pid, p: &Process, snapshot: &HashMap<u32, String>) -> ProcSample {
-    let exe = p
-        .exe()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir = exe
+fn sample(s: Sampled, created: &HashMap<u32, u64>) -> ProcSample {
+    let Sampled { process, identity, cpu_percent } = s;
+    let dir = identity
+        .exe
         .rsplit_once(['\\', '/'])
         .map(|(head, _)| head.to_lowercase())
         .unwrap_or_default();
-    let usage = p.disk_usage();
-    let started_at_ms = if p.start_time() == 0 {
-        None
-    } else {
-        Some(boot_anchored(p.start_time()))
-    };
-    let measurable = !exe.is_empty();
-    let reported = p.name().to_string_lossy().to_string();
-    let name = if reported.is_empty() {
-        snapshot.get(&pid.as_u32()).cloned().unwrap_or_default()
-    } else {
-        reported
-    };
+    // Windows records the pid of whoever started a process and never updates it, so once that
+    // parent exits the number can be handed to something unrelated. A real parent is older than
+    // its child; anything younger wearing the parent's pid is a stranger.
+    let ppid = (process.parent_pid != 0 && process.parent_pid != process.pid)
+        .then_some(process.parent_pid)
+        .filter(|ppid| created.get(ppid).is_some_and(|born| *born <= process.create_time));
     ProcSample {
-        pid: pid.as_u32(),
-        ppid: p.parent().map(|pp| pp.as_u32()),
-        name,
-        exe,
+        pid: process.pid,
+        ppid,
+        started_at_ms: process.started_at_ms(),
+        session: Some(process.session_id),
+        memory_bytes: process.working_set,
+        cpu_percent,
+        read_total: process.read_bytes,
+        write_total: process.write_bytes,
+        name: process.name,
+        exe: identity.exe,
         dir,
-        session: p.session_id().map(|s| s.as_u32()),
-        memory_bytes: p.memory(),
-        cpu_percent: p.cpu_usage() as f64,
-        read_total: usage.total_read_bytes,
-        write_total: usage.total_written_bytes,
-        started_at_ms,
-        args: p.cmd().iter().map(|s| s.to_string_lossy().to_string()).collect(),
-        measurable,
+        args: identity.args,
+        // The kernel's table measures every process, readable or not.
+        measurable: true,
+        can_quit: identity.can_terminate,
     }
 }
 
-/// sysinfo gives whole seconds since boot; convert once per process list.
-fn boot_anchored(seconds_since_boot: u64) -> u64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    now.saturating_sub(seconds_since_boot * 1000)
+/// `C:\Windows`, lowercased like `ProcSample::dir`.
+fn windows_dir() -> &'static str {
+    static DIR: OnceLock<String> = OnceLock::new();
+    DIR.get_or_init(|| {
+        std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| "C:\\Windows".to_string())
+            .trim_end_matches('\\')
+            .to_lowercase()
+    })
 }
 
-/// Per-process byte rates derived from sysinfo's cumulative counters.
+fn in_windows_dir(dir: &str) -> bool {
+    let root = windows_dir();
+    dir == root || (dir.starts_with(root) && dir[root.len()..].starts_with('\\'))
+}
+
+/// Per-process byte rates derived from the kernel's cumulative transfer counters.
 pub struct IoRates {
     previous: HashMap<u32, (u64, u64)>,
     elapsed: std::time::Instant,
@@ -303,6 +267,7 @@ pub fn group(
     tcp: &TcpOwnership,
     io: &HashMap<u32, (f64, f64)>,
     names: &mut NameCache,
+    services: &HashMap<u32, Vec<Service>>,
 ) -> Vec<AppInfo> {
     let by_pid: HashMap<u32, &ProcSample> = procs.iter().map(|p| (p.pid, p)).collect();
 
@@ -322,6 +287,9 @@ pub fn group(
         connections: usize,
         ports: Vec<u16>,
         unmeasured: usize,
+        services: Vec<String>,
+        /// The processes the others were folded into: the app as the user started it.
+        roots: Vec<u32>,
     }
 
     let mut groups: HashMap<String, Agg> = HashMap::new();
@@ -329,11 +297,10 @@ pub fn group(
     let mut hidden: Vec<u32> = Vec::new();
 
     for p in procs {
-        // A process we cannot open has no path, no memory and no cpu, so on a machine without
-        // administrative rights it becomes a row of nothing — 181 of them here, most of them
-        // service hosts. They fold into one row that says how many were set aside rather than
-        // burying the applications. Anything still showing evidence of life (a window, a
-        // socket, a listening port) stays listed under the name the snapshot gives us.
+        // A process with no figures at all would be a row of nothing. The kernel's table
+        // measures every process, so this no longer happens in practice, but a sample built any
+        // other way still folds such processes into one row that says how many were set aside.
+        // Anything showing evidence of life (a window, a socket, a listening port) stays listed.
         if !p.measurable
             && p.cpu_percent == 0.0
             && p.memory_bytes == 0
@@ -344,7 +311,7 @@ pub fn group(
             hidden.push(p.pid);
             continue;
         }
-        let (anchor_key, anchor_exe, anchor_name) = resolve_anchor(p, &by_pid, names);
+        let (anchor_key, anchor_exe, anchor_name, root) = resolve_anchor(p, &by_pid, names, services);
         let g = groups.entry(anchor_key.clone()).or_insert_with(|| Agg {
             key: anchor_key,
             exe: anchor_exe,
@@ -352,6 +319,14 @@ pub fn group(
             ..Default::default()
         });
         g.pids.push(p.pid);
+        if !g.roots.contains(&root) {
+            g.roots.push(root);
+        }
+        for service in services.get(&p.pid).into_iter().flatten() {
+            if !g.services.contains(&service.display_name) {
+                g.services.push(service.display_name.clone());
+            }
+        }
         g.cpu += p.cpu_percent;
         g.memory += p.memory_bytes;
         if let Some((r, w)) = io.get(&p.pid) {
@@ -407,13 +382,19 @@ pub fn group(
         titled.truncate(24);
         g.ports.sort_unstable();
 
-        let kind = classify(&g.exe, &g.name, g.pids.iter().min().copied().unwrap_or(0), &by_pid, any_visible);
+        // What the app is, and whether it can be ended, is decided by the processes it was
+        // started as, not by its helpers: Defender's session helper is the user's own process,
+        // but ending it would not end Defender, and it does not make Defender a background app.
+        g.roots.sort_unstable();
+        let main = g.roots.first().copied().unwrap_or(0);
+        let can_quit = g.roots.iter().any(|root| by_pid.get(root).is_some_and(|p| p.can_quit));
+        let kind = classify(&g.exe, main, &by_pid, any_visible);
         out.push(AppInfo {
             key: g.key,
             name: g.name,
             exe_path: g.exe,
             kind,
-            main_pid: g.pids.iter().copied().min().unwrap_or(0),
+            main_pid: main,
             process_count: g.pids.len(),
             cpu_percent: g.cpu,
             memory_bytes: g.memory,
@@ -427,6 +408,8 @@ pub fn group(
             windows: titled,
             pids: g.pids,
             unmeasured_processes: g.unmeasured,
+            services: g.services,
+            can_quit,
         });
     }
 
@@ -460,6 +443,8 @@ pub fn group(
             windows: Vec::new(),
             pids: hidden,
             unmeasured_processes: count,
+            services: Vec::new(),
+            can_quit: false,
         });
     }
 
@@ -470,7 +455,8 @@ fn resolve_anchor(
     p: &ProcSample,
     by_pid: &HashMap<u32, &ProcSample>,
     names: &mut NameCache,
-) -> (String, String, String) {
+    services: &HashMap<u32, Vec<Service>>,
+) -> (String, String, String, u32) {
     let mut current: &ProcSample = p;
     for _ in 0..16 {
         let Some(ppid) = current.ppid else { break };
@@ -478,12 +464,19 @@ fn resolve_anchor(
         if current.dir.is_empty() || parent.dir.is_empty() || parent.dir != current.dir {
             break;
         }
+        // System32 is shared by hundreds of programs that start one another: services.exe
+        // starts every service host, a service host starts brokers and COM surrogates, and
+        // wininit starts services.exe. Climbing through them would fold half of Windows into
+        // wininit, so in the Windows directory each executable stands on its own.
+        if in_windows_dir(&current.dir) {
+            break;
+        }
         current = parent;
     }
 
     let exe = current.exe.clone();
     // Without a path there is no product name to read either, so the image name from the
-    // snapshot is the best label available.
+    // kernel's table is the best label available.
     let base = if exe.is_empty() {
         current.name.as_str()
     } else {
@@ -491,23 +484,38 @@ fn resolve_anchor(
     };
     let stem = base.trim_end_matches(".exe").to_string();
 
-    // svchost and dllhost reuse one executable for many unrelated roles.
-    let role = role_suffix(current);
-    let key = if exe.is_empty() {
-        format!("pid:{}", current.pid)
-    } else {
-        match &role {
-            Some(r) => format!("{}|{}", exe.to_lowercase(), r),
-            None => exe.to_lowercase(),
-        }
-    };
+    if exe.is_empty() {
+        // The pseudo processes (System, Registry, Memory Compression) have no file but do have
+        // a fixed name, which keeps their key the same from one boot to the next; history and
+        // dismissed alerts are filed under it.
+        let key = if current.name.is_empty() {
+            format!("pid:{}", current.pid)
+        } else {
+            format!("image:{}", current.name.to_lowercase())
+        };
+        return (key, exe, stem, current.pid);
+    }
 
-    let display = match (&role, names.describe(&exe)) {
-        (Some(r), _) => format!("Service host: {r}"),
-        (None, Some(description)) => description,
-        (None, None) => stem,
-    };
-    (key, exe, display)
+    let lower = exe.to_lowercase();
+    if base.eq_ignore_ascii_case("svchost.exe") {
+        // One executable, a hundred unrelated services. The services a host runs are what it
+        // is, so they make the key and the first of them names the row.
+        if let Some(hosted) = services.get(&current.pid).filter(|list| !list.is_empty()) {
+            let mut ids: Vec<String> = hosted.iter().map(|s| s.name.to_lowercase()).collect();
+            ids.sort_unstable();
+            return (format!("{lower}|svc:{}", ids.join("+")), exe, hosted[0].display_name.clone(), current.pid);
+        }
+        // Not in the service list (it started a moment ago): the group from its command line,
+        // when its owner lets us read that, and otherwise the process itself.
+        let key = match role_suffix(current) {
+            Some(role) => format!("{lower}|{role}"),
+            None => format!("{lower}|pid:{}", current.pid),
+        };
+        return (key, exe, stem, current.pid);
+    }
+
+    let display = names.describe(&exe).unwrap_or(stem);
+    (lower, exe, display, current.pid)
 }
 
 fn role_suffix(p: &ProcSample) -> Option<String> {
@@ -524,16 +532,10 @@ fn role_suffix(p: &ProcSample) -> Option<String> {
     p.args.get(position + 1).cloned()
 }
 
-fn classify(
-    exe: &str,
-    _display: &str,
-    lowest_pid: u32,
-    by_pid: &HashMap<u32, &ProcSample>,
-    has_visible_window: bool,
-) -> AppKind {
+fn classify(exe: &str, main: u32, by_pid: &HashMap<u32, &ProcSample>, has_visible_window: bool) -> AppKind {
     let lower = exe.to_lowercase();
     let file = lower.rsplit(['\\', '/']).next().unwrap_or("");
-    if lowest_pid <= 8 || file.is_empty() {
+    if main <= 8 || file.is_empty() {
         return AppKind::System;
     }
     if lower.contains("\\windowsapps\\") {
@@ -546,10 +548,16 @@ fn classify(
             AppKind::System
         };
     }
-    if let Some(p) = by_pid.get(&lowest_pid) {
-        if p.session == Some(0) {
-            return AppKind::Service;
-        }
+    let root = by_pid.get(&main);
+    if root.is_some_and(|p| p.session == Some(0)) {
+        return AppKind::Service;
+    }
+    // A Windows component running in the user's session under an account of its own: the
+    // desktop compositor is the one everybody sees, and calling it a background app the user
+    // could close would be wrong on both counts.
+    let dir = lower.rsplit_once('\\').map(|(head, _)| head).unwrap_or("");
+    if in_windows_dir(dir) && root.is_some_and(|p| !p.can_quit) {
+        return AppKind::System;
     }
     if has_visible_window {
         AppKind::App
@@ -581,7 +589,13 @@ mod tests {
             started_at_ms: None,
             args: Vec::new(),
             measurable,
+            can_quit: false,
         }
+    }
+
+    fn child(pid: u32, ppid: u32, exe: &str) -> ProcSample {
+        let image = exe.rsplit('\\').next().unwrap_or(exe);
+        ProcSample { ppid: Some(ppid), memory_bytes: 1 << 20, ..proc(pid, exe, image, true) }
     }
 
     fn empty_tcp() -> TcpOwnership {
@@ -593,7 +607,137 @@ mod tests {
     }
 
     fn group_of(procs: &[ProcSample], tcp: TcpOwnership, windows: &[TopWindow]) -> Vec<AppInfo> {
-        group(procs, windows, &tcp, &HashMap::new(), &mut NameCache::default())
+        group(procs, windows, &tcp, &HashMap::new(), &mut NameCache::default(), &HashMap::new())
+    }
+
+    fn group_with_services(procs: &[ProcSample], services: &HashMap<u32, Vec<Service>>) -> Vec<AppInfo> {
+        group(procs, &[], &empty_tcp(), &HashMap::new(), &mut NameCache::default(), services)
+    }
+
+    fn service(name: &str, display: &str) -> Service {
+        Service { name: name.to_string(), display_name: display.to_string() }
+    }
+
+    const SVCHOST: &str = r"C:\Windows\System32\svchost.exe";
+
+    /// Every service host is the same executable; the services in it are what tell them apart,
+    /// and the name Windows gives the service is what the row says.
+    #[test]
+    fn service_hosts_are_keyed_and_named_by_their_services() {
+        let procs = vec![child(1000, 900, SVCHOST), child(1001, 900, SVCHOST), child(1002, 900, SVCHOST)];
+        let mut services = HashMap::new();
+        services.insert(1000, vec![service("wuauserv", "Windows 更新")]);
+        services.insert(1001, vec![service("WSearch", "Windows Search")]);
+        services.insert(1002, vec![service("mpssvc", "Windows Defender Firewall"), service("BFE", "Base Filtering Engine")]);
+
+        let apps = group_with_services(&procs, &services);
+
+        assert_eq!(apps.len(), 3, "three hosts, three rows");
+        let update = apps.iter().find(|a| a.pids == vec![1000]).unwrap();
+        assert_eq!(update.name, "Windows 更新");
+        assert_eq!(update.key, format!("{}|svc:wuauserv", SVCHOST.to_lowercase()));
+        assert_eq!(update.kind, AppKind::Service);
+        let shared = apps.iter().find(|a| a.pids == vec![1002]).unwrap();
+        assert_eq!(shared.key, format!("{}|svc:bfe+mpssvc", SVCHOST.to_lowercase()), "sorted, so the key is stable");
+        assert_eq!(shared.services, vec!["Windows Defender Firewall", "Base Filtering Engine"]);
+    }
+
+    /// services.exe starts every service host from the same folder. Climbing the tree there
+    /// folded every service on the machine into one row named after wininit.
+    #[test]
+    fn programs_in_the_windows_directory_do_not_fold_into_their_parent() {
+        let procs = vec![
+            child(600, 500, r"C:\Windows\System32\wininit.exe"),
+            child(700, 600, r"C:\Windows\System32\services.exe"),
+            child(800, 700, SVCHOST),
+            child(810, 800, r"C:\Windows\System32\dllhost.exe"),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 4, "each executable is its own row");
+    }
+
+    /// The rule the whole engine exists for still holds outside the Windows directory.
+    #[test]
+    fn helpers_in_an_install_directory_fold_into_the_app() {
+        let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        let root = ProcSample { can_quit: true, ..child(2000, 1, chrome) };
+        let procs = vec![root, child(2001, 2000, chrome), child(2002, 2001, chrome)];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].process_count, 3);
+        assert_eq!(apps[0].main_pid, 2000, "the process the others fold into");
+        assert!(apps[0].can_quit);
+    }
+
+    /// Measured on Defender: the engine runs in Session 0 and starts a helper in the user's
+    /// session. The helper has the lower pid and is the user's to end, and judging the row by
+    /// it called Defender a background app with a working ×.
+    #[test]
+    fn an_app_is_judged_by_its_root_not_by_a_helper() {
+        let platform = r"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18\";
+        let engine = ProcSample { session: Some(0), ..child(6180, 2004, &format!("{platform}MsMpEng.exe")) };
+        let helper = ProcSample { can_quit: true, ..child(3356, 6180, &format!("{platform}DefenderSessionHelper.exe")) };
+        let apps = group_of(&[engine, helper], empty_tcp(), &[]);
+        assert_eq!(apps.len(), 1, "the helper folds into the engine");
+        assert_eq!(apps[0].kind, AppKind::Service);
+        assert!(!apps[0].can_quit, "ending the helper would not end Defender");
+    }
+
+    /// The desktop compositor runs in the user's session under an account of its own.
+    #[test]
+    fn a_windows_component_the_user_cannot_end_is_system() {
+        let dwm = child(2396, 1100, r"C:\Windows\System32\dwm.exe");
+        assert_eq!(group_of(&[dwm.clone()], empty_tcp(), &[])[0].kind, AppKind::System);
+        let mine = ProcSample { can_quit: true, ..child(4000, 1100, r"C:\Windows\System32\ctfmon.exe") };
+        assert_eq!(group_of(&[mine], empty_tcp(), &[])[0].kind, AppKind::Background);
+    }
+
+    /// A row Windows will not let this user end must not offer to end it.
+    #[test]
+    fn a_group_nobody_may_end_says_so() {
+        let apps = group_of(&[child(1000, 900, SVCHOST)], empty_tcp(), &[]);
+        assert!(!apps[0].can_quit);
+    }
+
+    /// The pseudo processes have no file but a fixed name, and that name keys them, so the
+    /// same row comes back after a reboot gave them different pids.
+    #[test]
+    fn a_process_without_a_file_is_keyed_by_its_name() {
+        let apps = group_of(&[child(4, 0, ""), child(3112, 4, "")], empty_tcp(), &[]);
+        assert_eq!(apps.len(), 2, "with no name either, each falls back to its pid");
+        assert!(apps.iter().any(|a| a.key == "pid:4"));
+        // The kernel's table calls it "Memory Compression"; the image-path query says
+        // "MemCompression". The table is where the name comes from.
+        let named = group_of(&[ProcSample { name: "Memory Compression".into(), ..child(3112, 4, "") }], empty_tcp(), &[]);
+        assert_eq!(named[0].key, "image:memory compression");
+        assert_eq!(named[0].name, "Memory Compression");
+        assert_eq!(named[0].kind, AppKind::System);
+    }
+
+    /// Windows never updates a process's parent pid, so a dead parent's number can be handed to
+    /// something younger; only an older process can really be the parent.
+    #[test]
+    fn a_younger_process_wearing_the_parents_pid_is_not_the_parent() {
+        use super::super::ntproc::{Identity, NtProcess, Sampled};
+        let process = |pid: u32, parent_pid: u32, create_time: u64| NtProcess {
+            pid,
+            parent_pid,
+            name: "x.exe".into(),
+            session_id: 1,
+            create_time,
+            cpu_time: 0,
+            working_set: 1,
+            private_bytes: 1,
+            read_bytes: 0,
+            write_bytes: 0,
+            threads: 1,
+            handles: 1,
+        };
+        let sampled = |p: NtProcess| Sampled { process: p, identity: Identity::default(), cpu_percent: 0.0 };
+        let created: HashMap<u32, u64> = [(10, 500), (20, 100)].into_iter().collect();
+        assert_eq!(sample(sampled(process(30, 10, 400)), &created).ppid, None, "pid 10 started after it");
+        assert_eq!(sample(sampled(process(31, 20, 400)), &created).ppid, Some(20));
+        assert_eq!(sample(sampled(process(32, 99, 400)), &created).ppid, None, "a parent that is gone");
     }
 
     /// Ten processes nobody can open have to become one honest row, not ten blank ones.
@@ -631,7 +775,7 @@ mod tests {
         let apps = group_of(&procs, tcp, &[]);
 
         assert_eq!(apps.len(), 1);
-        assert_eq!(apps[0].key, "pid:300");
+        assert_eq!(apps[0].key, "image:svchost.exe");
         assert_eq!(apps[0].name, "svchost");
         assert_eq!(apps[0].listening_ports, vec![445]);
     }
