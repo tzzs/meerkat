@@ -23,6 +23,9 @@ pub struct AppState {
     /// Every process of the last tick; the snapshot only carries them grouped into apps.
     pub processes: RwLock<Vec<crate::metrics::grouping::ProcSample>>,
     pub watcher: Mutex<Watcher>,
+    pub app_history: Mutex<crate::apphistory::AppHistory>,
+    /// The last event-log reading, when it was taken and how far back it reached.
+    pub events: Mutex<Option<(std::time::Instant, u64, Vec<crate::events::SystemEvent>)>>,
     pub tray: Mutex<TrayManager>,
     pub interface_visible: AtomicBool,
     pub panel_pinned: AtomicBool,
@@ -93,13 +96,6 @@ pub fn history_series(
     let now = crate::history::now_seconds();
     let history = state.history.lock().unwrap_or_else(|p| p.into_inner());
     history.series(&metric, range_seconds, now)
-}
-
-#[tauri::command]
-pub fn history_ranking(state: State<'_, AppState>, hours: u64) -> Vec<crate::models::RankingRow> {
-    let now = crate::history::now_seconds();
-    let history = state.history.lock().unwrap_or_else(|p| p.into_inner());
-    history.ranking(hours, now)
 }
 
 #[tauri::command]
@@ -267,6 +263,68 @@ pub fn daily_totals(state: State<'_, AppState>, days: u32) -> Vec<crate::models:
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .recent(today, days.clamp(1, 120), crate::metrics::local_day_start_ms)
+}
+
+/// The heaviest apps over the last `range_seconds`, by one measure.
+#[tauri::command]
+pub fn app_ranking(
+    state: State<'_, AppState>,
+    range_seconds: u64,
+    by: crate::apphistory::RankBy,
+) -> Vec<crate::apphistory::AppUsage> {
+    let now = crate::history::now_seconds();
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.ranking(now.saturating_sub(range_seconds), now + 60, by, 25)
+}
+
+/// The heaviest apps since local midnight by one measure: "who wrote the most today".
+#[tauri::command]
+pub fn app_ranking_today(state: State<'_, AppState>, by: crate::apphistory::RankBy) -> Vec<crate::apphistory::AppUsage> {
+    let now = crate::history::now_seconds();
+    let today = crate::metrics::local_day(now * 1000);
+    let midnight = crate::metrics::local_day_start_ms(today) / 1000;
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.ranking(midnight, now + 60, by, 8)
+}
+
+/// What was running at one moment (Unix milliseconds), busiest first.
+#[tauri::command]
+pub fn apps_at(state: State<'_, AppState>, at_ms: u64) -> Vec<crate::apphistory::AppUsage> {
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.at(at_ms / 1000, 12)
+}
+
+/// One app's history over the last `range_seconds`, in steps that keep a chart to a few hundred
+/// points whatever the range.
+#[tauri::command]
+pub fn app_series(state: State<'_, AppState>, key: String, range_seconds: u64) -> Vec<crate::apphistory::AppPoint> {
+    let now = crate::history::now_seconds();
+    let step = match range_seconds {
+        0..=21_600 => 60,
+        21_601..=86_400 => 300,
+        86_401..=604_800 => 3_600,
+        _ => 10_800,
+    };
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.series(&key, now.saturating_sub(range_seconds), now + 60, step)
+}
+
+/// The event-log entries that explain the timeline, newest first. Reading the log takes a
+/// moment, so it happens off the main thread and is kept for a minute.
+#[tauri::command]
+pub async fn system_events(app: AppHandle, range_seconds: u64) -> Vec<crate::events::SystemEvent> {
+    let state = app.state::<AppState>();
+    if let Some((at, range, events)) = state.events.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        if *range >= range_seconds && at.elapsed().as_secs() < 60 {
+            let from = crate::history::now_seconds().saturating_sub(range_seconds) * 1000;
+            return events.iter().filter(|e| e.at_ms >= from).cloned().collect();
+        }
+    }
+    let read = tauri::async_runtime::spawn_blocking(move || crate::events::recent(range_seconds * 1000, 2_000))
+        .await
+        .unwrap_or_default();
+    *state.events.lock().unwrap_or_else(|p| p.into_inner()) = Some((std::time::Instant::now(), range_seconds, read.clone()));
+    read
 }
 
 #[tauri::command]

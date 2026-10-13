@@ -301,22 +301,6 @@ pub struct HistorySeries {
     pub points: Vec<HistoryPoint>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RankedApp {
-    pub key: String,
-    pub name: String,
-    pub value: f64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RankingRow {
-    pub hour_start_ms: u64,
-    pub metric: String,
-    pub apps: Vec<RankedApp>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum InsightKind {

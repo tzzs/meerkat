@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod alerts;
+mod apphistory;
 mod audio;
 mod daily;
+mod events;
 mod history;
 mod icons;
 mod ipc;
@@ -41,7 +43,11 @@ fn main() {
             ipc::settings_get,
             ipc::settings_set,
             ipc::history_series,
-            ipc::history_ranking,
+            ipc::app_ranking,
+            ipc::app_ranking_today,
+            ipc::apps_at,
+            ipc::app_series,
+            ipc::system_events,
             ipc::insights,
             ipc::insight_dismiss,
             ipc::quit_app,
@@ -92,6 +98,8 @@ fn main() {
                 daily: Mutex::new(Daily::open(&app_data)),
                 processes: RwLock::new(Vec::new()),
                 watcher: Mutex::new(Watcher::open(&app_data)),
+                app_history: Mutex::new(apphistory::AppHistory::open(&app_data)),
+                events: Mutex::new(None),
                 tray: Mutex::new(TrayManager::new()),
                 interface_visible: AtomicBool::new(false),
                 panel_pinned: AtomicBool::new(false),
@@ -175,9 +183,12 @@ fn spawn_sampler(app: AppHandle) {
                     sampler.restore_day(today, totals);
                 }
             }
+            let mut last_sample = std::time::Instant::now();
             loop {
                 let settings = state.settings.get();
                 let snapshot = sampler.sample();
+                let elapsed = last_sample.elapsed().as_secs_f64();
+                last_sample = std::time::Instant::now();
 
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
                 *state.processes.write().unwrap_or_else(|p| p.into_inner()) = sampler.processes().to_vec();
@@ -186,6 +197,7 @@ fn spawn_sampler(app: AppHandle) {
                     let (day, totals) = sampler.day_totals();
                     state.daily.lock().unwrap_or_else(|p| p.into_inner()).record(day, totals);
                 }
+                state.app_history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot, elapsed);
 
                 for insight in state.watcher.lock().unwrap_or_else(|p| p.into_inner()).evaluate(&snapshot, &settings) {
                     let _ = app.emit("insight", &insight);

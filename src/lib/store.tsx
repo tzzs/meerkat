@@ -36,6 +36,7 @@ export const fallbackSettings: Settings = {
   window: {
     tabs: [
       { id: "overview", visible: true, sections: [] },
+      { id: "history", visible: true, sections: [] },
       { id: "cpu", visible: true, sections: [] },
       { id: "memory", visible: true, sections: [] },
       { id: "disk", visible: true, sections: [] },
@@ -55,6 +56,14 @@ export const fallbackSettings: Settings = {
   },
 };
 
+/** Enough to name an app that is not running: its key, label, file and kind. */
+export interface AppSeed {
+  key: string;
+  name: string;
+  exePath: string;
+  kind: AppInfo["kind"];
+}
+
 interface StoreValue {
   snapshot: Snapshot | null;
   settings: Settings;
@@ -69,7 +78,12 @@ interface StoreValue {
   clearQuit: () => void;
   /** The app whose detail sheet is open, by key, so it follows the app through every sample. */
   detailKey: string | null;
-  openDetail: (key: string) => void;
+  /**
+   * What to call it when it is not running: the history and the event list can open apps that
+   * have since exited, and the live snapshot knows nothing about those.
+   */
+  detailSeed: AppSeed | null;
+  openDetail: (key: string, seed?: AppSeed) => void;
   closeDetail: () => void;
 }
 
@@ -81,6 +95,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [pendingQuit, setPendingQuit] = useState<AppInfo | null>(null);
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [detailSeed, setDetailSeed] = useState<AppSeed | null>(null);
 
   useEffect(() => {
     let stop: (() => void) | null = null;
@@ -142,7 +157,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const requestQuit = useCallback((app: AppInfo) => setPendingQuit(app), []);
   const clearQuit = useCallback(() => setPendingQuit(null), []);
-  const openDetail = useCallback((key: string) => setDetailKey(key), []);
+  const openDetail = useCallback((key: string, seed?: AppSeed) => {
+    setDetailKey(key);
+    setDetailSeed(seed ?? null);
+  }, []);
   const closeDetail = useCallback(() => setDetailKey(null), []);
 
   const value = useMemo(
@@ -158,10 +176,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       requestQuit,
       clearQuit,
       detailKey,
+      detailSeed,
       openDetail,
       closeDetail,
     }),
-    [snapshot, settings, save, units, lang, t, connected, pendingQuit, requestQuit, clearQuit, detailKey, openDetail, closeDetail],
+    [
+      snapshot,
+      settings,
+      save,
+      units,
+      lang,
+      t,
+      connected,
+      pendingQuit,
+      requestQuit,
+      clearQuit,
+      detailKey,
+      detailSeed,
+      openDetail,
+      closeDetail,
+    ],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

@@ -1,4 +1,16 @@
-import type { AudioState, DailyTotal, HistorySeries, Insight, ProcessRow, RankingRow, Settings, Snapshot } from "./types";
+import type {
+  AppPoint,
+  AppUsage,
+  AudioState,
+  DailyTotal,
+  HistorySeries,
+  Insight,
+  ProcessRow,
+  RankBy,
+  Settings,
+  Snapshot,
+  SystemEvent,
+} from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -48,8 +60,16 @@ export const ipc = {
   historySeries: async (metric: string, rangeSeconds: number) =>
     (await call<HistorySeries>("history_series", { metric, rangeSeconds })) ??
     emptySeries(metric, rangeSeconds),
-  historyRanking: async (hours: number) =>
-    (await call<RankingRow[]>("history_ranking", { hours })) ?? [],
+  /** The heaviest apps over the last `rangeSeconds`, by one measure. */
+  appRanking: async (rangeSeconds: number, by: RankBy) =>
+    (await call<AppUsage[]>("app_ranking", { rangeSeconds, by })) ?? [],
+  /** The heaviest apps since local midnight. */
+  appRankingToday: async (by: RankBy) => (await call<AppUsage[]>("app_ranking_today", { by })) ?? [],
+  /** What was running at one moment, busiest first. */
+  appsAt: async (atMs: number) => (await call<AppUsage[]>("apps_at", { atMs })) ?? [],
+  appSeries: async (key: string, rangeSeconds: number) =>
+    (await call<AppPoint[]>("app_series", { key, rangeSeconds })) ?? [],
+  systemEvents: async (rangeSeconds: number) => (await call<SystemEvent[]>("system_events", { rangeSeconds })) ?? [],
   insights: async () => (await call<Insight[]>("insights")) ?? [],
   /** The processes behind one app row, one each, heaviest first. */
   appProcesses: async (key: string) => (await call<ProcessRow[]>("app_processes", { key })) ?? [],

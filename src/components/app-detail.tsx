@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Copy, FolderOpen, X } from "lucide-react";
 import { cpuDisplay, formatBytes, formatDuration, formatPercent, formatRate, formatTime } from "../lib/format";
 import { ipc } from "../lib/ipc";
-import { useStore } from "../lib/store";
+import { useStore, type AppSeed } from "../lib/store";
 import { appLabel } from "../lib/apps";
-import type { AppInfo, ProcessRow } from "../lib/types";
-import { AppIcon, Stat } from "./ui";
+import { useLoaded } from "../lib/use-loaded";
+import type { AppInfo, AppPoint, ProcessRow } from "../lib/types";
+import { AppIcon, Chart, Stat } from "./ui";
 import { Button } from "./ui/button";
+import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { Sheet, SheetClose, SheetContent } from "./ui/sheet";
 import { Hint } from "./ui/tooltip";
 
@@ -28,6 +30,77 @@ function useProcesses(key: string | null): ProcessRow[] {
   return rows;
 }
 
+/** An app that is not running, as far as the detail sheet needs: a name and a file, no figures. */
+function ghostOf(seed: AppSeed): AppInfo {
+  return {
+    ...seed,
+    mainPid: 0,
+    processCount: 0,
+    cpuPercent: 0,
+    memoryBytes: 0,
+    readBytesPerSecond: 0,
+    writeBytesPerSecond: 0,
+    readBytesTotal: 0,
+    writeBytesTotal: 0,
+    connections: 0,
+    listeningPorts: [],
+    oldestStartedAtMs: null,
+    windows: [],
+    pids: [],
+    unmeasuredProcesses: 0,
+    services: [],
+    canQuit: false,
+  };
+}
+
+const HISTORY_RANGES = [
+  { seconds: 86_400, key: "range.24h" },
+  { seconds: 7 * 86_400, key: "range.7d" },
+  { seconds: 30 * 86_400, key: "range.30d" },
+] as const;
+
+/**
+ * The app's own line through Pulse's history: CPU and memory over a day, a week or a month, and
+ * what that adds up to. This is the part a list cannot show, and the part that answers "has it
+ * always used this much, or did it start growing yesterday".
+ */
+function AppHistory({ appKey }: { appKey: string }) {
+  const { t, units } = useStore();
+  const [range, setRange] = useState<number>(86_400);
+  const points = useLoaded(() => ipc.appSeries(appKey, range), [] as AppPoint[], [appKey, range]);
+  const cpuSeconds = points.reduce((sum, p) => sum + (p.cpuPercent / 100) * p.spanSeconds, 0);
+  const written = points.reduce((sum, p) => sum + p.writeBytes, 0);
+  const memory = points.length ? points.reduce((sum, p) => sum + p.memoryBytes, 0) / points.length : 0;
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="section-title">{t("history.appHistory")}</h4>
+        <ToggleGroup type="single" value={String(range)} onValueChange={(next) => next && setRange(Number(next))}>
+          {HISTORY_RANGES.map((r) => (
+            <ToggleChip key={r.seconds} value={String(r.seconds)}>
+              {t(r.key)}
+            </ToggleChip>
+          ))}
+        </ToggleGroup>
+      </div>
+      {points.length < 2 ? (
+        <p className="empty faint">{t("history.appHistoryEmpty")}</p>
+      ) : (
+        <>
+          <div className="stat-label mt-2">{t("metric.cpu")}</div>
+          <Chart values={points.map((p) => cpuDisplay(p.cpuPercent, units))} color="var(--m-cpu)" height={44} />
+          <div className="stat-label mt-2">{t("metric.memory")}</div>
+          <Chart values={points.map((p) => p.memoryBytes)} color="var(--m-memory)" height={44} />
+          <p className="hint faint">
+            {t("history.cpuTime", { value: formatDuration(cpuSeconds, units.locale, { short: true }) })} ·{" "}
+            {formatBytes(memory, units)} · {t("history.written", { value: formatBytes(written, units) })}
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 async function copy(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -44,20 +117,28 @@ async function copy(text: string): Promise<boolean> {
  * how long it has been running and how much it has read and written since.
  */
 export function AppDetailSheet() {
-  const { snapshot, detailKey, closeDetail, t, units, requestQuit } = useStore();
+  const { snapshot, detailKey, detailSeed, closeDetail, t, units, requestQuit } = useStore();
   const live = snapshot?.apps.find((a) => a.key === detailKey) ?? null;
-  // Keeps the last reading on screen when the app exits under the open sheet, and through the
-  // sheet's own exit animation after the store has already forgotten which app it was.
-  const last = useRef<AppInfo | null>(null);
-  if (live) last.current = live;
-  const app = live ?? last.current;
-  const processes = useProcesses(detailKey);
+  // The last live reading of this app, kept on screen if it exits while the sheet is open.
+  const lastLive = useRef<AppInfo | null>(null);
+  if (live) lastLive.current = live;
+  const remembered = lastLive.current?.key === detailKey ? lastLive.current : null;
+  // Opened from the history for an app that is not running: only its name is known.
+  const ghost = !live && !remembered && detailSeed?.key === detailKey && detailSeed ? ghostOf(detailSeed) : null;
+  const current = live ?? remembered ?? ghost;
+  // Whatever was on screen stays there through the sheet's exit animation, after the store has
+  // already forgotten which app it was.
+  const shown = useRef<AppInfo | null>(null);
+  if (current) shown.current = current;
+  const app = detailKey ? current : shown.current;
+  const processes = useProcesses(live ? detailKey : null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => setNotice(null), [detailKey]);
 
   if (!app) return null;
-  const exited = Boolean(detailKey) && !live;
+  const running = Boolean(live);
+  const exited = Boolean(detailKey) && !live && Boolean(remembered);
   const label = appLabel(app, t);
   const now = snapshot?.takenAtMs ?? Date.now();
   const runningFor = app.oldestStartedAtMs ? (now - app.oldestStartedAtMs) / 1000 : null;
@@ -76,8 +157,9 @@ export function AppDetailSheet() {
           <div className="min-w-0 flex-1">
             <div className="truncate font-display text-[15px] font-[650] tracking-[-0.01em]">{label}</div>
             <div className="truncate text-[11.5px] text-ink-3">
-              {t(`kind.${app.kind}`)} · {app.processCount} {t("label.processes")}
-              {exited ? ` · ${t("detail.exited")}` : ""}
+              {t(`kind.${app.kind}`)}
+              {running || exited ? ` · ${app.processCount} ${t("label.processes")}` : ""}
+              {exited ? ` · ${t("detail.exited")}` : running ? "" : ` · ${t("history.notRunning")}`}
             </div>
           </div>
           <SheetClose asChild>
@@ -88,6 +170,7 @@ export function AppDetailSheet() {
         </header>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          {(running || exited) && (
           <section className="detail-figures grid grid-cols-2 gap-x-6">
             <Stat
               label={t("metric.cpu")}
@@ -109,6 +192,9 @@ export function AppDetailSheet() {
               value={`${formatBytes(app.readBytesTotal, units)} / ${formatBytes(app.writeBytesTotal, units)}`}
             />
           </section>
+          )}
+
+          <AppHistory appKey={app.key} />
 
           {app.exePath && (
             <section>
@@ -176,6 +262,7 @@ export function AppDetailSheet() {
             </section>
           )}
 
+          {running && (
           <section>
             <h4 className="section-title">
               {t("label.processes")} · {processes.length || app.processCount}
@@ -209,11 +296,12 @@ export function AppDetailSheet() {
               {processes.length === 0 && <p className="empty faint">…</p>}
             </div>
           </section>
+          )}
         </div>
 
         <footer className="flex min-h-[52px] items-center gap-2 border-t border-input px-5 py-2.5">
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink-3" role="status">
-            {notice ?? (app.canQuit ? "" : t("list.cannotQuit"))}
+            {notice ?? (app.canQuit || !running ? "" : t("list.cannotQuit"))}
           </span>
           {app.canQuit && !exited && (
             <Button variant="danger" onClick={() => requestQuit(app)}>

@@ -42,6 +42,7 @@ function lookup(lang: Lang, key: Key, params?: Params): string {
 /** The label each window tab carries. The power tab's real label depends on the hardware. */
 export const TAB_LABEL: Record<string, Key> = {
   overview: "tab.overview",
+  history: "tab.history",
   cpu: "tab.cpu",
   memory: "tab.memory",
   disk: "tab.disk",

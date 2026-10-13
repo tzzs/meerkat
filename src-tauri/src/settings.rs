@@ -138,7 +138,7 @@ pub struct Settings {
     pub alerts: AlertThresholds,
 }
 
-pub const TAB_IDS: [&str; 8] = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"];
+pub const TAB_IDS: [&str; 9] = ["overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"];
 
 /// What the dropdown panel can draw. These are metrics, not tabs: the default used to be built
 /// from `TAB_IDS`, which handed the panel "sound" — a tab with no series behind it — and one
@@ -155,6 +155,7 @@ pub const PANEL_METRICS: [MetricKind; 6] = [
 pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
     let ids: Vec<&str> = match tab {
         "overview" => vec!["summary", "charts", "topApps", "worthALook", "storage", "insights"],
+        "history" => vec!["timeline", "ranking", "events"],
         "cpu" => vec!["load", "perCore", "userSystem", "history", "apps"],
         "memory" => vec!["breakdown", "pressure", "commit", "history", "apps"],
         "disk" => vec!["rate", "volumes", "today", "history", "apps"],
@@ -234,14 +235,16 @@ impl SettingsStore {
     }
 
     fn read(path: &PathBuf) -> Settings {
-        match fs::read_to_string(path) {
+        let mut settings = match fs::read_to_string(path) {
             Ok(raw) => serde_json::from_str::<Settings>(&raw).unwrap_or_else(|e| {
                 eprintln!("settings.json invalid ({e}); keeping a backup and using defaults");
                 let _ = fs::write(path.with_extension("json.bad"), &raw);
                 Settings::default()
             }),
             Err(_) => Settings::default(),
-        }
+        };
+        add_missing_tabs(&mut settings);
+        settings
     }
 
     pub fn get(&self) -> Settings {
@@ -260,9 +263,53 @@ impl SettingsStore {
     }
 }
 
+/// A settings file keeps the tab list it was written with, so a tab added in a later version
+/// would never appear for anyone who had already saved a setting. Missing tabs are put back where
+/// the default order has them, visible, and every tab gets any section it is missing; nothing the
+/// user hid, reordered or removed is touched.
+fn add_missing_tabs(settings: &mut Settings) {
+    let tabs = &mut settings.window.tabs;
+    for (default_index, id) in TAB_IDS.iter().enumerate() {
+        if tabs.iter().any(|tab| tab.id == *id) {
+            continue;
+        }
+        // After whichever tab precedes it by default, or first if none of those are present.
+        let after = TAB_IDS[..default_index]
+            .iter()
+            .rev()
+            .find_map(|previous| tabs.iter().position(|tab| tab.id == *previous));
+        let at = after.map_or(0, |index| index + 1);
+        tabs.insert(at, TabConfig { id: id.to_string(), visible: true, sections: default_sections(id) });
+    }
+    for tab in tabs.iter_mut() {
+        for section in default_sections(&tab.id) {
+            if !tab.sections.iter().any(|existing| existing.id == section.id) {
+                tab.sections.push(section);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tab_added_later_appears_for_people_who_saved_settings_before() {
+        let mut old = Settings::default();
+        old.window.tabs.retain(|tab| tab.id != "history");
+        old.window.tabs.swap(0, 1); // the user had put CPU first
+        old.window.tabs.iter_mut().find(|tab| tab.id == "sound").unwrap().visible = false;
+        old.window.tabs.iter_mut().find(|tab| tab.id == "disk").unwrap().sections.retain(|s| s.id != "today");
+
+        add_missing_tabs(&mut old);
+
+        let ids: Vec<&str> = old.window.tabs.iter().map(|tab| tab.id.as_str()).collect();
+        assert_eq!(&ids[..3], &["cpu", "overview", "history"], "after overview, wherever the user put it");
+        assert!(!old.window.tabs.iter().find(|tab| tab.id == "sound").unwrap().visible, "a hidden tab stays hidden");
+        assert!(old.window.tabs.iter().find(|tab| tab.id == "disk").unwrap().sections.iter().any(|s| s.id == "today"));
+        assert_eq!(old.window.tabs.len(), TAB_IDS.len());
+    }
 
     // Settings has no PartialEq on purpose (it is a wire shape), so equality is compared on the
     // bytes that would actually be written to disk.

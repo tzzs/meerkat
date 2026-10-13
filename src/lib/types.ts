@@ -243,16 +243,56 @@ export interface HistorySeries {
   points: HistoryPoint[];
 }
 
-export interface RankedApp {
+/** One app over a span of its history. */
+export interface AppUsage {
   key: string;
   name: string;
-  value: number;
+  exePath: string;
+  kind: AppKind;
+  /** How long Pulse saw it running in the span. */
+  seconds: number;
+  /** CPU time used, in seconds of one core. */
+  cpuSeconds: number;
+  memoryAverage: number;
+  memoryPeak: number;
+  readBytes: number;
+  writeBytes: number;
+  gpuSeconds: number;
 }
 
-export interface RankingRow {
-  hourStartMs: number;
-  metric: string;
-  apps: RankedApp[];
+export type RankBy = "cpu" | "memory" | "disk" | "write" | "gpu";
+
+export interface AppPoint {
+  atMs: number;
+  spanSeconds: number;
+  /** Average over the point, in percent of one core. */
+  cpuPercent: number;
+  memoryBytes: number;
+  readBytes: number;
+  writeBytes: number;
+}
+
+export type SystemEventKind =
+  | "appCrash"
+  | "appHang"
+  | "blueScreen"
+  | "powerLoss"
+  | "sleep"
+  | "wake"
+  | "boot"
+  | "shutdown"
+  | "driverReset"
+  | "hardwareError"
+  | "updateInstalled"
+  | "updateFailed"
+  | "diskError"
+  | "serviceCrash";
+
+export interface SystemEvent {
+  atMs: number;
+  kind: SystemEventKind;
+  subject: string;
+  detail: string;
 }
 
 export type InsightKind = "highCpu" | "growingMemory" | "heavyDisk" | "heavyNetwork" | "heat";
@@ -331,7 +371,7 @@ export const METRIC_ORDER: MetricKind[] = [
   "temperature",
 ];
 
-export const TAB_ORDER = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
+export const TAB_ORDER = ["overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
 export type TabId = (typeof TAB_ORDER)[number];
 
 /**

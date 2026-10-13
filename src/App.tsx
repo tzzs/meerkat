@@ -12,6 +12,7 @@ import { QuitDialog } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
 import { AppDetailSheet } from "./components/app-detail";
+import { HistoryTab } from "./components/history";
 
 export default function App() {
   const { snapshot, settings, t, units, connected, pendingQuit, openDetail } = useStore();
@@ -217,6 +218,9 @@ export default function App() {
           <>
             <TabsContent value="overview">
               <OverviewTab onOpenTab={(next) => setTab(next as TabId)} />
+            </TabsContent>
+            <TabsContent value="history">
+              <HistoryTab />
             </TabsContent>
             <TabsContent value="cpu">
               <CpuTab />

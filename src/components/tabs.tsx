@@ -11,6 +11,7 @@ import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, DailyTotal, HistorySeries, Insight, MetricKind } from "../lib/types";
 import { capacityTrend, sumDays } from "../lib/totals";
+import { useLoaded } from "../lib/use-loaded";
 import { appLabel, listedApps } from "../lib/apps";
 import type { Translate } from "../i18n";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
@@ -36,7 +37,7 @@ export const RANGES: { seconds: number; key: "range.1h" | "range.12h" | "range.2
   { seconds: 30 * 86400, key: "range.30d" },
 ];
 
-const TONE: Record<MetricKind, string> = {
+export const TONE: Record<MetricKind, string> = {
   cpu: "var(--m-cpu)",
   memory: "var(--m-memory)",
   disk: "var(--m-disk)",
@@ -46,7 +47,7 @@ const TONE: Record<MetricKind, string> = {
   temperature: "var(--m-temp)",
 };
 
-function useSeries(metric: string, rangeSeconds: number): HistorySeries | null {
+export function useSeries(metric: string, rangeSeconds: number): HistorySeries | null {
   const [series, setSeries] = useState<HistorySeries | null>(null);
   useEffect(() => {
     let alive = true;
@@ -138,7 +139,7 @@ function useApps(sort: AppMetric): AppInfo[] {
  */
 const tabMemory = new Map<string, unknown>();
 
-function useTabState<T>(tab: string, field: string, initial: T): [T, (next: T) => void] {
+export function useTabState<T>(tab: string, field: string, initial: T): [T, (next: T) => void] {
   const id = `${tab}.${field}`;
   const [value, setValue] = useState<T>(() => (tabMemory.has(id) ? (tabMemory.get(id) as T) : initial));
   const set = useCallback(
@@ -530,8 +531,51 @@ function TotalsCard({ kind }: { kind: "network" | "disk" }) {
         })}
       </div>
       {bars.length > 1 && <Chart values={bars} color={TONE[kind]} variant="bars" height={48} />}
+      {!network && <TopWritersToday />}
       <p className="hint faint">{t("totals.whileRunning")}</p>
     </Card>
+  );
+}
+
+/**
+ * Who wrote today's bytes. On an SSD writes are what wears the drive, and "the disk wrote 40 GB
+ * today" only becomes something to act on once it says which programs did it.
+ */
+function TopWritersToday() {
+  const { units, t, openDetail } = useStore();
+  const writers = useLoaded(() => ipc.appRankingToday("write"), [], []);
+  const shown = writers.filter((app) => app.writeBytes >= 1024 * 1024).slice(0, 5);
+  if (shown.length === 0) return null;
+  const peak = Math.max(1, ...shown.map((app) => app.writeBytes));
+  return (
+    <div className="mt-2">
+      <h4 className="section-title">{t("totals.topWriters")}</h4>
+      <div className="rows">
+        {shown.map((app) => (
+          <div
+            key={app.key}
+            className="row clickable"
+            role="button"
+            tabIndex={0}
+            onClick={() => openDetail(app.key, { key: app.key, name: app.name, exePath: app.exePath, kind: app.kind })}
+            onKeyDown={(event) =>
+              event.key === "Enter" &&
+              openDetail(app.key, { key: app.key, name: app.name, exePath: app.exePath, kind: app.kind })
+            }
+          >
+            <AppIcon name={appLabel(app, t)} seed={app.key} exePath={app.exePath || undefined} />
+            <div className="row-main">
+              <span className="row-name">{appLabel(app, t)}</span>
+              <span className="row-sub">{t(`kind.${app.kind}`)}</span>
+            </div>
+            <div className="row-meter">
+              <Meter ratio={app.writeBytes / peak} color={TONE.disk} />
+            </div>
+            <span className="row-value num">{formatBytes(app.writeBytes, units)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

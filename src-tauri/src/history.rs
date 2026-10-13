@@ -1,6 +1,6 @@
-//! Rolling history. One minute resolution for the last 2 hours, 5 minutes for the last
-//! day, 1 hour for 30 days. Per-app detail is kept hourly for 48 hours, which is all
-//! "which app was busy at 3am" needs.
+//! Rolling history of the machine as a whole. One minute resolution for the last 2 hours,
+//! 5 minutes for the last day, 1 hour for 30 days. What each app did is kept separately, per
+//! minute, in apphistory.rs.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{HistoryPoint, HistorySeries, RankedApp, RankingRow, Snapshot};
+use crate::models::{HistoryPoint, HistorySeries, Snapshot};
 
 const FINE_BUCKET: u64 = 60;
 const COARSE_BUCKET: u64 = 300;
@@ -16,7 +16,6 @@ const DAY_BUCKET: u64 = 3600;
 const FINE_KEEP: u64 = 2 * 3600;
 const COARSE_KEEP: u64 = 24 * 3600;
 const TOTAL_KEEP: u64 = 30 * 24 * 3600;
-const APP_KEEP: u64 = 48 * 3600;
 
 const METRICS: [&str; 12] = [
     "cpu",
@@ -39,16 +38,11 @@ pub struct StoredPoint {
     pub values: BTreeMap<String, f64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct StoredHour {
-    pub at: u64,
-    pub apps: Vec<RankedApp>,
-}
-
+/// Files written before per-app history moved out still carry an `app_hours` list; serde skips
+/// the field it no longer knows, so they open as they always did.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Store {
     pub points: Vec<StoredPoint>,
-    pub app_hours: Vec<StoredHour>,
 }
 
 #[derive(Default)]
@@ -63,7 +57,6 @@ pub struct History {
     store: Store,
     current: Accumulator,
     ticks: u32,
-    last_hour_recorded: u64,
 }
 
 impl History {
@@ -78,7 +71,6 @@ impl History {
             store,
             current: Accumulator::default(),
             ticks: 0,
-            last_hour_recorded: 0,
         };
         let now = now_seconds();
         this.fold(now);
@@ -103,7 +95,6 @@ impl History {
         if self.ticks >= 60 {
             self.ticks = 0;
             self.flush();
-            self.record_apps(snapshot);
             self.fold(second);
             self.save();
         }
@@ -133,30 +124,6 @@ impl History {
         self.store.points = fold_older(std::mem::take(&mut self.store.points), now.saturating_sub(COARSE_KEEP), DAY_BUCKET);
         let oldest = now.saturating_sub(TOTAL_KEEP);
         self.store.points.retain(|p| p.at >= oldest);
-        self.store.app_hours.retain(|h| h.at >= now.saturating_sub(APP_KEEP));
-    }
-
-    fn record_apps(&mut self, snapshot: &Snapshot) {
-        let second = snapshot.taken_at_ms / 1000;
-        let hour = second - second % DAY_BUCKET;
-        if hour == self.last_hour_recorded {
-            return;
-        }
-        self.last_hour_recorded = hour;
-        let mut apps: Vec<RankedApp> = snapshot
-            .apps
-            .iter()
-            .take(40)
-            .map(|app| RankedApp {
-                key: app.key.clone(),
-                name: app.name.clone(),
-                value: app.memory_bytes as f64,
-            })
-            .collect();
-        apps.sort_by(|a, b| b.value.total_cmp(&a.value));
-        self.store.app_hours.push(StoredHour { at: hour, apps });
-        self.store.app_hours.sort_by_key(|h| h.at);
-        self.store.app_hours.dedup_by_key(|h| h.at);
     }
 
     pub fn series(&self, metric: &str, range_seconds: u64, now_seconds: u64) -> HistorySeries {
@@ -187,20 +154,6 @@ impl History {
             range_seconds,
             points,
         }
-    }
-
-    pub fn ranking(&self, hours: u64, now_seconds: u64) -> Vec<RankingRow> {
-        let from = now_seconds.saturating_sub(hours * 3600);
-        self.store
-            .app_hours
-            .iter()
-            .filter(|h| h.at >= from)
-            .map(|h| RankingRow {
-                hour_start_ms: h.at * 1000,
-                metric: "memory".to_string(),
-                apps: h.apps.clone(),
-            })
-            .collect()
     }
 
     fn save(&self) {
@@ -402,7 +355,6 @@ mod tests {
                 point(now - 900, &[("cpu", 3.0)]),
                 point(now - 600, &[("cpu", 2.0)]),
             ],
-            app_hours: vec![],
         };
         fs::write(dir.join("history.json"), serde_json::to_string(&store).unwrap()).unwrap();
 
