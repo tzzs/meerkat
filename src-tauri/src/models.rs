@@ -265,6 +265,18 @@ pub struct AppInfo {
     pub services: Vec<String>,
     /// Whether this user may end at least one of its processes. The system's own answer no.
     pub can_quit: bool,
+    /// The rules Pulse applies to it and whether it is paused, filled in after grouping.
+    #[serde(default)]
+    pub control: AppControl,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppControl {
+    pub efficiency: bool,
+    pub priority: Option<crate::control::Priority>,
+    pub mute_alerts: bool,
+    pub paused: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

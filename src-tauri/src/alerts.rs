@@ -60,7 +60,9 @@ impl Watcher {
 
     /// Insights worth a notification since the last tick. Repeats update the stored row
     /// and stay quiet until RE_NOTIFY_AFTER has passed.
-    pub fn evaluate(&mut self, snapshot: &Snapshot, settings: &Settings) -> Vec<Insight> {
+    /// `muted` holds the apps whose rule says not to watch them: OBS and a compiler are meant to
+    /// keep the CPU busy, and until now the only answer to that was dismissing it every day.
+    pub fn evaluate(&mut self, snapshot: &Snapshot, settings: &Settings, muted: &std::collections::HashSet<String>) -> Vec<Insight> {
         let now = now_seconds();
         if !settings.alerts.enabled {
             self.states.clear();
@@ -68,7 +70,7 @@ impl Watcher {
         }
 
         let mut hits: Vec<Hit> = Vec::new();
-        for app in &snapshot.apps {
+        for app in snapshot.apps.iter().filter(|app| !muted.contains(&app.key)) {
             let mut state = self.states.get(&app.key).cloned().unwrap_or_default();
             if state.baseline_memory == 0 {
                 state.baseline_memory = app.memory_bytes;
@@ -319,6 +321,7 @@ mod tests {
             unmeasured_processes: 0,
             services: Vec::new(),
             can_quit: true,
+            control: Default::default(),
         }
     }
 
@@ -385,7 +388,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let mut watcher = Watcher::open(&dir);
 
-        let announced = watcher.evaluate(&snapshot(app("chrome", 95.0)), &alert_settings());
+        let announced = watcher.evaluate(&snapshot(app("chrome", 95.0)), &alert_settings(), &Default::default());
 
         assert_eq!(announced.len(), 1, "one sustained app yields one row");
         let insight = &announced[0];
@@ -400,7 +403,7 @@ mod tests {
         // Quiet thresholds yield nothing at all.
         assert!(
             watcher
-                .evaluate(&snapshot(app("chrome", 10.0)), &alert_settings())
+                .evaluate(&snapshot(app("chrome", 10.0)), &alert_settings(), &Default::default())
                 .is_empty()
         );
         let _ = fs::remove_dir_all(&dir);
@@ -414,7 +417,7 @@ mod tests {
         let settings = alert_settings();
         let hot = || snapshot(app("chrome", 95.0));
 
-        let first = watcher.evaluate(&hot(), &settings);
+        let first = watcher.evaluate(&hot(), &settings, &Default::default());
         assert_eq!(first.len(), 1);
         let id = first[0].id.clone();
         let day = day_key(now_seconds());
@@ -433,7 +436,7 @@ mod tests {
             let _ = fs::remove_dir_all(&dir);
             return;
         }
-        let again = watcher.evaluate(&hot(), &settings);
+        let again = watcher.evaluate(&hot(), &settings, &Default::default());
         assert!(again.is_empty(), "a dismissed row must not notify again");
 
         let kept = row(&watcher, &id);

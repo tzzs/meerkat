@@ -383,6 +383,7 @@ mod tests {
             unmeasured_processes: 0,
             services: Vec::new(),
             can_quit: true,
+            control: Default::default(),
         }
     }
 

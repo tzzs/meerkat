@@ -1,5 +1,6 @@
 import type {
   AppPoint,
+  AppRule,
   AppUsage,
   AudioState,
   DailyTotal,
@@ -70,6 +71,11 @@ export const ipc = {
   appSeries: async (key: string, rangeSeconds: number) =>
     (await call<AppPoint[]>("app_series", { key, rangeSeconds })) ?? [],
   systemEvents: async (rangeSeconds: number) => (await call<SystemEvent[]>("system_events", { rangeSeconds })) ?? [],
+  rules: async () => (await call<AppRule[]>("rules_list")) ?? [],
+  /** Stores an app's rule and applies it at once; null when it worked, else the reason. */
+  setRule: async (rule: AppRule): Promise<string | null> => attempt("rule_set", { rule }),
+  /** Pauses or resumes an app; null when it worked, else the reason. */
+  pauseApp: async (key: string, pause: boolean): Promise<string | null> => attempt("app_pause", { key, pause }),
   insights: async () => (await call<Insight[]>("insights")) ?? [],
   /** The processes behind one app row, one each, heaviest first. */
   appProcesses: async (key: string) => (await call<ProcessRow[]>("app_processes", { key })) ?? [],
@@ -160,6 +166,18 @@ export async function listenNavigate(handler: (destination: string) => void): Pr
   if (!inTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<string>("navigate", (event) => handler(event.payload));
+}
+
+/** A command whose failure the user should hear about: the reason, or null on success. */
+async function attempt(command: string, args: Record<string, unknown>): Promise<string | null> {
+  if (!inTauri) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    await invoke(command, args);
+    return null;
+  } catch (error) {
+    return String(error);
+  }
 }
 
 function emptySeries(metric: string, rangeSeconds: number): HistorySeries {

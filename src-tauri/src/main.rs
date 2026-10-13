@@ -3,6 +3,7 @@
 mod alerts;
 mod apphistory;
 mod audio;
+mod control;
 mod daily;
 mod events;
 mod history;
@@ -12,6 +13,7 @@ mod menu;
 mod metrics;
 mod models;
 mod nvml;
+mod rules;
 mod settings;
 mod tray;
 mod tray_render;
@@ -48,6 +50,9 @@ fn main() {
             ipc::apps_at,
             ipc::app_series,
             ipc::system_events,
+            ipc::rules_list,
+            ipc::rule_set,
+            ipc::app_pause,
             ipc::insights,
             ipc::insight_dismiss,
             ipc::quit_app,
@@ -99,6 +104,7 @@ fn main() {
                 processes: RwLock::new(Vec::new()),
                 watcher: Mutex::new(Watcher::open(&app_data)),
                 app_history: Mutex::new(apphistory::AppHistory::open(&app_data)),
+                rules: Mutex::new(rules::Rules::open(&app_data)),
                 events: Mutex::new(None),
                 tray: Mutex::new(TrayManager::new()),
                 interface_visible: AtomicBool::new(false),
@@ -142,8 +148,17 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Pulse failed to start");
+        .build(tauri::generate_context!())
+        .expect("Pulse failed to start")
+        .run(|app, event| {
+            // A paused app must not outlive the program that paused it. A crash skips this; the
+            // list on disk catches that case at the next start (rules.rs).
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.rules.lock().unwrap_or_else(|p| p.into_inner()).resume_all();
+                }
+            }
+        });
 }
 
 /// Where settings, history and alerts live. A debug build can be pointed elsewhere with
@@ -186,8 +201,16 @@ fn spawn_sampler(app: AppHandle) {
             let mut last_sample = std::time::Instant::now();
             loop {
                 let settings = state.settings.get();
-                let snapshot = sampler.sample();
+                let mut snapshot = sampler.sample();
                 let elapsed = last_sample.elapsed().as_secs_f64();
+                let muted = {
+                    let mut rules = state.rules.lock().unwrap_or_else(|p| p.into_inner());
+                    let by_pid: std::collections::HashMap<u32, &metrics::grouping::ProcSample> =
+                        sampler.processes().iter().map(|p| (p.pid, p)).collect();
+                    rules.enforce(&snapshot.apps, &by_pid);
+                    rules.annotate(&mut snapshot.apps);
+                    rules.muted()
+                };
                 last_sample = std::time::Instant::now();
 
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
@@ -199,7 +222,7 @@ fn spawn_sampler(app: AppHandle) {
                 }
                 state.app_history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot, elapsed);
 
-                for insight in state.watcher.lock().unwrap_or_else(|p| p.into_inner()).evaluate(&snapshot, &settings) {
+                for insight in state.watcher.lock().unwrap_or_else(|p| p.into_inner()).evaluate(&snapshot, &settings, &muted) {
                     let _ = app.emit("insight", &insight);
                     if settings.alerts.enabled {
                         let chinese = speaks_chinese(&settings);

@@ -213,6 +213,26 @@ export interface AppInfo {
   services: string[];
   /** Whether this user may end at least one of its processes; the system's own answer no. */
   canQuit: boolean;
+  /** The rules Pulse applies to it, and whether Pulse has paused it. */
+  control: AppControl;
+}
+
+export type Priority = "low" | "belowNormal" | "normal" | "aboveNormal" | "high";
+
+export interface AppControl {
+  efficiency: boolean;
+  priority: Priority | null;
+  muteAlerts: boolean;
+  paused: boolean;
+}
+
+/** What Pulse remembers about how one app should run. */
+export interface AppRule {
+  key: string;
+  name: string;
+  efficiency: boolean;
+  priority: Priority | null;
+  muteAlerts: boolean;
 }
 
 export interface Snapshot {

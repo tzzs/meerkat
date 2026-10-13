@@ -5,7 +5,8 @@ import { ipc } from "../lib/ipc";
 import { useStore, type AppSeed } from "../lib/store";
 import { appLabel } from "../lib/apps";
 import { useLoaded } from "../lib/use-loaded";
-import type { AppInfo, AppPoint, ProcessRow } from "../lib/types";
+import type { AppInfo, AppPoint, Priority, ProcessRow } from "../lib/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { AppIcon, Chart, Stat } from "./ui";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
@@ -50,6 +51,7 @@ function ghostOf(seed: AppSeed): AppInfo {
     unmeasuredProcesses: 0,
     services: [],
     canQuit: false,
+    control: { efficiency: false, priority: null, muteAlerts: false, paused: false },
   };
 }
 
@@ -97,6 +99,99 @@ function AppHistory({ appKey }: { appKey: string }) {
           </p>
         </>
       )}
+    </section>
+  );
+}
+
+const PRIORITIES: Priority[] = ["low", "belowNormal", "normal", "aboveNormal", "high"];
+
+/**
+ * How the app runs, remembered: efficiency mode, a priority, alerts muted, all applied again to
+ * every process the app starts. And pausing it, which is not remembered, because a paused app
+ * nobody remembers pausing is a bug report waiting to happen.
+ */
+function AppControls({ app, onNotice }: { app: AppInfo; onNotice: (text: string) => void }) {
+  const { t } = useStore();
+  const [busy, setBusy] = useState(false);
+  const control = app.control;
+  const save = async (change: Partial<{ efficiency: boolean; priority: Priority | null; muteAlerts: boolean }>) => {
+    setBusy(true);
+    const error = await ipc.setRule({
+      key: app.key,
+      name: app.name,
+      efficiency: control.efficiency,
+      priority: control.priority,
+      muteAlerts: control.muteAlerts,
+      ...change,
+    });
+    setBusy(false);
+    onNotice(error ? t("control.failed", { reason: error }) : t("control.saved"));
+  };
+  const pause = async (next: boolean) => {
+    setBusy(true);
+    const error = await ipc.pauseApp(app.key, next);
+    setBusy(false);
+    onNotice(error ? t("control.failed", { reason: error }) : next ? t("control.pausedNotice") : t("control.resumed"));
+  };
+  return (
+    <section>
+      <h4 className="section-title">{t("control.title")}</h4>
+      <div className="space-y-2.5 text-[12.5px]">
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={control.efficiency}
+            disabled={busy || !app.canQuit}
+            onChange={(e) => void save({ efficiency: e.target.checked })}
+          />
+          <span>
+            {t("control.efficiency")}
+            <span className="block text-[11px] text-ink-3">{t("control.efficiencyHelp")}</span>
+          </span>
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="flex-1">{t("control.priority")}</span>
+          <Select
+            value={control.priority ?? "auto"}
+            disabled={busy || !app.canQuit || control.efficiency}
+            onValueChange={(next) => void save({ priority: next === "auto" ? null : (next as Priority) })}
+          >
+            <SelectTrigger aria-label={t("control.priority")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">{t("control.priorityAuto")}</SelectItem>
+              {PRIORITIES.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {t(`control.priority.${p}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={control.muteAlerts}
+            disabled={busy}
+            onChange={(e) => void save({ muteAlerts: e.target.checked })}
+          />
+          <span>
+            {t("control.mute")}
+            <span className="block text-[11px] text-ink-3">{t("control.muteHelp")}</span>
+          </span>
+        </label>
+        {app.canQuit && (
+          <div className="flex items-center gap-2">
+            <span className="flex-1 text-[11px] text-ink-3">{control.paused ? t("control.pausedHelp") : t("control.pauseHelp")}</span>
+            <Button variant={control.paused ? "primary" : "chip"} disabled={busy} onClick={() => void pause(!control.paused)}>
+              {control.paused ? t("control.resume") : t("control.pause")}
+            </Button>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -160,6 +255,7 @@ export function AppDetailSheet() {
               {t(`kind.${app.kind}`)}
               {running || exited ? ` · ${app.processCount} ${t("label.processes")}` : ""}
               {exited ? ` · ${t("detail.exited")}` : running ? "" : ` · ${t("history.notRunning")}`}
+              {app.control.paused ? ` · ${t("control.paused")}` : ""}
             </div>
           </div>
           <SheetClose asChild>
@@ -193,6 +289,8 @@ export function AppDetailSheet() {
             />
           </section>
           )}
+
+          {running && <AppControls app={app} onNotice={say} />}
 
           <AppHistory appKey={app.key} />
 

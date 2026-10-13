@@ -653,6 +653,7 @@ export function AppTable({
                         {t(`kind.${app.kind}`)}
                         {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
                         {services ? ` · ${services}` : ""}
+                        {app.control?.paused ? ` · ${t("control.paused")}` : app.control?.efficiency ? ` · ${t("control.efficiencyShort")}` : ""}
                         {app.listeningPorts.length > 0
                           ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
                           : ""}

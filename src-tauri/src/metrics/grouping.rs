@@ -437,6 +437,7 @@ pub fn group(
             unmeasured_processes: g.unmeasured,
             services: g.services,
             can_quit,
+            control: Default::default(),
         });
     }
 
@@ -472,6 +473,7 @@ pub fn group(
             unmeasured_processes: count,
             services: Vec::new(),
             can_quit: false,
+            control: Default::default(),
         });
     }
 

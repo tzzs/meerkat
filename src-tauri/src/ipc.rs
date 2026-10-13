@@ -24,6 +24,7 @@ pub struct AppState {
     pub processes: RwLock<Vec<crate::metrics::grouping::ProcSample>>,
     pub watcher: Mutex<Watcher>,
     pub app_history: Mutex<crate::apphistory::AppHistory>,
+    pub rules: Mutex<crate::rules::Rules>,
     /// The last event-log reading, when it was taken and how far back it reached.
     pub events: Mutex<Option<(std::time::Instant, u64, Vec<crate::events::SystemEvent>)>>,
     pub tray: Mutex<TrayManager>,
@@ -325,6 +326,74 @@ pub async fn system_events(app: AppHandle, range_seconds: u64) -> Vec<crate::eve
         .unwrap_or_default();
     *state.events.lock().unwrap_or_else(|p| p.into_inner()) = Some((std::time::Instant::now(), range_seconds, read.clone()));
     read
+}
+
+/// The processes of one app as the last sample saw them.
+fn running_of(state: &AppState, key: &str) -> Vec<crate::metrics::grouping::ProcSample> {
+    let pids: std::collections::HashSet<u32> = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|snapshot| snapshot.apps.iter().find(|a| a.key == key).map(|a| a.pids.iter().copied().collect()))
+        .unwrap_or_default();
+    state
+        .processes
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .filter(|p| pids.contains(&p.pid))
+        .cloned()
+        .collect()
+}
+
+/// Pulse and everything it started: its own WebView2 processes are grouped with every other
+/// program's WebView2, and pausing that group must not freeze the window doing the pausing.
+fn own_tree(state: &AppState) -> std::collections::HashSet<u32> {
+    let processes = state.processes.read().unwrap_or_else(|p| p.into_inner());
+    let mut tree: std::collections::HashSet<u32> = [std::process::id()].into_iter().collect();
+    loop {
+        let before = tree.len();
+        for process in processes.iter() {
+            if process.ppid.is_some_and(|parent| tree.contains(&parent)) {
+                tree.insert(process.pid);
+            }
+        }
+        if tree.len() == before {
+            return tree;
+        }
+    }
+}
+
+#[tauri::command]
+pub fn rules_list(state: State<'_, AppState>) -> Vec<crate::rules::AppRule> {
+    state.rules.lock().unwrap_or_else(|p| p.into_inner()).list()
+}
+
+/// Stores an app's rule and applies it to what is running now; from then on every process the
+/// app starts gets it too.
+#[tauri::command]
+pub fn rule_set(state: State<'_, AppState>, rule: crate::rules::AppRule) -> Result<(), String> {
+    let running = running_of(&state, &rule.key);
+    let refs: Vec<&crate::metrics::grouping::ProcSample> = running.iter().collect();
+    state.rules.lock().unwrap_or_else(|p| p.into_inner()).set(rule, &refs)
+}
+
+/// Pauses or resumes every process of an app this user may control. Returns how many changed.
+#[tauri::command]
+pub fn app_pause(state: State<'_, AppState>, key: String, pause: bool) -> Result<usize, String> {
+    let running = running_of(&state, &key);
+    let refs: Vec<&crate::metrics::grouping::ProcSample> = running.iter().collect();
+    let protected = own_tree(&state);
+    let changed = state.rules.lock().unwrap_or_else(|p| p.into_inner()).pause(&key, pause, &refs, &protected)?;
+    // The row's "paused" mark comes from the next sample; patch the current one so the button
+    // does not flip back for a second.
+    if let Some(snapshot) = state.latest.write().unwrap_or_else(|p| p.into_inner()).as_mut() {
+        if let Some(app) = snapshot.apps.iter_mut().find(|a| a.key == key) {
+            app.control.paused = pause && changed > 0;
+        }
+    }
+    Ok(changed)
 }
 
 #[tauri::command]

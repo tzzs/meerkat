@@ -28,6 +28,7 @@ function app(over: Partial<AppInfo>): AppInfo {
     unmeasuredProcesses: 0,
     services: [],
     canQuit: true,
+    control: { efficiency: false, priority: null, muteAlerts: false, paused: false },
     ...over,
   };
 }

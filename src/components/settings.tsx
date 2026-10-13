@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ipc } from "../lib/ipc";
 import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
-import { isMetricKind, METRIC_ORDER, powerTabMode, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
+import { isMetricKind, METRIC_ORDER, powerTabMode, type AppRule, type MetricKind, type Settings, type TrayReadout, type TrayStyle } from "../lib/types";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -202,7 +202,53 @@ function General({ settings, save }: { settings: Settings; save: (s: Settings) =
           onChange={(v) => save({ ...settings, alerts: { ...settings.alerts, sustainedSeconds: v } })}
         />
       </Row>
+
+      <RulesList />
     </div>
+  );
+}
+
+/**
+ * The per-app rules Pulse is keeping. They are set from an app's details, where the app is in
+ * front of you; this is where to find them again, including for apps that are not running.
+ */
+function RulesList() {
+  const { t } = useStore();
+  const [rules, setRules] = useState<AppRule[]>([]);
+  const load = () => void ipc.rules().then(setRules);
+  useEffect(load, []);
+  const describe = (rule: AppRule) =>
+    [
+      rule.efficiency ? t("control.efficiency") : null,
+      rule.priority ? `${t("control.priority")}: ${t(`control.priority.${rule.priority}`)}` : null,
+      rule.muteAlerts ? t("control.mute") : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  return (
+    <>
+      <h4 className="section-title">{t("settings.rules")}</h4>
+      {rules.length === 0 ? (
+        <p className="hint faint">{t("settings.rulesEmpty")}</p>
+      ) : (
+        rules.map((rule) => (
+          <div className="tray-row" key={rule.key}>
+            <span className="tray-name">{rule.name}</span>
+            <span className="faint min-w-0 flex-1 truncate">{describe(rule)}</span>
+            <Button
+              variant="chip"
+              onClick={() =>
+                void ipc
+                  .setRule({ ...rule, efficiency: false, priority: null, muteAlerts: false })
+                  .then(load)
+              }
+            >
+              {t("settings.rulesRemove")}
+            </Button>
+          </div>
+        ))
+      )}
+    </>
   );
 }
 
