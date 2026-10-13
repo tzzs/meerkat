@@ -136,6 +136,9 @@ pub struct Settings {
     pub panel: PanelConfig,
     pub window: WindowConfig,
     pub alerts: AlertThresholds,
+    /// Whether AI assistants may read Pulse over MCP (mcp.rs). Off until the user turns it on.
+    #[serde(default)]
+    pub mcp_enabled: bool,
 }
 
 pub const TAB_IDS: [&str; 9] = ["overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"];
@@ -159,7 +162,7 @@ pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
         "cpu" => vec!["load", "perCore", "userSystem", "history", "apps"],
         "memory" => vec!["breakdown", "pressure", "commit", "history", "apps"],
         "disk" => vec!["rate", "volumes", "today", "history", "apps"],
-        "network" => vec!["rate", "adapters", "totals", "history", "connections"],
+        "network" => vec!["rate", "adapters", "totals", "history", "ports", "connections"],
         "gpu" => vec!["utilisation", "adapters", "memory", "history", "apps"],
         "battery" => vec!["charge", "health", "power", "history"],
         "sound" => vec!["output", "apps", "input"],
@@ -214,6 +217,7 @@ impl Default for Settings {
                 network_bytes_per_second: 20_000_000.0,
                 sustained_seconds: 30,
             },
+            mcp_enabled: false,
         }
     }
 }

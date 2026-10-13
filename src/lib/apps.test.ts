@@ -29,6 +29,7 @@ function app(over: Partial<AppInfo>): AppInfo {
     services: [],
     canQuit: true,
     control: { efficiency: false, priority: null, muteAlerts: false, paused: false },
+    project: null,
     ...over,
   };
 }

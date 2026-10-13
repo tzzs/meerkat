@@ -11,6 +11,7 @@ import type {
   Settings,
   Snapshot,
   SystemEvent,
+  WslMemory,
 } from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -91,6 +92,12 @@ export const ipc = {
     }
   },
   revealInExplorer: (path: string) => void call("reveal_in_explorer", { path }),
+  /** Opens the project folder of a runtime grouped by project. */
+  openProject: (key: string) => void call("open_project", { key }),
+  /** The command that adds this Pulse to Claude Code as an MCP server. */
+  mcpCommand: async () => (await call<string>("mcp_command")) ?? "",
+  /** The WSL virtual machine's memory as Linux sees it; null without WSL running. */
+  wslMemory: () => call<WslMemory>("wsl_memory"),
   /** Bytes per local day, oldest first, zero for days Pulse was not running. */
   dailyTotals: async (days: number) => (await call<DailyTotal[]>("daily_totals", { days })) ?? [],
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),

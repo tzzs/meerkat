@@ -9,6 +9,7 @@ mod events;
 mod history;
 mod icons;
 mod ipc;
+mod mcp;
 mod menu;
 mod metrics;
 mod models;
@@ -17,6 +18,7 @@ mod rules;
 mod settings;
 mod tray;
 mod tray_render;
+mod wsl;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -33,6 +35,12 @@ use crate::settings::SettingsStore;
 use crate::tray::TrayManager;
 
 fn main() {
+    // Started by an AI assistant as its MCP server: answer on stdio by asking the running Pulse,
+    // and never open a window or a tray icon of its own.
+    if std::env::args().any(|arg| arg == "--mcp") {
+        mcp::run_stdio();
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -72,6 +80,9 @@ fn main() {
             ipc::app_processes,
             ipc::focus_window,
             ipc::reveal_in_explorer,
+            ipc::open_project,
+            ipc::mcp_command,
+            ipc::wsl_memory,
             ipc::daily_totals
         ])
         .on_window_event(|window, event| match event {
@@ -108,6 +119,7 @@ fn main() {
                 events: Mutex::new(None),
                 tray: Mutex::new(TrayManager::new()),
                 interface_visible: AtomicBool::new(false),
+                mcp_enabled: AtomicBool::new(initial.mcp_enabled),
                 panel_pinned: AtomicBool::new(false),
                 data_dir: app_data,
                 app: OnceLock::new(),
@@ -126,6 +138,9 @@ fn main() {
             }
 
             spawn_sampler(handle.clone());
+            if initial.mcp_enabled {
+                mcp::start(handle.clone());
+            }
 
             // Restore remembered app volumes before anything starts playing sound.
             if audio::init_com().is_ok() {

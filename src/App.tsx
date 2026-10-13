@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { ipc, listenNavigate } from "./lib/ipc";
 import { TAB_LABEL } from "./i18n";
@@ -15,7 +15,10 @@ import { AppDetailSheet } from "./components/app-detail";
 import { HistoryTab } from "./components/history";
 
 export default function App() {
-  const { snapshot, settings, t, units, connected, pendingQuit, openDetail } = useStore();
+  const { snapshot, settings, t, units, connected, pendingQuit, openDetail, requestQuit } = useStore();
+  // The navigate listener is registered once; it reads the newest snapshot through this.
+  const latest = useRef(snapshot);
+  latest.current = snapshot;
   const [tab, setTab] = useState(
     () => new URLSearchParams(window.location.search).get("tab") || settings.openWindowOn || "overview",
   );
@@ -50,6 +53,11 @@ export default function App() {
       if (destination === "settings") setPage("general");
       // The tray panel's app rows open that app's detail here.
       else if (destination.startsWith("app:")) openDetail(destination.slice(4));
+      // An AI assistant asked to quit an app (mcp.rs); the user answers the usual confirmation.
+      else if (destination.startsWith("quit:")) {
+        const app = latest.current?.apps.find((a) => a.key === destination.slice(5));
+        if (app) requestQuit(app);
+      }
       else setTab(destination);
     }).then((un) => (stop = un));
     return () => stop?.();

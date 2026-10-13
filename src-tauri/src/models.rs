@@ -105,6 +105,20 @@ pub struct NetworkMetric {
     pub connections: usize,
     pub history_download: Vec<f64>,
     pub history_upload: Vec<f64>,
+    /// Every listening TCP socket, with the app that holds it.
+    #[serde(default)]
+    pub listening: Vec<ListeningPort>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListeningPort {
+    pub port: u16,
+    /// What it is bound to: `0.0.0.0` or `::` takes connections from the network, `127.0.0.1`
+    /// or `::1` only from this machine.
+    pub address: String,
+    pub pid: u32,
+    pub app_key: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -268,6 +282,9 @@ pub struct AppInfo {
     /// The rules Pulse applies to it and whether it is paused, filled in after grouping.
     #[serde(default)]
     pub control: AppControl,
+    /// For a runtime grouped by project (node, python…): the project's folder.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

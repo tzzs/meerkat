@@ -77,6 +77,14 @@ export interface AdapterInfo {
   isLoopback: boolean;
 }
 
+export interface ListeningPort {
+  port: number;
+  /** `0.0.0.0` or `::` takes connections from the network; `127.0.0.1` or `::1` only from here. */
+  address: string;
+  pid: number;
+  appKey: string;
+}
+
 export interface NetworkMetric {
   downloadBytesPerSecond: number;
   uploadBytesPerSecond: number;
@@ -86,6 +94,8 @@ export interface NetworkMetric {
   connections: number;
   historyDownload: number[];
   historyUpload: number[];
+  /** Every listening TCP socket, with the app that holds it. */
+  listening: ListeningPort[];
 }
 
 export interface GpuAdapter {
@@ -215,6 +225,8 @@ export interface AppInfo {
   canQuit: boolean;
   /** The rules Pulse applies to it, and whether Pulse has paused it. */
   control: AppControl;
+  /** For a runtime grouped by project (node, python…): the project's folder. */
+  project: string | null;
 }
 
 export type Priority = "low" | "belowNormal" | "normal" | "aboveNormal" | "high";
@@ -379,6 +391,8 @@ export interface Settings {
   panel: { layout: PanelLayout; tiles: SectionConfig[] };
   window: { tabs: TabConfig[] };
   alerts: AlertThresholds;
+  /** Whether AI assistants may read Pulse over MCP. */
+  mcpEnabled: boolean;
 }
 
 export const METRIC_ORDER: MetricKind[] = [
@@ -494,4 +508,14 @@ export interface AudioState {
   inputEndpoints: AudioEndpoint[];
   render: AudioSession[];
   capture: AudioSession[];
+}
+
+/** The WSL virtual machine's memory, as Linux inside it accounts for it. */
+export interface WslMemory {
+  distros: string[];
+  totalBytes: number;
+  usedBytes: number;
+  /** File cache and reclaimable memory Linux gives back when asked. */
+  cacheBytes: number;
+  freeBytes: number;
 }

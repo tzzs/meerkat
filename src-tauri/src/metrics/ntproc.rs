@@ -22,11 +22,12 @@ use windows::core::PCWSTR;
 use windows::Wdk::System::SystemInformation::{
     NtQuerySystemInformation, SystemProcessInformation, SYSTEM_INFORMATION_CLASS,
 };
-use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
+use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation, ProcessCommandLineInformation};
+use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::Foundation::{CloseHandle, LocalFree, HLOCAL};
 use windows::Win32::Storage::FileSystem::{GetLogicalDrives, QueryDosDeviceW};
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    IsWow64Process, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
 };
 use windows::Win32::UI::Shell::CommandLineToArgvW;
 
@@ -269,6 +270,51 @@ fn nt_image_path(pid: u32) -> Option<String> {
     None
 }
 
+const SYSTEM_PAGE_FILE_INFORMATION: SYSTEM_INFORMATION_CLASS = SYSTEM_INFORMATION_CLASS(18);
+
+/// `SYSTEM_PAGEFILE_INFORMATION`: one record per page file, sizes in pages.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PageFileRecord {
+    next_entry_offset: u32,
+    total_size: u32,
+    total_in_use: u32,
+    peak_usage: u32,
+    page_file_name: UnicodeString,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<PageFileRecord>() == 32);
+
+/// The page files' total size and how much of it is in use, in bytes, summed over every page
+/// file. The Memory tab used to ask PDH for `\Paging File(_ Total)\Private Bytes`, a counter that
+/// does not exist, and so reported 0 B in use on a machine with 3.7 GB paged out.
+pub fn page_files() -> Option<(u64, u64)> {
+    const PAGE: u64 = 4096;
+    let mut buffer = vec![0u64; 512];
+    let mut needed = 0u32;
+    let status = unsafe {
+        NtQuerySystemInformation(SYSTEM_PAGE_FILE_INFORMATION, buffer.as_mut_ptr().cast(), (buffer.len() * 8) as u32, &mut needed)
+    };
+    if status.0 < 0 {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), buffer.len() * 8) };
+    let (mut total, mut used) = (0u64, 0u64);
+    let mut offset = 0usize;
+    // An empty answer (no page file at all) is a zeroed first record.
+    while offset + std::mem::size_of::<PageFileRecord>() <= bytes.len() {
+        let record: PageFileRecord = unsafe { std::ptr::read_unaligned(bytes.as_ptr().add(offset).cast()) };
+        total += u64::from(record.total_size) * PAGE;
+        used += u64::from(record.total_in_use) * PAGE;
+        if record.next_entry_offset == 0 {
+            break;
+        }
+        offset += record.next_entry_offset as usize;
+    }
+    Some((total, used))
+}
+
 /// How the kernel's device names map onto drive letters: `\Device\HarddiskVolume3` → `C:`.
 #[derive(Default)]
 struct DeviceMap {
@@ -403,6 +449,91 @@ fn split_command_line(text: &str) -> Vec<String> {
     out
 }
 
+/// `PROCESS_BASIC_INFORMATION`, declared here because the SDK's version drags in the whole PEB
+/// type for the one pointer this reads.
+#[repr(C)]
+#[derive(Default)]
+struct BasicInformation {
+    exit_status: i32,
+    peb: usize,
+    affinity_mask: usize,
+    base_priority: i32,
+    unique_process_id: usize,
+    inherited_from_unique_process_id: usize,
+}
+
+/// Where these live in a 64-bit process: `PEB.ProcessParameters`, and in the parameters,
+/// `CurrentDirectory.DosPath`. A 32-bit process keeps a 32-bit PEB and is skipped.
+const PEB_PROCESS_PARAMETERS: usize = 0x20;
+const PARAMETERS_CURRENT_DIRECTORY: usize = 0x38;
+
+/// The working directory of a process this user owns, read out of its own memory the way
+/// Process Explorer does. Only asked of runtimes (node, python…), whose working directory is
+/// often the only clue to which project they are running.
+fn current_directory(pid: u32) -> Option<String> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, false, pid) }.ok()?;
+    let read = || -> Option<String> {
+        let mut wow64 = windows::core::BOOL(0);
+        unsafe { IsWow64Process(handle, &mut wow64) }.ok()?;
+        if wow64.as_bool() {
+            return None;
+        }
+        let mut basic = BasicInformation::default();
+        let status = unsafe {
+            NtQueryInformationProcess(
+                handle,
+                ProcessBasicInformation,
+                (&mut basic as *mut BasicInformation).cast(),
+                std::mem::size_of::<BasicInformation>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if status.0 < 0 || basic.peb == 0 {
+            return None;
+        }
+        let mut parameters = 0usize;
+        unsafe {
+            ReadProcessMemory(
+                handle,
+                (basic.peb + PEB_PROCESS_PARAMETERS) as *const core::ffi::c_void,
+                (&mut parameters as *mut usize).cast(),
+                std::mem::size_of::<usize>(),
+                None,
+            )
+        }
+        .ok()?;
+        let mut path = UnicodeString { length: 0, maximum_length: 0, buffer: std::ptr::null_mut() };
+        unsafe {
+            ReadProcessMemory(
+                handle,
+                (parameters + PARAMETERS_CURRENT_DIRECTORY) as *const core::ffi::c_void,
+                (&mut path as *mut UnicodeString).cast(),
+                std::mem::size_of::<UnicodeString>(),
+                None,
+            )
+        }
+        .ok()?;
+        if path.length == 0 || path.length % 2 != 0 || path.buffer.is_null() {
+            return None;
+        }
+        let mut units = vec![0u16; path.length as usize / 2];
+        unsafe {
+            ReadProcessMemory(
+                handle,
+                path.buffer as *const core::ffi::c_void,
+                units.as_mut_ptr().cast(),
+                path.length as usize,
+                None,
+            )
+        }
+        .ok()?;
+        Some(String::from_utf16_lossy(&units))
+    };
+    let result = read();
+    let _ = unsafe { CloseHandle(handle) };
+    result
+}
+
 fn can_terminate(pid: u32) -> bool {
     match unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) } {
         Ok(handle) => {
@@ -421,6 +552,8 @@ pub struct Identity {
     pub args: Vec<String>,
     /// Whether this user may end it. Asked of Windows rather than guessed from the session.
     pub can_terminate: bool,
+    /// For a runtime (node, python…): the project folder it is working for.
+    pub project: Option<String>,
 }
 
 /// A process as one tick sees it.
@@ -481,12 +614,27 @@ impl Processes {
             let identity = match self.known.get(&key) {
                 Some(known) => known.clone(),
                 None => {
+                    let args = command_line(process.pid).unwrap_or_default();
+                    let project = if super::projects::is_runtime(&process.name) {
+                        let cwd = current_directory(process.pid);
+                        let home = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+                        super::projects::project_root(
+                            &args,
+                            cwd.as_deref(),
+                            &super::projects::has_project_file,
+                            home.as_deref(),
+                        )
+                        .map(|root| root.to_string_lossy().into_owned())
+                    } else {
+                        None
+                    };
                     let identity = Identity {
                         exe: nt_image_path(process.pid)
                             .map(|nt| self.devices.dos_path(&nt))
                             .unwrap_or_default(),
-                        args: command_line(process.pid).unwrap_or_default(),
+                        args,
                         can_terminate: can_terminate(process.pid),
+                        project,
                     };
                     self.known.insert(key, identity.clone());
                     identity
@@ -665,6 +813,16 @@ mod tests {
         assert_eq!(filetime_to_unix_ms(0), None, "processes started at boot report no time");
     }
 
+    /// Checked against `Win32_PageFileUsage` on this machine (25 GB allocated, 3.7 GB in use).
+    #[test]
+    fn page_file_usage_is_read_and_is_never_more_than_the_size() {
+        let (total, used) = page_files().expect("any user may ask");
+        assert!(used <= total);
+        if total > 0 {
+            assert!(total >= 16 << 20, "a page file is at least a few megabytes");
+        }
+    }
+
     #[test]
     fn command_lines_split_the_way_the_shell_splits_them() {
         assert_eq!(
@@ -686,6 +844,12 @@ mod tests {
         assert_eq!(mine.identity.exe.to_lowercase(), exe, "the path comes back as a drive path");
         assert!(mine.identity.can_terminate, "a process may end itself");
         assert!(mine.process.working_set > 0);
+        let here = std::env::current_dir().unwrap().to_string_lossy().to_lowercase();
+        assert_eq!(
+            current_directory(me).map(|d| d.trim_end_matches('\\').to_lowercase()),
+            Some(here.trim_end_matches('\\').to_string()),
+            "a process's working directory is read out of its own memory"
+        );
         assert!(rows.iter().any(|r| r.process.pid == 4 && r.identity.exe.is_empty()), "System has no file");
     }
 }

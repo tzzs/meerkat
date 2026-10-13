@@ -43,6 +43,8 @@ pub struct ProcSample {
     pub private_bytes: u64,
     pub threads: u32,
     pub handles: u32,
+    /// For a runtime (node, python…): the project folder it is working for.
+    pub project: Option<String>,
 }
 
 impl ProcSample {
@@ -100,6 +102,7 @@ fn sample(s: Sampled, created: &HashMap<u32, u64>) -> ProcSample {
         private_bytes: process.private_bytes,
         threads: process.threads,
         handles: process.handles,
+        project: identity.project,
         name: process.name,
         exe: identity.exe,
         dir,
@@ -317,6 +320,7 @@ pub fn group(
         services: Vec<String>,
         /// The processes the others were folded into: the app as the user started it.
         roots: Vec<u32>,
+        project: Option<String>,
     }
 
     let mut groups: HashMap<String, Agg> = HashMap::new();
@@ -348,6 +352,9 @@ pub fn group(
         g.pids.push(p.pid);
         if !g.roots.contains(&root) {
             g.roots.push(root);
+        }
+        if g.project.is_none() {
+            g.project = by_pid.get(&root).and_then(|r| r.project.clone());
         }
         for service in services.get(&p.pid).into_iter().flatten() {
             if !g.services.contains(&service.display_name) {
@@ -438,6 +445,7 @@ pub fn group(
             services: g.services,
             can_quit,
             control: Default::default(),
+            project: g.project,
         });
     }
 
@@ -474,6 +482,7 @@ pub fn group(
             services: Vec::new(),
             can_quit: false,
             control: Default::default(),
+            project: None,
         });
     }
 
@@ -526,6 +535,13 @@ fn resolve_anchor(
     }
 
     let lower = exe.to_lowercase();
+    // One `node.exe` serves every project on the machine; the project is what the row is.
+    if super::projects::is_runtime(base) {
+        if let Some(project) = &current.project {
+            let folder = project.rsplit(['\\', '/']).next().unwrap_or(project);
+            return (format!("{lower}|project:{}", project.to_lowercase()), exe.clone(), format!("{folder} · {stem}"), current.pid);
+        }
+    }
     if base.eq_ignore_ascii_case("svchost.exe") {
         // One executable, a hundred unrelated services. The services a host runs are what it
         // is, so they make the key and the first of them names the row.
@@ -622,6 +638,7 @@ mod tests {
             private_bytes: 0,
             threads: 1,
             handles: 1,
+            project: None,
         }
     }
 
@@ -631,11 +648,7 @@ mod tests {
     }
 
     fn empty_tcp() -> TcpOwnership {
-        TcpOwnership {
-            connections: HashMap::new(),
-            listening: HashMap::new(),
-            total_connections: 0,
-        }
+        TcpOwnership::default()
     }
 
     fn group_of(procs: &[ProcSample], tcp: TcpOwnership, windows: &[TopWindow]) -> Vec<AppInfo> {
@@ -724,6 +737,25 @@ mod tests {
         assert_eq!(group_of(&[mine], empty_tcp(), &[])[0].kind, AppKind::Background);
     }
 
+    /// Three worktrees each running a dev server were one "Node.js" row with three ports.
+    #[test]
+    fn runtime_processes_split_by_project() {
+        let node = r"C:\Program Files\nodejs\node.exe";
+        let in_project = |pid: u32, project: &str| ProcSample { project: Some(project.to_string()), ..child(pid, 1, node) };
+        let procs = vec![
+            in_project(100, r"E:\work\site"),
+            ProcSample { ppid: Some(100), ..in_project(101, r"E:\work\site") },
+            in_project(200, r"E:\work\api"),
+            child(300, 1, node),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 3, "two projects and one node with no project");
+        let site = apps.iter().find(|a| a.name == "site · node").expect("named after the project folder");
+        assert_eq!(site.process_count, 2);
+        assert_eq!(site.project.as_deref(), Some(r"E:\work\site"));
+        assert!(site.key.ends_with(r"|project:e:\work\site"));
+    }
+
     /// A row Windows will not let this user end must not offer to end it.
     #[test]
     fn a_group_nobody_may_end_says_so() {
@@ -798,11 +830,7 @@ mod tests {
         let procs = vec![proc(300, "", "svchost.exe", false)];
         let mut listening = HashMap::new();
         listening.insert(300u32, vec![445u16]);
-        let tcp = TcpOwnership {
-            connections: HashMap::new(),
-            listening,
-            total_connections: 1,
-        };
+        let tcp = TcpOwnership { listening, total_connections: 1, ..Default::default() };
 
         let apps = group_of(&procs, tcp, &[]);
 

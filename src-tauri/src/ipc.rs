@@ -29,6 +29,8 @@ pub struct AppState {
     pub events: Mutex<Option<(std::time::Instant, u64, Vec<crate::events::SystemEvent>)>>,
     pub tray: Mutex<TrayManager>,
     pub interface_visible: AtomicBool,
+    /// Mirrors `Settings::mcp_enabled` for the pipe server, which checks it on every question.
+    pub mcp_enabled: AtomicBool,
     pub panel_pinned: AtomicBool,
     pub data_dir: PathBuf,
     pub app: OnceLock<AppHandle>,
@@ -84,8 +86,26 @@ pub fn settings_set(state: State<'_, AppState>, app: AppHandle, next: Settings) 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_skip_taskbar(!saved.show_in_taskbar);
     }
+    state.mcp_enabled.store(saved.mcp_enabled, Ordering::Relaxed);
+    if saved.mcp_enabled {
+        crate::mcp::start(app.clone());
+    }
     let _ = app.emit("settings-changed", ());
     Ok(saved)
+}
+
+/// What the WSL virtual machine's memory is made of, asked of Linux when the vmmemWSL row is
+/// opened. Off the main thread: `wsl.exe` can take a moment.
+#[tauri::command]
+pub async fn wsl_memory() -> Option<crate::wsl::WslMemory> {
+    tauri::async_runtime::spawn_blocking(crate::wsl::memory).await.ok().flatten()
+}
+
+/// The line that adds Pulse to Claude Code, with this copy of Pulse's real path in it.
+#[tauri::command]
+pub fn mcp_command() -> String {
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "pulse.exe".into());
+    format!("claude mcp add pulse -- \"{exe}\" --mcp")
 }
 
 #[tauri::command]
@@ -253,6 +273,23 @@ pub fn reveal_in_explorer(state: State<'_, AppState>, path: String) -> Result<()
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Opens an app's project folder in Explorer. Looked up by app key, so the only folders this can
+/// open are ones Pulse itself worked out from a running process.
+#[tauri::command]
+pub fn open_project(state: State<'_, AppState>, key: String) -> Result<(), String> {
+    let folder = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|snapshot| snapshot.apps.iter().find(|a| a.key == key).and_then(|a| a.project.clone()))
+        .ok_or("no project for that app")?;
+    if !std::path::Path::new(&folder).is_dir() {
+        return Err("the folder is gone".into());
+    }
+    std::process::Command::new("explorer.exe").arg(&folder).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Bytes per local day for the last `days` days, oldest first, zero for days Pulse did not run.

@@ -322,6 +322,7 @@ mod tests {
             services: Vec::new(),
             can_quit: true,
             control: Default::default(),
+            project: None,
         }
     }
 

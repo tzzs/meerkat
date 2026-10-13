@@ -17,7 +17,6 @@ export function useLoaded<T>(load: () => Promise<T>, initial: T, deps: unknown[]
       window.clearInterval(timer);
     };
     // The loader is a new closure every render; what it reads is what the caller lists in deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
   return value;
 }

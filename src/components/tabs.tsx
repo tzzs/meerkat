@@ -11,6 +11,7 @@ import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
 import type { AppInfo, DailyTotal, HistorySeries, Insight, MetricKind } from "../lib/types";
 import { capacityTrend, sumDays } from "../lib/totals";
+import { portMatches, portRows } from "../lib/ports";
 import { useLoaded } from "../lib/use-loaded";
 import { appLabel, listedApps } from "../lib/apps";
 import type { Translate } from "../i18n";
@@ -735,12 +736,94 @@ export function NetworkTab() {
         </Card>
       )}
 
+      {sectionShown(shown, "ports") && <PortsCard />}
+
       {sectionShown(shown, "connections") && (
         <Card title={t("overview.topApps")} right={<p className="hint faint">{t("network.perAppHelp")}</p>}>
           <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * Who is listening, on which port, reachable from where. The question a developer asks of
+ * netstat several times a day ("what is holding 3000?") answered by name, with the project the
+ * process is serving and the way to stop it.
+ */
+function PortsCard() {
+  const { snapshot, t, openDetail, requestQuit } = useStore();
+  const [query, setQuery] = useState("");
+  const [mine, setMine] = useTabState("network", "portsMine", true);
+  if (!snapshot) return null;
+  const rows = portRows(snapshot.network.listening ?? [], snapshot.apps)
+    .filter((row) => !mine || row.app?.canQuit)
+    .filter((row) => portMatches(row, query));
+  const scope = (row: (typeof rows)[number]) =>
+    row.scope === "network" ? t("network.scopeAll") : row.scope === "local" ? t("network.scopeLocal") : row.address;
+  return (
+    <Card
+      title={t("network.ports")}
+      right={
+        <div className="flex items-center gap-2">
+          <input
+            className="find"
+            placeholder={t("network.portsFilter")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            spellCheck={false}
+          />
+          <ToggleGroup type="single" value={mine ? "mine" : "all"} onValueChange={(next) => next && setMine(next === "mine")}>
+            <ToggleChip value="mine">{t("network.portsMine")}</ToggleChip>
+            <ToggleChip value="all">{t("history.allEvents")}</ToggleChip>
+          </ToggleGroup>
+        </div>
+      }
+    >
+      <p className="hint faint">{t("network.portsHelp")}</p>
+      {rows.length === 0 ? (
+        <p className="empty faint">{t("network.portsEmpty")}</p>
+      ) : (
+        <div className="rows">
+          {rows.map((row) => {
+            const label = row.app ? appLabel(row.app, t) : `pid ${row.pid}`;
+            return (
+              <div
+                key={`${row.port}:${row.pid}`}
+                className="port-row clickable"
+                role="button"
+                tabIndex={0}
+                onClick={() => row.app && openDetail(row.app.key)}
+                onKeyDown={(event) => event.key === "Enter" && row.app && openDetail(row.app.key)}
+              >
+                <span className="port-number num">{row.port}</span>
+                <span className={`port-scope ${row.scope === "network" ? "open" : ""}`}>{scope(row)}</span>
+                <AppIcon name={label} seed={row.app?.key ?? String(row.pid)} exePath={row.app?.exePath || undefined} />
+                <span className="port-app">
+                  <span className="row-name">{label}</span>
+                  {row.app?.project && <span className="row-sub">{row.app.project}</span>}
+                </span>
+                {row.app?.canQuit ? (
+                  <button
+                    className="row-quit"
+                    aria-label={t("action.quitApp")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (row.app) requestQuit(row.app);
+                    }}
+                  >
+                    ×
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
   );
 }
 

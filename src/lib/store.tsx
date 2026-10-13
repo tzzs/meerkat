@@ -54,6 +54,7 @@ export const fallbackSettings: Settings = {
     networkBytesPerSecond: 20000000,
     sustainedSeconds: 30,
   },
+  mcpEnabled: false,
 };
 
 /** Enough to name an app that is not running: its key, label, file and kind. */

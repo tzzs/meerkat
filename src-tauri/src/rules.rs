@@ -298,6 +298,7 @@ mod tests {
             services: Vec::new(),
             can_quit: true,
             control: AppControl::default(),
+            project: None,
         }
     }
 }

@@ -5,7 +5,7 @@ import { ipc } from "../lib/ipc";
 import { useStore, type AppSeed } from "../lib/store";
 import { appLabel } from "../lib/apps";
 import { useLoaded } from "../lib/use-loaded";
-import type { AppInfo, AppPoint, Priority, ProcessRow } from "../lib/types";
+import type { AppInfo, AppPoint, Priority, ProcessRow, WslMemory } from "../lib/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { AppIcon, Chart, Stat } from "./ui";
 import { Button } from "./ui/button";
@@ -52,6 +52,7 @@ function ghostOf(seed: AppSeed): AppInfo {
     services: [],
     canQuit: false,
     control: { efficiency: false, priority: null, muteAlerts: false, paused: false },
+    project: null,
   };
 }
 
@@ -104,6 +105,47 @@ function AppHistory({ appKey }: { appKey: string }) {
 }
 
 const PRIORITIES: Priority[] = ["low", "belowNormal", "normal", "aboveNormal", "high"];
+
+/**
+ * vmmemWSL is one row of several gigabytes. Linux inside it knows how much of that is programs
+ * and how much is file cache it would give back; asked once when this sheet opens.
+ */
+function WslBreakdown() {
+  const { t, units } = useStore();
+  const [memory, setMemory] = useState<WslMemory | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void ipc.wslMemory().then((m) => alive && setMemory(m));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (memory === undefined) return <p className="empty faint">…</p>;
+  if (memory === null) return null;
+  const parts: [string, number, string][] = [
+    [t("wsl.used"), memory.usedBytes, "var(--m-memory)"],
+    [t("wsl.cache"), memory.cacheBytes, "color-mix(in oklab, var(--m-memory) 45%, transparent)"],
+    [t("wsl.free"), memory.freeBytes, "var(--surface-3)"],
+  ];
+  return (
+    <section>
+      <h4 className="section-title">{t("wsl.title")}</h4>
+      <div className="flex h-2.5 overflow-hidden rounded-full">
+        {parts.map(([label, bytes, color]) => (
+          <span key={label} style={{ flexGrow: bytes, background: color }} />
+        ))}
+      </div>
+      <div className="legend mt-1.5">
+        {parts.map(([label, bytes]) => (
+          <span key={label}>
+            {label} {formatBytes(bytes, units)}
+          </span>
+        ))}
+      </div>
+      <p className="hint faint">{t("wsl.help", { distros: memory.distros.join(", ") })}</p>
+    </section>
+  );
+}
 
 /**
  * How the app runs, remembered: efficiency mode, a priority, alerts muted, all applied again to
@@ -290,9 +332,25 @@ export function AppDetailSheet() {
           </section>
           )}
 
+          {running && app.key === "image:vmmemwsl" && <WslBreakdown />}
+
           {running && <AppControls app={app} onNotice={say} />}
 
           <AppHistory appKey={app.key} />
+
+          {app.project && (
+            <section>
+              <h4 className="section-title">{t("detail.project")}</h4>
+              <div className="flex items-center gap-1">
+                <code className="min-w-0 flex-1 truncate font-num text-[11.5px] text-ink-2">{app.project}</code>
+                <Hint label={t("detail.openFolder")}>
+                  <Button variant="tool" aria-label={t("detail.openFolder")} onClick={() => ipc.openProject(app.key)}>
+                    <FolderOpen aria-hidden className="size-3.5" />
+                  </Button>
+                </Hint>
+              </div>
+            </section>
+          )}
 
           {app.exePath && (
             <section>

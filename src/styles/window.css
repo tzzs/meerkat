@@ -870,3 +870,41 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- listening ports ---------- */
+
+.port-row {
+  display: grid;
+  grid-template-columns: 64px 104px 22px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 6px 4px;
+  border-radius: var(--r-sm);
+}
+.port-row:hover {
+  background: var(--surface-2);
+}
+.port-row:hover .row-quit {
+  opacity: 1;
+}
+.port-row.clickable:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
+.port-number {
+  font-size: 13px;
+  font-weight: 650;
+}
+.port-scope {
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* Reachable from other machines: worth noticing, not alarming. */
+.port-scope.open {
+  color: var(--m-warn);
+}
+.port-app {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}

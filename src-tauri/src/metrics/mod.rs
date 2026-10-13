@@ -10,6 +10,7 @@ pub mod grouping;
 pub mod netinfo;
 pub mod ntproc;
 pub mod pdh;
+pub mod projects;
 pub mod services;
 pub mod wins;
 
@@ -37,11 +38,10 @@ use pdh::PdhQuery;
 
 const LIVE_WINDOW: usize = 240;
 
-const PDH_SET: [(&str, &str); 5] = [
+const PDH_SET: [(&str, &str); 4] = [
     ("cache", r"\Memory\Cache Bytes"),
     ("paged_pool", r"\Memory\Pool Paged Resident Bytes"),
     ("nonpaged_pool", r"\Memory\Pool Nonpaged Bytes"),
-    ("pagefile", r"\Paging File(_ Total)\Private Bytes"),
     ("queue", r"\System\Processor Queue Length"),
 ];
 
@@ -203,10 +203,27 @@ impl Sampler {
             self.services.by_pid(),
         );
 
+        // Each listening socket, named by the app its process was grouped into.
+        let owner: HashMap<u32, &str> = apps
+            .iter()
+            .flat_map(|app| app.pids.iter().map(move |pid| (*pid, app.key.as_str())))
+            .collect();
+        let listening: Vec<ListeningPort> = tcp
+            .listeners
+            .iter()
+            .map(|l| ListeningPort {
+                port: l.port,
+                address: l.address.clone(),
+                pid: l.pid,
+                app_key: owner.get(&l.pid).map(|key| key.to_string()).unwrap_or_default(),
+            })
+            .collect();
+
         let mut cpu = self.cpu();
         let mut memory = self.memory();
         let mut disk = self.disk(elapsed);
         let mut network = self.network(elapsed, &tcp);
+        network.listening = listening;
         let mut gpu = self.gpu();
         let mut battery_metric = self.battery();
         let mut temperature = self.temperature();
@@ -382,7 +399,7 @@ impl Sampler {
         };
 
         let committed = commit_limit.saturating_sub(commit_free);
-        let pagefile_used = self.pdh_value("pagefile").unwrap_or(0.0).max(0.0) as u64;
+        let page_files = ntproc::page_files();
         let paged_pool = self
             .pdh_value("paged_pool")
             .map(|v| v.max(0.0) as u64)
@@ -395,8 +412,10 @@ impl Sampler {
             cached_bytes: self.pdh_value("cache").unwrap_or(0.0).max(0.0) as u64,
             committed_bytes: committed,
             commit_limit_bytes: commit_limit,
-            pagefile_total_bytes: commit_limit.saturating_sub(total),
-            pagefile_used_bytes: pagefile_used,
+            // The commit limit less physical memory is the page file's size near enough when the
+            // kernel will not say; it says on every Windows Pulse supports.
+            pagefile_total_bytes: page_files.map_or(commit_limit.saturating_sub(total), |(size, _)| size),
+            pagefile_used_bytes: page_files.map_or(0, |(_, used)| used),
             paged_pool_bytes: paged_pool,
             nonpaged_pool_bytes: self.pdh_value("nonpaged_pool").unwrap_or(0.0).max(0.0) as u64,
             pressure_percent: if ok { status.dwMemoryLoad as f64 } else { 0.0 },
@@ -523,6 +542,7 @@ impl Sampler {
             connections: tcp.total_connections,
             history_download: Vec::new(),
             history_upload: Vec::new(),
+            listening: Vec::new(),
         }
     }
 

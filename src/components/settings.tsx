@@ -204,7 +204,48 @@ function General({ settings, save }: { settings: Settings; save: (s: Settings) =
       </Row>
 
       <RulesList />
+      <McpSection />
     </div>
+  );
+}
+
+/**
+ * Off by default. What an assistant reads may go to a model elsewhere, and command lines and
+ * window titles can hold things worth keeping, so the switch says so next to itself.
+ */
+function McpSection() {
+  const { settings, save, t } = useStore();
+  const [command, setCommand] = useState("");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => void ipc.mcpCommand().then(setCommand), []);
+  return (
+    <>
+      <h4 className="section-title">{t("settings.mcp")}</h4>
+      <Row label={t("settings.mcpEnabled")}>
+        <input
+          type="checkbox"
+          checked={settings.mcpEnabled}
+          onChange={(e) => save({ ...settings, mcpEnabled: e.target.checked })}
+        />
+      </Row>
+      <p className="hint faint">{t("settings.mcpHelp")}</p>
+      {settings.mcpEnabled && command && (
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-sm bg-surface-2 px-2 py-1 font-num text-[11px]">{command}</code>
+          <Button
+            variant="chip"
+            onClick={() =>
+              void navigator.clipboard?.writeText(command).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              })
+            }
+          >
+            {copied ? t("detail.copied") : t("settings.mcpCopy")}
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
