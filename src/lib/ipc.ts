@@ -1,4 +1,4 @@
-import type { AudioState, HistorySeries, Insight, RankingRow, Settings, Snapshot } from "./types";
+import type { AudioState, DailyTotal, HistorySeries, Insight, ProcessRow, RankingRow, Settings, Snapshot } from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -51,6 +51,22 @@ export const ipc = {
   historyRanking: async (hours: number) =>
     (await call<RankingRow[]>("history_ranking", { hours })) ?? [],
   insights: async () => (await call<Insight[]>("insights")) ?? [],
+  /** The processes behind one app row, one each, heaviest first. */
+  appProcesses: async (key: string) => (await call<ProcessRow[]>("app_processes", { key })) ?? [],
+  /** Brings one of an app's windows to the front; null when it worked, else the reason. */
+  focusWindow: async (hwnd: number): Promise<string | null> => {
+    if (!inTauri) return null;
+    const { invoke } = await import("@tauri-apps/api/core");
+    try {
+      await invoke("focus_window", { hwnd });
+      return null;
+    } catch (error) {
+      return String(error);
+    }
+  },
+  revealInExplorer: (path: string) => void call("reveal_in_explorer", { path }),
+  /** Bytes per local day, oldest first, zero for days Pulse was not running. */
+  dailyTotals: async (days: number) => (await call<DailyTotal[]>("daily_totals", { days })) ?? [],
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
   quitApp: (key: string, force: boolean) =>
     call<{ asked: number; forceUsed: boolean; error: string | null }>("quit_app", { key, force }),

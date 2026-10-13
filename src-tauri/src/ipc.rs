@@ -19,6 +19,9 @@ pub struct AppState {
     pub latest: RwLock<Option<Snapshot>>,
     pub settings: SettingsStore,
     pub history: Mutex<History>,
+    pub daily: Mutex<crate::daily::Daily>,
+    /// Every process of the last tick; the snapshot only carries them grouped into apps.
+    pub processes: RwLock<Vec<crate::metrics::grouping::ProcSample>>,
     pub watcher: Mutex<Watcher>,
     pub tray: Mutex<TrayManager>,
     pub interface_visible: AtomicBool,
@@ -177,6 +180,93 @@ pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitRes
             None
         },
     }
+}
+
+/// The processes of one app, one row each, heaviest first. The snapshot carries apps already
+/// grouped, which is what every list needs; the detail view is the one place that opens a group.
+#[tauri::command]
+pub fn app_processes(state: State<'_, AppState>, key: String) -> Vec<crate::models::ProcessRow> {
+    let pids: std::collections::HashSet<u32> = match state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|snapshot| snapshot.apps.iter().find(|a| a.key == key).map(|a| a.pids.iter().copied().collect()))
+    {
+        Some(pids) => pids,
+        None => return Vec::new(),
+    };
+    let processes = state.processes.read().unwrap_or_else(|p| p.into_inner());
+    let mut rows: Vec<crate::models::ProcessRow> =
+        processes.iter().filter(|p| pids.contains(&p.pid)).map(|p| p.row()).collect();
+    rows.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+    rows
+}
+
+/// Brings one of an app's windows to the front, restoring it if it was minimised. Only windows
+/// the last sample listed are accepted, so the page cannot be used to poke at arbitrary handles.
+#[tauri::command]
+pub fn focus_window(state: State<'_, AppState>, hwnd: isize) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    let known = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.apps.iter().any(|a| a.windows.iter().any(|w| w.hwnd == hwnd)));
+    if !known {
+        return Err("not a window Pulse listed".into());
+    }
+    let handle = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
+    unsafe {
+        if !IsWindow(Some(handle)).as_bool() {
+            return Err("that window is gone".into());
+        }
+        if IsIconic(handle).as_bool() {
+            let _ = ShowWindow(handle, SW_RESTORE);
+        }
+        // Pulse is the foreground app at the moment of the click, which is what lets Windows
+        // honour this rather than flashing the taskbar button instead.
+        if !SetForegroundWindow(handle).as_bool() {
+            return Err("Windows kept the current window in front".into());
+        }
+    }
+    Ok(())
+}
+
+/// Opens Explorer on the folder holding an executable, with the file selected. The path must be
+/// one Pulse itself reported: it ends up on a command line, and only paths that came from the
+/// process table are known to be plain file paths.
+#[tauri::command]
+pub fn reveal_in_explorer(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let known = state
+        .processes
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|p| !p.exe.is_empty() && p.exe.eq_ignore_ascii_case(&path));
+    if !known || path.contains('"') || !std::path::Path::new(&path).is_file() {
+        return Err("not a file Pulse listed".into());
+    }
+    std::process::Command::new("explorer.exe")
+        // Explorer reads `/select,"C:\a b\c.exe"` itself; Rust's own quoting of the whole
+        // argument would hand it a string it does not parse.
+        .raw_arg(format!("/select,\"{path}\""))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Bytes per local day for the last `days` days, oldest first, zero for days Pulse did not run.
+#[tauri::command]
+pub fn daily_totals(state: State<'_, AppState>, days: u32) -> Vec<crate::models::DailyTotal> {
+    let today = crate::metrics::local_day(crate::history::now_seconds() * 1000);
+    state
+        .daily
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .recent(today, days.clamp(1, 120), crate::metrics::local_day_start_ms)
 }
 
 #[tauri::command]

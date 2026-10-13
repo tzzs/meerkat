@@ -2,6 +2,7 @@
 
 mod alerts;
 mod audio;
+mod daily;
 mod history;
 mod icons;
 mod ipc;
@@ -20,6 +21,7 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::alerts::Watcher;
+use crate::daily::Daily;
 use crate::history::History;
 use crate::ipc::AppState;
 use crate::metrics::Sampler;
@@ -55,7 +57,11 @@ fn main() {
             ipc::audio_set_volume,
             ipc::audio_set_endpoint,
             ipc::app_icon,
-            ipc::relaunch_elevated
+            ipc::relaunch_elevated,
+            ipc::app_processes,
+            ipc::focus_window,
+            ipc::reveal_in_explorer,
+            ipc::daily_totals
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
@@ -83,6 +89,8 @@ fn main() {
                 latest: RwLock::new(None),
                 settings,
                 history: Mutex::new(History::open(&app_data)),
+                daily: Mutex::new(Daily::open(&app_data)),
+                processes: RwLock::new(Vec::new()),
                 watcher: Mutex::new(Watcher::open(&app_data)),
                 tray: Mutex::new(TrayManager::new()),
                 interface_visible: AtomicBool::new(false),
@@ -155,22 +163,40 @@ fn spawn_sampler(app: AppHandle) {
         .spawn(move || {
             let state = app.state::<AppState>();
             let _ = state.app.set(app.clone());
+            // WinRT's battery report is read on this thread, and WinRT needs COM.
+            if let Err(error) = audio::init_com() {
+                eprintln!("sampler COM: {error}");
+            }
             let mut sampler = Sampler::new();
+            {
+                let daily = state.daily.lock().unwrap_or_else(|p| p.into_inner());
+                let today = metrics::local_day(history::now_seconds() * 1000);
+                if let Some(totals) = daily.day(today) {
+                    sampler.restore_day(today, totals);
+                }
+            }
             loop {
                 let settings = state.settings.get();
                 let snapshot = sampler.sample();
 
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
+                *state.processes.write().unwrap_or_else(|p| p.into_inner()) = sampler.processes().to_vec();
                 state.history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot);
+                {
+                    let (day, totals) = sampler.day_totals();
+                    state.daily.lock().unwrap_or_else(|p| p.into_inner()).record(day, totals);
+                }
 
                 for insight in state.watcher.lock().unwrap_or_else(|p| p.into_inner()).evaluate(&snapshot, &settings) {
                     let _ = app.emit("insight", &insight);
                     if settings.alerts.enabled {
+                        let chinese = speaks_chinese(&settings);
+                        let separator = if chinese { "：" } else { ": " };
                         let _ = app
                             .notification()
                             .builder()
-                            .title(format!("Pulse: {}", insight.app_name))
-                            .body(humanize(&insight))
+                            .title(format!("Pulse{separator}{}", insight.app_name))
+                            .body(humanize(&insight, chinese))
                             .show();
                     }
                 }
@@ -246,30 +272,44 @@ fn dump_for_dev_browser(state: &AppState, snapshot: &models::Snapshot) {
     }
 }
 
-fn humanize(insight: &models::Insight) -> String {
-    match insight.kind {
-        models::InsightKind::HighCpu => format!(
-            "has used {}% of the CPU for {}s",
-            insight.value.round(),
-            insight.sustained_seconds
+/// Whether notifications should be in Chinese: the language setting, or Windows' own display
+/// language when it is left on automatic, which is also what the window follows.
+fn speaks_chinese(settings: &settings::Settings) -> bool {
+    match settings.language {
+        settings::Language::ZhHans => true,
+        settings::Language::En => false,
+        settings::Language::Auto => {
+            const LANG_CHINESE: u16 = 0x04;
+            let ui = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+            ui & 0x3ff == LANG_CHINESE
+        }
+    }
+}
+
+/// The notification body. The window already said these things in both languages; the
+/// notifications were English only, so a Chinese desktop got English toasts.
+fn humanize(insight: &models::Insight, chinese: bool) -> String {
+    let mb = |bytes: f64| bytes / 1_048_576.0;
+    let (value, seconds) = (insight.value, insight.sustained_seconds);
+    match (insight.kind, chinese) {
+        (models::InsightKind::HighCpu, false) => format!("has used {}% of the CPU for {seconds}s", value.round()),
+        (models::InsightKind::HighCpu, true) => format!("已持续 {seconds} 秒占用 {}% CPU", value.round()),
+        (models::InsightKind::GrowingMemory, false) => format!("grew by {:.0} MB and is still climbing", mb(value)),
+        (models::InsightKind::GrowingMemory, true) => format!("内存增长了 {:.0} MB，还在上涨", mb(value)),
+        (models::InsightKind::HeavyDisk, false) => {
+            format!("has moved {:.1} MB/s to disk for {seconds}s", mb(value))
+        }
+        (models::InsightKind::HeavyDisk, true) => format!("已持续 {seconds} 秒读写磁盘 {:.1} MB/s", mb(value)),
+        (models::InsightKind::HeavyNetwork, false) => format!(
+            "this machine has been transferring {:.1} MB/s for {seconds}s, and this app holds the most connections",
+            mb(value)
         ),
-        models::InsightKind::GrowingMemory => format!(
-            "grew by {:.0} MB and is still climbing",
-            insight.value / 1_048_576.0
-        ),
-        models::InsightKind::HeavyDisk => format!(
-            "has moved {:.1} MB/s to disk for {}s",
-            insight.value / 1_048_576.0,
-            insight.sustained_seconds
-        ),
-        models::InsightKind::HeavyNetwork => format!(
-            "this machine has been transferring {:.1} MB/s for {}s, and this app holds the most connections",
-            insight.value / 1_048_576.0,
-            insight.sustained_seconds
-        ),
-        models::InsightKind::Heat => format!(
-            "this machine reached {:.0}°C, and this app is using the most CPU",
-            insight.value
-        ),
+        (models::InsightKind::HeavyNetwork, true) => {
+            format!("整机已持续 {seconds} 秒传输 {:.1} MB/s，这个应用的网络连接最多", mb(value))
+        }
+        (models::InsightKind::Heat, false) => {
+            format!("this machine reached {value:.0}°C, and this app is using the most CPU")
+        }
+        (models::InsightKind::Heat, true) => format!("整机温度达到 {value:.0}°C，此刻这个应用占用 CPU 最多"),
     }
 }

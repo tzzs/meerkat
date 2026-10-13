@@ -154,6 +154,50 @@ pub struct BatteryMetric {
     pub cycle_count: Option<u32>,
     pub source: Availability,
     pub history: Vec<f64>,
+    /// One point per week from Windows' own battery report, back to when it started keeping
+    /// one: how much the battery holds when full, against what it held new.
+    pub capacity_history: Vec<CapacityPoint>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CapacityPoint {
+    pub at_ms: u64,
+    pub design_wh: f64,
+    pub full_charge_wh: f64,
+    pub cycle_count: Option<u32>,
+}
+
+/// One process of an app, for the app's detail view.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessRow {
+    pub pid: u32,
+    pub parent_pid: Option<u32>,
+    pub name: String,
+    pub exe_path: String,
+    pub command_line: Vec<String>,
+    pub cpu_percent: f64,
+    pub memory_bytes: u64,
+    pub private_bytes: u64,
+    pub read_bytes_total: u64,
+    pub write_bytes_total: u64,
+    pub threads: u32,
+    pub handles: u32,
+    pub started_at_ms: Option<u64>,
+    pub can_quit: bool,
+}
+
+/// Bytes moved on one local calendar day while Pulse was running.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyTotal {
+    /// Local midnight that starts the day, as Unix milliseconds.
+    pub day_start_ms: u64,
+    pub read_bytes: u64,
+    pub write_bytes: u64,
+    pub download_bytes: u64,
+    pub upload_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

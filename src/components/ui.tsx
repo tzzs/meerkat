@@ -22,6 +22,7 @@ import type { Translate } from "../i18n";
 import type { AppInfo, Availability } from "../lib/types";
 import { UNREADABLE_GROUP } from "../lib/types";
 import { appHint, appLabel, serviceNote } from "../lib/apps";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
 
 /**
  * The card every tab is built from. Its parts are the shadcn primitives in ./ui/card; this
@@ -470,7 +471,7 @@ export function AppTable({
   cap?: number;
   seedQuery?: string;
 }) {
-  const { requestQuit } = useStore();
+  const { requestQuit, openDetail } = useStore();
   const [query, setQuery] = useState(seedQuery ?? "");
   const [pinned, setPinned] = useState<string[]>([]);
   useEffect(() => {
@@ -617,53 +618,101 @@ export function AppTable({
           const unreadable = app.key === UNREADABLE_GROUP;
           const label = appLabel(app, t);
           const services = serviceNote(app, t);
+          const isPinned = pinned.includes(app.key);
+          const firstWindow = app.windows.find((w) => w.visible);
           return (
-            <Hint
-              key={app.key}
-              className="max-w-[420px] whitespace-pre-line text-left"
-              label={appHint(app, t)}
-            >
-              <div
-                data-index={item.index}
-                ref={virtualizer.measureElement}
-                className={`row ${pinned.includes(app.key) ? "pinned" : ""}`}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  transform: `translateY(${item.start - scrollMargin}px)`,
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setPinned((p) => (p.includes(app.key) ? p.filter((k) => k !== app.key) : [...p, app.key]));
-                }}
-              >
-                <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
-                <div className="row-main">
-                  <span className="row-name">{label}</span>
-                  <span className={`row-sub ${KIND_TONE[app.kind]}`}>
-                    {t(`kind.${app.kind}`)}
-                    {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
-                    {services ? ` · ${services}` : ""}
-                    {app.listeningPorts.length > 0
-                      ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
-                      : ""}
-                  </span>
-                </div>
-                <div className="row-meter">
-                  <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
-                </div>
-                <span className="row-value num">{unreadable ? "—" : format(app)}</span>
-                {/* Windows will not let this user end a service or another account's process,
-                    so those rows do not offer it; the hover text says why. */}
-                {app.canQuit && !unreadable && (
-                  <button className="row-quit" onClick={() => requestQuit(app)} aria-label={t("action.quitApp")}>
-                    ×
-                  </button>
-                )}
-              </div>
-            </Hint>
+            <ContextMenu key={app.key}>
+              <Hint className="max-w-[420px] whitespace-pre-line text-left" label={appHint(app, t)}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    data-index={item.index}
+                    ref={virtualizer.measureElement}
+                    className={`row clickable ${isPinned ? "pinned" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={label}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      transform: `translateY(${item.start - scrollMargin}px)`,
+                    }}
+                    onClick={() => !unreadable && openDetail(app.key)}
+                    onKeyDown={(event) => {
+                      if ((event.key === "Enter" || event.key === " ") && !unreadable) {
+                        event.preventDefault();
+                        openDetail(app.key);
+                      }
+                    }}
+                  >
+                    <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
+                    <div className="row-main">
+                      <span className="row-name">{label}</span>
+                      <span className={`row-sub ${KIND_TONE[app.kind]}`}>
+                        {t(`kind.${app.kind}`)}
+                        {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
+                        {services ? ` · ${services}` : ""}
+                        {app.listeningPorts.length > 0
+                          ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="row-meter">
+                      <Meter ratio={unreadable ? 0 : appValue(app, metric) / peak} color="var(--accent)" />
+                    </div>
+                    <span className="row-value num">{unreadable ? "—" : format(app)}</span>
+                    {/* Windows will not let this user end a service or another account's process,
+                        so those rows do not offer it; the hover text says why. */}
+                    {app.canQuit && !unreadable && (
+                      <button
+                        className="row-quit"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          requestQuit(app);
+                        }}
+                        aria-label={t("action.quitApp")}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </ContextMenuTrigger>
+              </Hint>
+              {!unreadable && (
+                <ContextMenuContent>
+                  <ContextMenuItem onSelect={() => openDetail(app.key)}>{t("action.openDetail")}</ContextMenuItem>
+                  {firstWindow && (
+                    <ContextMenuItem onSelect={() => void ipc.focusWindow(firstWindow.hwnd)}>
+                      {t("action.switchToWindow")}
+                    </ContextMenuItem>
+                  )}
+                  <ContextMenuItem
+                    onSelect={() => setPinned((p) => (isPinned ? p.filter((k) => k !== app.key) : [...p, app.key]))}
+                  >
+                    {isPinned ? t("action.unpin") : t("action.pin")}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(label)}>{t("action.copyName")}</ContextMenuItem>
+                  {app.exePath && (
+                    <>
+                      <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(app.exePath)}>
+                        {t("action.copyProcessPath")}
+                      </ContextMenuItem>
+                      <ContextMenuItem onSelect={() => ipc.revealInExplorer(app.exePath)}>{t("detail.reveal")}</ContextMenuItem>
+                    </>
+                  )}
+                  {app.canQuit && (
+                    <>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem danger onSelect={() => requestQuit(app)}>
+                        {t("action.quitApp")}
+                      </ContextMenuItem>
+                    </>
+                  )}
+                </ContextMenuContent>
+              )}
+            </ContextMenu>
           );
         })}
         {filtered.length === 0 && <p className="empty faint">{t("state.noData")}</p>}

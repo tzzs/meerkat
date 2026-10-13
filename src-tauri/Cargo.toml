@@ -45,6 +45,8 @@ features = [
   "Win32_System_Services",
   "Wdk_System_SystemInformation",
   "Wdk_System_Threading",
+  "Devices_Power",
+  "Win32_Globalization",
 ]
 
 [build-dependencies]

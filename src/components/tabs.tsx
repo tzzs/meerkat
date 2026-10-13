@@ -9,7 +9,8 @@ import {
 } from "../lib/format";
 import { ipc } from "../lib/ipc";
 import { sectionShown, useStore, visibleSections } from "../lib/store";
-import type { AppInfo, HistorySeries, Insight, MetricKind } from "../lib/types";
+import type { AppInfo, DailyTotal, HistorySeries, Insight, MetricKind } from "../lib/types";
+import { capacityTrend, sumDays } from "../lib/totals";
 import { appLabel, listedApps } from "../lib/apps";
 import type { Translate } from "../i18n";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
@@ -467,6 +468,73 @@ export function MemoryTab({ search }: { search?: string }) {
   );
 }
 
+function useDailyTotals(days: number): DailyTotal[] {
+  const [rows, setRows] = useState<DailyTotal[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => void ipc.dailyTotals(days).then((next) => alive && setRows(next));
+    load();
+    // The store moves once a minute; the live "today" figure fills the gap in between.
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [days]);
+  return rows;
+}
+
+/**
+ * Today, the last 7 days and the last 30, from whole days Pulse counted, with one bar per day.
+ * The strings for this have been in the app since the start; the per-day store behind them is
+ * what was missing, and without it a restart also used to zero "today".
+ */
+function TotalsCard({ kind }: { kind: "network" | "disk" }) {
+  const { snapshot, units, t } = useStore();
+  const rows = useDailyTotals(30);
+  if (!snapshot) return null;
+  const network = kind === "network";
+  const live = network
+    ? { download: snapshot.network.downloadBytesToday, upload: snapshot.network.uploadBytesToday }
+    : { read: snapshot.disk.readBytesToday, write: snapshot.disk.writeBytesToday };
+  const spans: [string, number][] = [
+    [t("totals.today"), 1],
+    [t("label.thisWeek"), 7],
+    [t("label.thisMonth"), 30],
+  ];
+  const pick = (sums: ReturnType<typeof sumDays>) => (network ? [sums.download, sums.upload] : [sums.read, sums.write]);
+  const labels = network ? [t("label.download"), t("label.upload")] : [t("label.read"), t("label.write")];
+  const bars = rows.map((row, index) => {
+    const isToday = index === rows.length - 1;
+    const [a, b] = pick(sumDays([row], 1, isToday ? live : undefined));
+    return a + b;
+  });
+  return (
+    <Card title={t(network ? "totals.network" : "totals.disk")}>
+      <div className="grid grid-cols-3 gap-4">
+        {spans.map(([label, days]) => {
+          const [first, second] = pick(sumDays(rows, days, live));
+          return (
+            <div key={days} className="min-w-0">
+              <div className="stat-label">{label}</div>
+              <div className="num truncate text-[15px] font-[650]">
+                {network ? "↓ " : `${labels[0]} `}
+                {formatBytes(first, units)}
+              </div>
+              <div className="num truncate text-[12px] text-ink-2">
+                {network ? "↑ " : `${labels[1]} `}
+                {formatBytes(second, units)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {bars.length > 1 && <Chart values={bars} color={TONE[kind]} variant="bars" height={48} />}
+      <p className="hint faint">{t("totals.whileRunning")}</p>
+    </Card>
+  );
+}
+
 export function DiskTab() {
   const { snapshot, settings, units, t } = useStore();
   const shown = visibleSections(settings, "disk");
@@ -510,6 +578,8 @@ export function DiskTab() {
           <AvailabilityNote state={d.availability} t={t} />
         </Card>
       </div>
+
+      {sectionShown(shown, "today") && <TotalsCard kind="disk" />}
 
       {sectionShown(shown, "volumes") && (
         <Card title={t("overview.volumes")}>
@@ -579,6 +649,8 @@ export function NetworkTab() {
           <Stat label={t("label.connections")} value={String(n.connections)} />
         </Card>
       </div>
+
+      {sectionShown(shown, "totals") && <TotalsCard kind="network" />}
 
       {sectionShown(shown, "adapters") && (
         <Card title={t("overview.adapters")}>
@@ -745,6 +817,7 @@ export function BatteryTab() {
             {b.fullChargeCapacityWh !== null && (
               <Stat label={t("label.fullCharge")} value={`${b.fullChargeCapacityWh.toFixed(0)} Wh`} />
             )}
+            <CapacityTrend />
             <AvailabilityNote state={b.source} t={t} />
           </Card>
         </div>
@@ -774,6 +847,33 @@ export function BatteryTab() {
           <HistoryChart metric={b.hasBattery ? "battery" : "temp"} range={range} />
         </Card>
       )}
+    </div>
+  );
+}
+
+/** The weekly full-charge readings Windows keeps, as a line: how fast this battery is wearing. */
+function CapacityTrend() {
+  const { snapshot, units, t } = useStore();
+  const points = snapshot?.battery.capacityHistory ?? [];
+  const trend = capacityTrend(points);
+  if (!trend) return null;
+  return (
+    <div className="stat">
+      <span className="stat-label">{t("battery.capacityTrend")}</span>
+      <Chart
+        values={points.filter((p) => p.designWh > 0).map((p) => (p.fullChargeWh / p.designWh) * 100)}
+        max={100}
+        color={TONE.battery}
+        variant="line"
+        height={40}
+      />
+      <span className="stat-sub">
+        {t("battery.capacityTrendRange", {
+          from: formatPercent(trend.from, units.locale),
+          to: formatPercent(trend.to, units.locale),
+          weeks: trend.weeks,
+        })}
+      </span>
     </div>
   );
 }

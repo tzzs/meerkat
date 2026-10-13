@@ -127,6 +127,42 @@ export interface BatteryMetric {
   cycleCount: number | null;
   source: Availability;
   history: number[];
+  /** Weekly points from Windows' battery report: what the battery holds when full, over time. */
+  capacityHistory: CapacityPoint[];
+}
+
+export interface CapacityPoint {
+  atMs: number;
+  designWh: number;
+  fullChargeWh: number;
+  cycleCount: number | null;
+}
+
+/** One process of an app, for its detail view. */
+export interface ProcessRow {
+  pid: number;
+  parentPid: number | null;
+  name: string;
+  exePath: string;
+  commandLine: string[];
+  cpuPercent: number;
+  memoryBytes: number;
+  privateBytes: number;
+  readBytesTotal: number;
+  writeBytesTotal: number;
+  threads: number;
+  handles: number;
+  startedAtMs: number | null;
+  canQuit: boolean;
+}
+
+/** Bytes moved on one local day while Pulse was running. */
+export interface DailyTotal {
+  dayStartMs: number;
+  readBytes: number;
+  writeBytes: number;
+  downloadBytes: number;
+  uploadBytes: number;
 }
 
 export interface SensorReading {

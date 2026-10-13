@@ -114,7 +114,15 @@ export function PanelApp() {
         <div className="panel-apps">
           {apps.slice(0, 6).map((app) => (
             <Hint key={app.key} className="max-w-[320px] whitespace-pre-line break-all" label={appHint(app, t)}>
-              <div className="panel-app">
+              <div
+                className="panel-app clickable"
+                role="button"
+                tabIndex={0}
+                onClick={() => void ipc.showWindow(`app:${app.key}`)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void ipc.showWindow(`app:${app.key}`);
+                }}
+              >
                 <AppIcon name={appLabel(app, t)} seed={app.key} exePath={app.exePath || undefined} />
                 <span className="panel-app-name">{appLabel(app, t)}</span>
                 <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
@@ -124,7 +132,8 @@ export function PanelApp() {
                     <button
                       className="row-quit"
                       aria-label={t("action.quitApp")}
-                      onClick={() => {
+                      onClick={(event) => {
+                        event.stopPropagation();
                         requestQuit(app);
                       }}
                     >

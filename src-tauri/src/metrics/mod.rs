@@ -79,6 +79,8 @@ pub struct Sampler {
     services: services::ServiceDirectory,
     io: grouping::IoRates,
     names: NameCache,
+    /// Every process of the last tick, for an app's detail view.
+    last_processes: Vec<grouping::ProcSample>,
     previous_network: HashMap<String, (u64, u64)>,
     previous_disk: HashMap<String, (u64, u64)>,
     previous_times: Option<(u64, u64, u64)>,
@@ -86,7 +88,7 @@ pub struct Sampler {
     traces: HashMap<&'static str, Trace>,
     battery_health: battery::Health,
     health_read_at: Option<Instant>,
-    day_key: String,
+    day: i64,
     day_read: u64,
     day_write: u64,
     day_down: u64,
@@ -143,6 +145,7 @@ impl Sampler {
             processes: ntproc::Processes::default(),
             services: services::ServiceDirectory::default(),
             io: grouping::IoRates::default(),
+            last_processes: Vec::new(),
             names: NameCache::default(),
             previous_network: HashMap::new(),
             previous_disk: HashMap::new(),
@@ -151,7 +154,7 @@ impl Sampler {
             traces,
             battery_health: battery::Health::default(),
             health_read_at: None,
-            day_key: String::new(),
+            day: 0,
             day_read: 0,
             day_write: 0,
             day_down: 0,
@@ -252,13 +255,20 @@ impl Sampler {
         battery_metric.history = self.trace("battery");
         temperature.history = self.trace("temp");
 
+        let process_count = processes.len();
+        self.last_processes = processes;
+
         let taken_at_ms = now_ms();
         self.roll_day(taken_at_ms, elapsed, &disk, &network);
+        disk.read_bytes_today = self.day_read;
+        disk.write_bytes_today = self.day_write;
+        network.download_bytes_today = self.day_down;
+        network.upload_bytes_today = self.day_up;
 
         Snapshot {
             taken_at_ms,
             machine: self.machine.clone(),
-            process_count: processes.len(),
+            process_count,
             sampler_cost_microseconds: started.elapsed().as_micros() as u64,
             apps,
             cpu,
@@ -274,9 +284,9 @@ impl Sampler {
     /// Today's totals are Pulse's own integral of the rate, because Windows has no
     /// "bytes since midnight" counter.
     fn roll_day(&mut self, taken_at_ms: u64, elapsed: f64, disk: &DiskMetric, network: &NetworkMetric) {
-        let key = day_key(taken_at_ms);
-        if key != self.day_key {
-            self.day_key = key;
+        let day = local_day(taken_at_ms);
+        if day != self.day {
+            self.day = day;
             self.day_read = 0;
             self.day_write = 0;
             self.day_down = 0;
@@ -286,6 +296,36 @@ impl Sampler {
         self.day_write += (disk.write_bytes_per_second * elapsed) as u64;
         self.day_down += (network.download_bytes_per_second * elapsed) as u64;
         self.day_up += (network.upload_bytes_per_second * elapsed) as u64;
+    }
+
+    /// Picks up the count a previous run left for today, so a restart does not send "since
+    /// midnight" back to zero. A count from another day is ignored; that day is over.
+    pub fn restore_day(&mut self, day: i64, totals: crate::daily::DayTotals) {
+        if day != local_day(now_ms()) {
+            return;
+        }
+        self.day = day;
+        self.day_read = totals.read;
+        self.day_write = totals.write;
+        self.day_down = totals.download;
+        self.day_up = totals.upload;
+    }
+
+    pub fn processes(&self) -> &[grouping::ProcSample] {
+        &self.last_processes
+    }
+
+    /// The running count for the day the last sample fell in.
+    pub fn day_totals(&self) -> (i64, crate::daily::DayTotals) {
+        (
+            self.day,
+            crate::daily::DayTotals {
+                read: self.day_read,
+                write: self.day_write,
+                download: self.day_down,
+                upload: self.day_up,
+            },
+        )
     }
 
     fn cpu(&mut self) -> CpuMetric {
@@ -547,7 +587,7 @@ impl Sampler {
             is_charging: live.is_charging,
             is_critical: live.is_critical,
             remaining_seconds: live.remaining_seconds,
-            power_watts: None,
+            power_watts: if live.has_battery { battery::power_watts() } else { None },
             design_capacity_wh: health.design_capacity_wh,
             full_charge_capacity_wh: health.full_charge_capacity_wh,
             health_percent,
@@ -560,6 +600,7 @@ impl Sampler {
                 Availability::Partial
             },
             history: Vec::new(),
+            capacity_history: health.capacity_history.clone(),
         }
     }
 
@@ -776,8 +817,16 @@ fn match_link_speed(name: &str, index: &HashMap<String, u64>) -> Option<u64> {
     (speed > 0).then_some(speed)
 }
 
-pub fn day_key(at_ms: u64) -> String {
-    ((at_ms as i64 + local_offset_ms()) / 86_400_000).to_string()
+/// The local calendar day `at_ms` falls in, as days since 1970-01-01 in local time.
+pub fn local_day(at_ms: u64) -> i64 {
+    (at_ms as i64 + local_offset_ms()).div_euclid(86_400_000)
+}
+
+/// Local midnight at the start of `day`, as Unix milliseconds. Today's offset is used for every
+/// day, so a day across a daylight-saving change is placed an hour off; the bars of a 30-day
+/// chart do not care.
+pub fn local_day_start_ms(day: i64) -> u64 {
+    (day * 86_400_000 - local_offset_ms()).max(0) as u64
 }
 
 /// Daily totals must roll at local midnight, not UTC midnight.

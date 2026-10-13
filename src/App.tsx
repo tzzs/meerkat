@@ -11,9 +11,10 @@ import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab
 import { QuitDialog } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
+import { AppDetailSheet } from "./components/app-detail";
 
 export default function App() {
-  const { snapshot, settings, t, units, connected, pendingQuit } = useStore();
+  const { snapshot, settings, t, units, connected, pendingQuit, openDetail } = useStore();
   const [tab, setTab] = useState(
     () => new URLSearchParams(window.location.search).get("tab") || settings.openWindowOn || "overview",
   );
@@ -46,6 +47,8 @@ export default function App() {
     let stop: (() => void) | null = null;
     void listenNavigate((destination) => {
       if (destination === "settings") setPage("general");
+      // The tray panel's app rows open that app's detail here.
+      else if (destination.startsWith("app:")) openDetail(destination.slice(4));
       else setTab(destination);
     }).then((un) => (stop = un));
     return () => stop?.();
@@ -96,11 +99,11 @@ export default function App() {
       m.chipName,
       `${m.physicalCores ?? "?"}/${m.logicalCores}`,
       formatBytes(m.totalMemoryBytes, units),
-      `up ${uptime}`,
+      `${t("label.uptime")} ${uptime}`,
     ]
       .filter(Boolean)
       .join("  ·  ");
-  }, [snapshot, units, uptime]);
+  }, [snapshot, units, uptime, t]);
 
   return (
     <Tabs
@@ -251,6 +254,7 @@ export default function App() {
           {snapshot ? `${(snapshot.samplerCostMicroseconds / 1000).toFixed(1)} ms/tick` : ""}
         </span>
       </footer>
+      <AppDetailSheet />
       <QuitDialog />
     </Tabs>
   );

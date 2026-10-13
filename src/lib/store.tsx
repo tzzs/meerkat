@@ -67,6 +67,10 @@ interface StoreValue {
   pendingQuit: AppInfo | null;
   requestQuit: (app: AppInfo) => void;
   clearQuit: () => void;
+  /** The app whose detail sheet is open, by key, so it follows the app through every sample. */
+  detailKey: string | null;
+  openDetail: (key: string) => void;
+  closeDetail: () => void;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -76,6 +80,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(fallbackSettings);
   const [connected, setConnected] = useState(false);
   const [pendingQuit, setPendingQuit] = useState<AppInfo | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
 
   useEffect(() => {
     let stop: (() => void) | null = null;
@@ -137,10 +142,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const requestQuit = useCallback((app: AppInfo) => setPendingQuit(app), []);
   const clearQuit = useCallback(() => setPendingQuit(null), []);
+  const openDetail = useCallback((key: string) => setDetailKey(key), []);
+  const closeDetail = useCallback(() => setDetailKey(null), []);
 
   const value = useMemo(
-    () => ({ snapshot, settings, save, units, lang, t, connected, pendingQuit, requestQuit, clearQuit }),
-    [snapshot, settings, save, units, lang, t, connected, pendingQuit, requestQuit, clearQuit],
+    () => ({
+      snapshot,
+      settings,
+      save,
+      units,
+      lang,
+      t,
+      connected,
+      pendingQuit,
+      requestQuit,
+      clearQuit,
+      detailKey,
+      openDetail,
+      closeDetail,
+    }),
+    [snapshot, settings, save, units, lang, t, connected, pendingQuit, requestQuit, clearQuit, detailKey, openDetail, closeDetail],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

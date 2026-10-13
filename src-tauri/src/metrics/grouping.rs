@@ -40,6 +40,30 @@ pub struct ProcSample {
     /// Whether this user may end the process. Service hosts and the rest of the system answer
     /// no, and the list must not offer what Windows will refuse.
     pub can_quit: bool,
+    pub private_bytes: u64,
+    pub threads: u32,
+    pub handles: u32,
+}
+
+impl ProcSample {
+    pub fn row(&self) -> crate::models::ProcessRow {
+        crate::models::ProcessRow {
+            pid: self.pid,
+            parent_pid: self.ppid,
+            name: self.name.clone(),
+            exe_path: self.exe.clone(),
+            command_line: self.args.clone(),
+            cpu_percent: self.cpu_percent,
+            memory_bytes: self.memory_bytes,
+            private_bytes: self.private_bytes,
+            read_bytes_total: self.read_total,
+            write_bytes_total: self.write_total,
+            threads: self.threads,
+            handles: self.handles,
+            started_at_ms: self.started_at_ms,
+            can_quit: self.can_quit,
+        }
+    }
 }
 
 pub fn collect(processes: &mut Processes) -> Vec<ProcSample> {
@@ -73,6 +97,9 @@ fn sample(s: Sampled, created: &HashMap<u32, u64>) -> ProcSample {
         cpu_percent,
         read_total: process.read_bytes,
         write_total: process.write_bytes,
+        private_bytes: process.private_bytes,
+        threads: process.threads,
+        handles: process.handles,
         name: process.name,
         exe: identity.exe,
         dir,
@@ -590,6 +617,9 @@ mod tests {
             args: Vec::new(),
             measurable,
             can_quit: false,
+            private_bytes: 0,
+            threads: 1,
+            handles: 1,
         }
     }
 

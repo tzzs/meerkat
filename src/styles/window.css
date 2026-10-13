@@ -507,6 +507,16 @@
   font-size: 12px;
   font-weight: 550;
 }
+/* The detail sheet is narrower than a card, and its figures sit two to a row. */
+.detail-figures .stat-value {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+/* A row opens its app's details; the keyboard gets there too, so it needs a visible focus. */
+.row.clickable:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
 .row-quit {
   opacity: 0;
   color: var(--text-3);
