@@ -78,3 +78,15 @@ export function panelWindowSize(box: PanelBox): { width: number; height: number 
     height: Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, height)),
   };
 }
+
+/**
+ * How many app rows fit in the room the panel leaves the list. The fit is floored, so a
+ * half-visible row is dropped whole instead of clipped, and it never falls below the minimum
+ * while the list has that many apps — a first paint that has measured nothing opens with rows
+ * rather than an empty card.
+ */
+export function fitRows(room: number, rowHeight: number, count: number, minimum: number): number {
+  const floor = Math.min(minimum, count);
+  if (!Number.isFinite(room) || !Number.isFinite(rowHeight) || room <= 0 || rowHeight <= 0) return floor;
+  return Math.max(floor, Math.min(count, Math.floor(room / rowHeight)));
+}

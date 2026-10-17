@@ -153,10 +153,12 @@ impl PanelAnchor {
         (8.0 * self.scale).round() as i32
     }
 
-    /// The panel's whole rectangle for a requested size in logical pixels.
+    /// The panel's whole rectangle for a requested size in logical pixels. The height is clamped
+    /// to the work area: the webview asks for its own content height, and a short screen would
+    /// otherwise push the tab strip off the bottom edge.
     pub fn panel_rect(&self, logical: (u32, u32)) -> Rect {
         let w = ((logical.0 as f64 * self.scale).round() as i32).max(1);
-        let h = ((logical.1 as f64 * self.scale).round() as i32).max(1);
+        let h = ((logical.1 as f64 * self.scale).round() as i32).max(1).min(self.work.h);
         let at = place_panel(self.work, self.icon, (w, h), self.gap());
         Rect { x: at.x, y: at.y, w, h }
     }
@@ -453,6 +455,17 @@ mod tests {
         let top = PanelAnchor { icon: rect(2300, 18, 24, 24), work: rect(0, 60, 2560, 1380), scale: 1.25 };
         assert_eq!(top.panel_rect((352, 400)).y, 60);
         assert_eq!(top.panel_rect((352, 554)).y, 60, "a panel below a top bar grows downward");
+    }
+
+    // The webview sizes the window to its own content, which a short work area cannot hold; the
+    // height is capped so the tab strip stays on screen.
+    #[test]
+    fn a_panel_rect_never_exceeds_the_work_area() {
+        // A 1366x768 laptop at 125%: 582 logical pixels of work area is 728 physical.
+        let anchor = PanelAnchor { icon: rect(2300, 740, 24, 24), work: rect(0, 0, 2560, 728), scale: 1.25 };
+        let full = anchor.panel_rect((400, 760));
+        assert_eq!(full.h, 728, "clamped to the work area, not the 950 physical pixels requested");
+        assert_eq!(full.y + full.h, 728, "still placed whole inside it");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize } from "./panel";
+import { fitRows, panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize } from "./panel";
 import type { Snapshot } from "./types";
 
 const machine = (hasBattery: boolean, hottest: number | null = null): Snapshot =>
@@ -97,5 +97,36 @@ describe("panelWindowSize", () => {
 
   it("rounds fractions up so the last pixel row is never cut", () => {
     expect(panelWindowSize({ ...box, scrollHeight: 500.2 }).height).toBe(527);
+  });
+});
+
+describe("fitRows", () => {
+  it("falls back to the minimum when the room fits nothing, never zero", () => {
+    expect(fitRows(100, 120, 6, 3)).toBe(3);
+  });
+
+  it("stops at the list's real length when the room is larger than it", () => {
+    expect(fitRows(1000, 20, 6, 3)).toBe(6);
+  });
+
+  it("treats an unmeasured room or row height as the minimum", () => {
+    expect(fitRows(0, 20, 6, 3)).toBe(3);
+    expect(fitRows(100, 0, 6, 3)).toBe(3);
+  });
+
+  it("floors a fractional row so a half-visible row is dropped whole", () => {
+    expect(fitRows(100, 30, 6, 3)).toBe(3);
+  });
+
+  it("treats NaN, negatives and Infinity as the minimum", () => {
+    expect(fitRows(Number.NaN, 20, 6, 3)).toBe(3);
+    expect(fitRows(-5, 20, 6, 3)).toBe(3);
+    expect(fitRows(Number.POSITIVE_INFINITY, 20, 6, 3)).toBe(3);
+    expect(fitRows(100, Number.NEGATIVE_INFINITY, 6, 3)).toBe(3);
+  });
+
+  it("floors the minimum at the count, so one app is not padded to three", () => {
+    expect(fitRows(0, 0, 1, 3)).toBe(1);
+    expect(fitRows(1000, 20, 1, 3)).toBe(1);
   });
 });

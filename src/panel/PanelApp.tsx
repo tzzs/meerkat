@@ -7,7 +7,7 @@ import { ipc, listenEvent } from "../lib/ipc";
 import { AppIcon, QuitDialog, Toaster, useHeldCeiling } from "../components/ui";
 import { Hint, TooltipReset } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
-import { panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize, type PanelTab } from "../lib/panel";
+import { fitRows, PANEL_MAX_HEIGHT, panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize, type PanelTab } from "../lib/panel";
 import { SPARK_CEILING, sparkPoints, windowPeak } from "../lib/spark";
 import { subscribe } from "../lib/subscribe";
 import { headline, type MetricKind, type Snapshot } from "../lib/types";
@@ -27,13 +27,18 @@ const HUES: Record<MetricKind, string> = {
   temperature: "#c98500",
 };
 
+/** The fewest rows the busiest-apps list shows, so a measured room of nothing is not an empty card. */
+const MIN_APP_ROWS = 3;
+
 export function PanelApp() {
   const { snapshot, settings, t, units, connected, requestQuit } = useStore();
   const [pinned, setPinned] = useState(false);
   const [tab, setTab] = useState<PanelTab>("top");
   const [tooltipReset, setTooltipReset] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const lastSize = useRef<{ width: number; height: number } | null>(null);
+  const [fit, setFit] = useState({ room: 0, rowHeight: 0 });
   const nav = panelNav(snapshot);
   const navKey = nav.join(" ");
 
@@ -76,9 +81,28 @@ export function PanelApp() {
         marginY: px(style.marginTop) + px(style.marginBottom),
       });
       const last = lastSize.current;
-      if (last && last.width === size.width && last.height === size.height) return;
-      lastSize.current = size;
-      ipc.setPanelSize(size.width, size.height);
+      if (!(last && last.width === size.width && last.height === size.height)) {
+        lastSize.current = size;
+        ipc.setPanelSize(size.width, size.height);
+      }
+
+      // The row count only matters on the overview tab, where the list exists; the chrome around
+      // it is the rest of the card, measured so the room is whatever the screen leaves for rows.
+      const list = listRef.current;
+      if (list) {
+        const row = list.querySelector<HTMLElement>(".panel-app");
+        const rowHeight = row ? row.offsetHeight : 0;
+        const chrome =
+          (node.querySelector<HTMLElement>(".panel-head")?.offsetHeight ?? 0) +
+          (node.querySelector<HTMLElement>(".panel-metrics")?.offsetHeight ?? 0) +
+          (node.querySelector<HTMLElement>(".panel-tabs")?.offsetHeight ?? 0);
+        const listStyle = getComputedStyle(list);
+        const listInset =
+          px(listStyle.paddingTop) + px(listStyle.paddingBottom) + px(listStyle.borderTopWidth);
+        const marginY = px(style.marginTop) + px(style.marginBottom);
+        const room = Math.min(PANEL_MAX_HEIGHT, window.screen.availHeight) - marginY - chrome - listInset;
+        setFit((prev) => (prev.room === room && prev.rowHeight === rowHeight ? prev : { room, rowHeight }));
+      }
     };
     // A tab switch or a row appearing is a burst of layout changes; it settles into one resize.
     const schedule = () => {
@@ -128,7 +152,10 @@ export function PanelApp() {
   );
   const latest = useRef(ordered);
   latest.current = ordered;
-  const apps = useMemo(() => holdOrder(ordered, held).slice(0, 6), [ordered, held]);
+  const apps = useMemo(() => {
+    const max = holdOrder(ordered, held).slice(0, 6);
+    return max.slice(0, fitRows(fit.room, fit.rowHeight, max.length, MIN_APP_ROWS));
+  }, [ordered, held, fit]);
   const closeMenu = useCallback(() => {
     setMenu(null);
     if (!pointerInside.current) setHeld(null);
@@ -198,6 +225,7 @@ export function PanelApp() {
       {tab === "top" && (
         <div
           className="panel-apps"
+          ref={listRef}
           onPointerEnter={() => {
             pointerInside.current = true;
             setHeld((current) => current ?? latest.current.map((a) => a.key));
