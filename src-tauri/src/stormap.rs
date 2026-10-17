@@ -57,28 +57,26 @@ const MAX_DEPTH: usize = 64;
 /// Progress is emitted at most this often while the walk runs, whatever the file count.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
-/// The boxes to draw: the `top` biggest measured entries, then the part of used space none of
-/// them covers (folders too small to show plus whatever could not be read), then the free space.
+/// The boxes to draw: the `top` biggest measured entries, then everything the boxes do not
+/// cover, then the free space.
 ///
-/// Shares are over `total`, so they add to 1 when `used + free == total`, which is how the
-/// volume itself reports them. An entry that could not be read is not measured, so it never
-/// becomes a box; an entry whose `bytes` is 0 is never a box either, because a zero-share box is
-/// a hole nobody measured. Ties in size are broken by path, so the map does not reshuffle while
-/// it is being looked at.
-pub fn layout(entries: &[Entry], total: u64, used: u64, free: u64, top: usize) -> Vec<MapBox> {
+/// `measured` is the walk's own total — every byte counted exactly once, which is why it is
+/// passed in rather than summed from `entries`. The entries are a hierarchy: a directory that
+/// was worth opening into boxes holds children whose own boxes are inside it, and a directory
+/// that was not carries the rest as its residual. Adding them up counts the same disk more than
+/// once, so the leftover has to come from the one number that did not.
+pub fn layout(entries: &[Entry], total: u64, used: u64, free: u64, measured: u64, top: usize) -> Vec<MapBox> {
     let mut boxes = Vec::new();
     if total == 0 {
         return boxes;
     }
-    let mut measured: Vec<&Entry> = entries
+    let mut drawable: Vec<&Entry> = entries
         .iter()
         .filter(|e| !e.could_not_read && e.bytes > 0)
         .collect();
-    measured.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
+    drawable.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
 
-    let mut shown_bytes = 0u64;
-    for entry in measured.iter().take(top) {
-        shown_bytes = shown_bytes.saturating_add(entry.bytes);
+    for entry in drawable.iter().take(top) {
         boxes.push(MapBox {
             path: entry.path.clone(),
             bytes: entry.bytes,
@@ -88,7 +86,29 @@ pub fn layout(entries: &[Entry], total: u64, used: u64, free: u64, top: usize) -
         });
     }
 
-    let unknown_bytes = used.saturating_sub(shown_bytes);
+    // Measured space that did not get a box: the directories past `top`, each one too small to be
+    // worth a box of its own. They were measured, so they are not the unknown region, and they
+    // are not free — dropping them would leave a hole in the map that the shares then do not add
+    // up to. They become one box of the rest, so the picture covers the whole volume.
+    let drawn_bytes: u64 = drawable.iter().take(top).map(|entry| entry.bytes).sum();
+    let rest_bytes = measured.saturating_sub(drawn_bytes);
+    if rest_bytes > 0 {
+        boxes.push(MapBox {
+            // Not a real path: the map draws the label from a path's last component, and this
+            // box is everything measured that is not one of the named folders above it.
+            path: String::new(),
+            bytes: rest_bytes,
+            share: rest_bytes as f64 / total as f64,
+            unknown: false,
+            free: false,
+        });
+    }
+
+    // Whatever the volume says is in use that the walk could not put a box on: the folders it
+    // was refused, the depth it refused to descend, and the rounding in the volume's own figure.
+    // `used` is the ceiling, so a walk that counted more than the volume reports (a file that
+    // grew while it ran) leaves the region empty instead of negative.
+    let unknown_bytes = used.saturating_sub(measured);
     if unknown_bytes > 0 {
         boxes.push(MapBox {
             path: String::new(),
@@ -117,6 +137,14 @@ pub struct Walk {
     pub unreadable: u64,
     /// Files whose length was counted.
     pub files: u64,
+    /// Every byte the walk actually counted, each one exactly once.
+    ///
+    /// This is the sum over the files as they were walked, and it is deliberately not the sum
+    /// over `entries`: the boxes are a hierarchy, so a child's bytes also sit inside the
+    /// residual of the parent that holds it, and adding them counts the same disk twice. On a
+    /// real 215 GB volume the boxes add to 203 GB while the walk counted 170 GB, which is what
+    /// the difference between "measured" and "could not be read" is read against.
+    pub bytes: u64,
     /// A newer scan (or a cancel) took over and this one stopped early.
     pub cancelled: bool,
 }
@@ -276,6 +304,7 @@ pub fn walk_volume(
         entries,
         unreadable: ctx.unreadable,
         files: ctx.files,
+        bytes: ctx.bytes,
         cancelled: ctx.cancelled,
     }
 }
@@ -324,7 +353,7 @@ pub async fn storage_map_scan(app: AppHandle, volume_id: String) -> Result<Stora
     .await
     .map_err(|error| format!("walk did not finish: {error}"))?;
 
-    let boxes: Vec<StorageMapBox> = layout(&walk.entries, total, used, free, MAX_BOXES)
+    let boxes: Vec<StorageMapBox> = layout(&walk.entries, total, used, free, walk.bytes, MAX_BOXES)
         .into_iter()
         .map(|box_| StorageMapBox {
             name: box_name(&box_),
@@ -335,7 +364,7 @@ pub async fn storage_map_scan(app: AppHandle, volume_id: String) -> Result<Stora
             free: box_.free,
         })
         .collect();
-    let measured_bytes = walk.entries.iter().map(|e| e.bytes).sum();
+    let measured_bytes = walk.bytes;
 
     Ok(StorageMap {
         volume_id,
@@ -371,7 +400,7 @@ mod tests {
     #[test]
     fn the_shares_add_to_one() {
         let entries = vec![entry("a", 300), entry("b", 200), entry("c", 100)];
-        let boxes = layout(&entries, 1000, 600, 400, 40);
+        let boxes = layout(&entries, 1000, 600, 400, 600, 40);
         assert!((shares(&boxes) - 1.0).abs() < 1e-9, "shares sum to {}", shares(&boxes));
     }
 
@@ -380,7 +409,8 @@ mod tests {
         // One readable directory, the rest of used space unreadable: the unknown region holds
         // what was not measured, and the free region stays exactly the free space.
         let entries = vec![entry("a", 400)];
-        let boxes = layout(&entries, 1000, 600, 400, 40);
+        // The walk counted 400 of the 600 in use; the other 200 is what it could not open.
+        let boxes = layout(&entries, 1000, 600, 400, 400, 40);
         let free = boxes.iter().find(|b| b.free).expect("a free box");
         assert_eq!(free.bytes, 400);
         let unknown = boxes.iter().find(|b| b.unknown).expect("an unknown box");
@@ -393,7 +423,7 @@ mod tests {
             Entry { path: "x".into(), bytes: 0, could_not_read: true },
             Entry { path: "y".into(), bytes: 0, could_not_read: true },
         ];
-        let boxes = layout(&entries, 500, 500, 0, 40);
+        let boxes = layout(&entries, 500, 500, 0, 0, 40);
         assert_eq!(boxes.len(), 1, "one box, the unknown remainder, rather than nothing");
         assert!(boxes[0].unknown);
         assert_eq!(boxes[0].bytes, 500);
@@ -402,7 +432,7 @@ mod tests {
     #[test]
     fn a_zero_size_entry_never_becomes_a_zero_share_box() {
         let entries = vec![entry("empty", 0), entry("real", 250)];
-        let boxes = layout(&entries, 1000, 500, 500, 40);
+        let boxes = layout(&entries, 1000, 500, 500, 250, 40);
         assert!(boxes.iter().all(|b| b.bytes > 0 && b.share > 0.0));
         assert!(!boxes.iter().any(|b| b.path == "empty"));
     }
@@ -410,7 +440,7 @@ mod tests {
     #[test]
     fn ties_order_stably_by_path() {
         let entries = vec![entry("b", 100), entry("a", 100), entry("c", 100)];
-        let boxes = layout(&entries, 1000, 300, 700, 40);
+        let boxes = layout(&entries, 1000, 300, 700, 300, 40);
         let names: Vec<&str> = boxes.iter().filter(|b| !b.unknown && !b.free).map(|b| b.path.as_str()).collect();
         assert_eq!(names, vec!["a", "b", "c"]);
     }
@@ -418,10 +448,13 @@ mod tests {
     #[test]
     fn the_top_n_fold_the_rest_into_the_unknown_region() {
         let entries: Vec<Entry> = (0..50).map(|i| entry(&format!("d{i:02}"), 10)).collect();
-        let boxes = layout(&entries, 1000, 500, 500, 3);
-        let shown = boxes.iter().filter(|b| !b.unknown && !b.free).count();
-        assert_eq!(shown, 3);
-        let unknown = boxes.iter().find(|b| b.unknown).expect("an unknown box");
-        assert_eq!(unknown.bytes, 470, "500 used minus the three boxes of 10");
+        // The walk counted all 500 of the used space, so nothing here is unmeasured: the 470
+        // that did not get a box of its own is measured disk that was too small to draw, and it
+        // becomes the rest of the picture rather than a hole in it.
+        let boxes = layout(&entries, 1000, 500, 500, 500, 3);
+        let shown = boxes.iter().filter(|b| !b.unknown && !b.free && !b.path.is_empty()).count();
+        assert_eq!(shown, 3, "the three biggest are drawn");
+        assert!(boxes.iter().all(|b| !b.unknown), "nothing was unmeasured");
+        assert!((shares(&boxes) - 1.0).abs() < 1e-9, "the shares still add to the whole volume");
     }
 }

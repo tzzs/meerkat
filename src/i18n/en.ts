@@ -325,6 +325,7 @@ const en = {
   "storageMap.reconciled": "Measured {measured} of {used} used; {unreadable} could not be read.",
   "storageMap.unreadableFolders": "{count, plural, one {# folder could not be opened} other {# folders could not be opened}}",
   "storageMap.other": "Other and unreadable",
+  "storageMap.rest": "Everything else",
   "storageMap.empty": "This volume has nothing to map.",
   "storageMap.failed": "Meerkat could not map this volume.",
   "storageMap.cancelled": "Stopped.",

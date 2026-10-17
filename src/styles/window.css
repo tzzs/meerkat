@@ -529,6 +529,12 @@
   background: repeating-linear-gradient(45deg, var(--surface-3) 0 6px, var(--surface-2) 6px 12px);
   color: var(--text-2);
 }
+/* Measured, but not one of the biggest folders: a plain surface, because unlike the unknown
+   region above this disk was read. */
+.map-box.rest {
+  background: color-mix(in srgb, var(--m-disk) 26%, var(--surface-2));
+  color: var(--text-2);
+}
 .map-box-name {
   font-size: 11px;
   font-weight: 600;

@@ -326,6 +326,7 @@ const zh: Record<Key, string> = {
   "storageMap.reconciled": "已测量 {measured}，共使用 {used}；其中 {unreadable} 无法读取。",
   "storageMap.unreadableFolders": "{count} 个文件夹无法打开",
   "storageMap.other": "其他与无法读取",
+  "storageMap.rest": "其余文件夹",
   "storageMap.empty": "此磁盘没有可显示的内容。",
   "storageMap.failed": "Meerkat 无法读取此磁盘。",
   "storageMap.cancelled": "已停止。",

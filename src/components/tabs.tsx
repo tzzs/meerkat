@@ -1345,8 +1345,15 @@ function StorageMapCard() {
             {result.boxes.map((box, i) => {
               const rect = rects[i];
               if (!rect || rect.w <= 0 || rect.h <= 0) return null;
-              const label = box.free ? t("label.free") : box.unknown ? t("storageMap.other") : box.name || box.path;
-              const kind = box.free ? "free" : box.unknown ? "unknown" : "named";
+              // A nameless box that is neither free nor unreadable is the measured space that
+              // was not one of the biggest folders, folded into one region so the map still
+              // covers the whole volume.
+              const label = box.free
+                ? t("label.free")
+                : box.unknown
+                  ? t("storageMap.other")
+                  : box.name || box.path || t("storageMap.rest");
+              const kind = box.free ? "free" : box.unknown ? "unknown" : box.name || box.path ? "named" : "rest";
               return (
                 <div
                   key={`${i}:${box.path}:${kind}`}
