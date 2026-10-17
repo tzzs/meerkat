@@ -103,13 +103,10 @@ impl Watcher {
 
     /// Insights worth a notification since the last tick — at most three. Repeats update the
     /// stored row and stay quiet until RE_NOTIFY_AFTER has passed.
-    pub fn evaluate(&mut self, snapshot: &Snapshot, settings: &Settings) -> Vec<Insight> {
-        self.evaluate_at(snapshot, settings, &Default::default(), now_seconds())
-    }
-
+    ///
     /// `muted` holds the apps whose rule says not to watch them: OBS and a compiler are meant to
     /// keep the CPU busy, and the only answer to that used to be dismissing the row every day.
-    pub fn evaluate_muted(
+    pub fn evaluate(
         &mut self,
         snapshot: &Snapshot,
         settings: &Settings,

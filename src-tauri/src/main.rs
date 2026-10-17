@@ -80,6 +80,7 @@ fn run() -> tauri::Result<()> {
             ipc::settings_get,
             ipc::settings_set,
             ipc::history_series,
+            ipc::history_ranking,
             ipc::app_ranking,
             ipc::app_ranking_today,
             ipc::apps_at,
@@ -257,7 +258,7 @@ fn on_exit(app: &AppHandle) {
 /// over its settings or history. Nothing else can redirect it: Windows answers the known-folder
 /// lookup from the user's token, not from APPDATA.
 ///
-/// The first launch after the old build (which was called Pulse, and kept its files under
+/// The first launch after the old build (which was called Meerkat, and kept its files under
 /// `com.tzz.pulse`) adopts what that one left behind. The folder is part of the app's identity,
 /// so a rename alone would have started a user with default settings, an empty history and no
 /// remembered volumes, and nothing on screen to say where they went.
@@ -363,7 +364,7 @@ fn spawn_sampler(app: AppHandle) {
                     .watcher
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .evaluate_muted(&snapshot, &settings, &muted);
+                    .evaluate(&snapshot, &settings, &muted);
                 for insight in insights {
                     let _ = app.emit("insight", &insight);
                     if settings.alerts.enabled {
@@ -531,22 +532,30 @@ mod autostart {
         Some(rest.as_str())
     }
 
-    /// The name the login item was written under before the app was renamed, and the executable
-    /// name that goes with it.
-    const FORMER_NAME: &str = "Pulse";
+    /// The name the autostart plugin wrote the login item under before the app was renamed, and
+    /// the executable name the old build had.
+    #[cfg(not(debug_assertions))]
+    const FORMER_NAME: &str = "Meerkat";
+    #[cfg(any(test, not(debug_assertions)))]
     const FORMER_EXE: &str = "pulse.exe";
 
-    /// Whether a `Run` command line points at a file called `pulse.exe`, quoted or not, with or
+    /// Whether a `Run` command line launches a file called `pulse.exe`, quoted or not, with or
     /// without arguments after it.
     ///
-    /// `launches` compares whole paths and so cannot tell an old registration for *this* program
-    /// from one for a different program that happens to be called Pulse. This is deliberately
-    /// narrower than "the key is named Pulse": the entry is only ours to remove when the file it
-    /// launches is the one the former build was called.
+    /// `launches` above compares whole paths, so it cannot tell a registration left by *this*
+    /// program when it was called Meerkat from one belonging to some other program named Meerkat.
+    /// This is deliberately narrower than "the key is called Meerkat": the entry is only ours to
+    /// remove when the file it launches is the one the former build was.
+    #[cfg(any(test, not(debug_assertions)))]
     fn names_former_app(command: &str) -> bool {
         let command = command.trim();
         let head = match command.strip_prefix('"') {
-            Some(quoted) => quoted.split_once('"').map_or(quoted, |(head, _)| head),
+            // A quoted path ends at its closing quote; one that never closes is a value this
+            // cannot read, and an unreadable value is not evidence that a program is ours.
+            Some(quoted) => match quoted.split_once('"') {
+                Some((head, _)) => head,
+                None => return false,
+            },
             None => command.split_whitespace().next().unwrap_or(command),
         };
         head
@@ -555,7 +564,9 @@ mod autostart {
             .is_some_and(|name| name.eq_ignore_ascii_case(FORMER_EXE))
     }
 
-    /// Removes the registration the former build left, when it is recognisably the former build's.
+    /// Removes the login item the former build registered, when it is recognisably the former
+    /// build's. A release start only: a debug build never registers anything, and its own
+    /// `reconcile` above already cleans up after the builds that used to.
     #[cfg(not(debug_assertions))]
     fn drop_former_registration(current_name: &str) {
         if current_name.eq_ignore_ascii_case(FORMER_NAME) {
@@ -649,6 +660,21 @@ mod autostart {
             assert_eq!(launches(r"E:\workspaces\Meerkat\src-tauri\target\debug", DEV), None);
             assert_eq!(launches("", DEV), None);
             assert_eq!(launches(DEV, ""), None);
+        }
+
+        // The rename left a `Run\Meerkat` entry behind. Deleting one that belongs to somebody
+        // else is the worse mistake, so the test that guards it is the one that matters.
+        #[cfg(any(test, not(debug_assertions)))]
+        #[test]
+        fn only_a_command_line_for_the_former_build_is_ours_to_delete() {
+            assert!(names_former_app(r"C:\Users\me\AppData\Local\Meerkat\pulse.exe --autostart"));
+            assert!(names_former_app(r#""C:\Program Files\Meerkat\pulse.exe""#));
+            assert!(names_former_app("PULSE.EXE"));
+            assert!(names_former_app(r"e:\workspaces\pulse\src-tauri\target\release\PULSE.EXE"));
+            assert!(!names_former_app(r"C:\Program Files\Meerkat Sync\pulsesync.exe"), "another program");
+            assert!(!names_former_app(r"C:\tools\pulse.exe.old"), "a longer file name is another file");
+            assert!(!names_former_app(r#""C:\Meerkat\pulse.exe"#), "an unterminated quote is not a match");
+            assert!(!names_former_app(""));
         }
 
         // The plugin writes `<path> <args>` without quotes, so a path with spaces has to match
