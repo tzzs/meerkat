@@ -414,6 +414,8 @@ export interface Settings {
   openWindowOn: string;
   startAtLogin: boolean;
   showInTaskbar: boolean;
+  /** Whether Windows is asked not to sleep while Meerkat runs. */
+  keepAwake: boolean;
   tray: TrayReadout[];
   panel: { layout: PanelLayout; tiles: SectionConfig[] };
   window: { tabs: TabConfig[] };

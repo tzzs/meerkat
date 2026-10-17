@@ -20,6 +20,7 @@ export const fallbackSettings: Settings = {
   openWindowOn: "overview",
   startAtLogin: true,
   showInTaskbar: false,
+  keepAwake: false,
   tray: [
     { id: "cpu", metric: "cpu", style: "both", showIcon: false, showCaption: false, invert: false, enabled: true },
     { id: "memory", metric: "memory", style: "value", showIcon: false, showCaption: false, invert: false, enabled: true },

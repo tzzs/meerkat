@@ -232,6 +232,9 @@ pub struct Settings {
     pub open_window_on: String,
     pub start_at_login: bool,
     pub show_in_taskbar: bool,
+    /// Whether Windows is asked not to sleep while Meerkat runs (keepawake.rs). Off until asked.
+    #[serde(default)]
+    pub keep_awake: bool,
     pub tray: Vec<TrayReadout>,
     pub panel: PanelConfig,
     pub window: WindowConfig,
@@ -289,6 +292,7 @@ impl Default for Settings {
             open_window_on: "overview".into(),
             start_at_login: true,
             show_in_taskbar: false,
+            keep_awake: false,
             tray: vec![
                 TrayReadout { id: "cpu".into(), metric: MetricKind::Cpu, style: TrayStyle::Both, show_icon: false, show_caption: false, invert: false, enabled: true },
                 TrayReadout { id: "memory".into(), metric: MetricKind::Memory, style: TrayStyle::Value, show_icon: false, show_caption: false, invert: false, enabled: true },
@@ -670,6 +674,7 @@ mod tests {
         next.theme = Theme::Dark;
         next.panel.layout = PanelLayout::List;
         next.tray.retain(|r| r.metric != MetricKind::Network);
+        next.keep_awake = true;
         let saved = store.set(next).expect("saving to a directory that exists");
 
         let back = SettingsStore::read(&dir.join("settings.json"));

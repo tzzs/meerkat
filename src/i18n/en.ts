@@ -368,6 +368,8 @@ const en = {
   "settings.openWindowLast": "The tab you used last",
   "settings.startAtLogin": "Start at sign-in",
   "settings.showInTaskbar": "Show in taskbar",
+  "settings.keepAwake": "Keep the machine awake",
+  "settings.keepAwakeHelp": "While on, Meerkat asks Windows not to sleep, so a long compile or download survives stepping away. It turns itself off if Windows refuses.",
   "settings.alerts": "Alerts for misbehaving apps",
   "settings.alertsEnabled": "Notify me when an app misbehaves",
   "settings.alertCpuMachine": "CPU above, as a share of the whole machine",
