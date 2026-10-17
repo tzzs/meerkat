@@ -20,7 +20,7 @@ export function Card({
   return (
     <section
       className={cn(
-        "relative min-w-0 overflow-hidden rounded-md border border-border bg-card p-4 text-card-foreground",
+        "relative min-w-0 overflow-hidden rounded-[var(--r-card)] bg-card p-4 text-card-foreground shadow-[var(--card-shadow)]",
         className,
       )}
       {...props}
@@ -45,7 +45,7 @@ export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingEle
   return (
     <h3
       className={cn(
-        "m-0 text-xs font-[650] uppercase tracking-[0.03em] text-muted-foreground",
+        "m-0 text-xs font-[650] tracking-[0.02em] text-muted-foreground",
         className,
       )}
       {...props}

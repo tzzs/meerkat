@@ -551,7 +551,7 @@ mod tests {
     use super::*;
     use windows::Win32::System::Registry::{RegDeleteTreeW, RegSetKeyValueW, REG_DWORD};
 
-    const GREEN: (u8, u8, u8) = (94, 203, 143);
+    const GREEN: (u8, u8, u8) = (57, 135, 229);
 
     fn frame<'a>(label: &'a str, series: &'a [f64], layout: Layout, light_bar: bool, size: i32) -> Frame<'a> {
         Frame { label, series, range: (0.0, 100.0), hue: GREEN, layout, light_bar, size }

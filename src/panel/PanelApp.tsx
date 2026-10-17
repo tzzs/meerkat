@@ -12,14 +12,19 @@ import { SPARK_CEILING, sparkPoints, windowPeak } from "../lib/spark";
 import { subscribe } from "../lib/subscribe";
 import { headline, type MetricKind, type Snapshot } from "../lib/types";
 
+/**
+ * The window draws these through `var(--m-*)`; an SVG stroke cannot read a custom property, so
+ * the panel repeats them. They are the dark theme's values — the panel sits on a translucent
+ * card on both themes, where the lighter set would wash out.
+ */
 const HUES: Record<MetricKind, string> = {
-  cpu: "#5ecb8f",
-  memory: "#64a9ff",
-  disk: "#f0b35f",
-  network: "#4fd2da",
-  gpu: "#ea7ac6",
-  battery: "#a3d75f",
-  temperature: "#ff8b5e",
+  cpu: "#3987e5",
+  memory: "#9085e9",
+  disk: "#c98500",
+  network: "#199e70",
+  gpu: "#d55181",
+  battery: "#2fa83a",
+  temperature: "#c98500",
 };
 
 export function PanelApp() {

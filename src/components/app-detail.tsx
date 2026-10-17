@@ -124,7 +124,7 @@ function WslBreakdown() {
   if (memory === null) return null;
   const parts: [string, number, string][] = [
     [t("wsl.used"), memory.usedBytes, "var(--m-memory)"],
-    [t("wsl.cache"), memory.cacheBytes, "color-mix(in oklab, var(--m-memory) 45%, transparent)"],
+    [t("wsl.cache"), memory.cacheBytes, "color-mix(in srgb, var(--m-memory) 45%, transparent)"],
     [t("wsl.free"), memory.freeBytes, "var(--surface-3)"],
   ];
   return (

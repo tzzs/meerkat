@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { formatBytes, formatDuration } from "./lib/format";
 import { ipc, listenNavigate } from "./lib/ipc";
 import { isTabId, openingTab, readLastTab, shortcutHint, tabForShortcut, writeLastTab } from "./lib/navigation";
@@ -15,6 +15,19 @@ import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
 import { AppDetailSheet } from "./components/app-detail";
 import { HistoryTab } from "./components/history";
+
+/** The hue each tab wears in the bar's dot and, when it is on screen, its fill. */
+const TAB_TONE: Record<string, string> = {
+  overview: "var(--accent)",
+  history: "var(--accent)",
+  cpu: "var(--m-cpu)",
+  memory: "var(--m-memory)",
+  disk: "var(--m-disk)",
+  network: "var(--m-network)",
+  gpu: "var(--m-gpu)",
+  battery: "var(--m-battery)",
+  sound: "var(--m-gpu)",
+};
 
 /** `?tab=` lets a probe open the window on a given tab; it outranks the setting. */
 function tabFromUrl(): string | null {
@@ -238,8 +251,9 @@ export default function App() {
       <div className="tabbar">
         <TabsList>
           {tabs.map((x, index) => {
+            const tone = TAB_TONE[x.id];
             const trigger = (
-              <TabsTrigger value={x.id}>
+              <TabsTrigger value={x.id} style={tone ? ({ ["--tone" as string]: tone } as CSSProperties) : undefined}>
                 {t(x.id === "battery" && powerMode === "thermal" ? "metric.temperature" : TAB_LABEL[x.id] ?? "tab.overview")}
               </TabsTrigger>
             );

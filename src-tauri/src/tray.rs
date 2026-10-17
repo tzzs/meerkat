@@ -563,13 +563,15 @@ pub fn compact_rate(bytes_per_second: f64, units: Units, network: bool) -> Strin
 
 fn hue(metric: MetricKind) -> (u8, u8, u8) {
     match metric {
-        MetricKind::Cpu => (94, 203, 143),
-        MetricKind::Memory => (100, 169, 255),
-        MetricKind::Disk => (240, 179, 95),
-        MetricKind::Network => (79, 210, 218),
-        MetricKind::Gpu => (234, 122, 198),
-        MetricKind::Battery => (163, 215, 95),
-        MetricKind::Temperature => (255, 139, 94),
+        // The same hues the window draws with (tokens.css). A tray icon in a different green to
+        // the card below it reads as two different readings.
+        MetricKind::Cpu => (57, 135, 229),
+        MetricKind::Memory => (144, 133, 233),
+        MetricKind::Disk => (201, 133, 0),
+        MetricKind::Network => (25, 158, 112),
+        MetricKind::Gpu => (213, 81, 129),
+        MetricKind::Battery => (47, 168, 58),
+        MetricKind::Temperature => (201, 133, 0),
     }
 }
 

@@ -163,6 +163,11 @@ function sameChart(a: ChartProps, b: ChartProps): boolean {
   return true;
 }
 
+/** A stable id per colour, so two charts of two metrics never share one gradient. */
+function gradientId(color: string) {
+  return `chart-${color.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+}
+
 export const Chart = memo(function Chart({ values, ceiling, color, variant = "area", height = 56 }: ChartProps) {
   const width = 240;
   const held = useHeldCeiling(values.length > 0 ? Math.max(...values) : 0);
@@ -197,8 +202,33 @@ export const Chart = memo(function Chart({ values, ceiling, color, variant = "ar
   const area = `${line} L${width},${height} L0,${height} Z`;
   return (
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img">
-      {variant === "area" && <path d={area} className="chart-area" fill={color} opacity={0.16} />}
-      <path d={line} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      <defs>
+        {/* Vitals' area is a gradient out of the tint rather than a flat wash: it fades to
+            nothing at the floor, so the chart stays legible over any surface. */}
+        <linearGradient id={gradientId(color)} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={0.32} />
+          <stop offset="100%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      {/* Four hairline rules, at the same fraction of the plot whatever its height, so a series
+          can be read against a fixed scale rather than only against itself. */}
+      {/* Only the charts tall enough to read them: a 30px tile with four rules in it is a grid,
+          not a guide. */}
+      {variant === "area" && height >= 48 && (
+        <g className="chart-grid" stroke="var(--line)" strokeWidth="1" vectorEffect="non-scaling-stroke">
+          <path d={[0, 1, 2, 3, 4].map((i) => `M0 ${((height * i) / 4).toFixed(1)}H${width}`).join("")} fill="none" />
+        </g>
+      )}
+      {variant === "area" && <path d={area} fill={`url(#${gradientId(color)})`} />}
+      <path
+        d={line}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }, sameChart);

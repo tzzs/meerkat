@@ -41,7 +41,9 @@ export function ToggleChip({
       <Button
         variant="chip"
         className={cn(
-          "data-[state=on]:border-input data-[state=on]:bg-surface-3 data-[state=on]:font-semibold data-[state=on]:text-foreground",
+          /* Vitals: the chosen chip takes the tone in front of it, and is not made bolder.
+             A grey "selected" reads as disabled; a tinted one reads as chosen. */
+          "data-[state=on]:bg-[color-mix(in_srgb,var(--tone,var(--accent))_14%,transparent)] data-[state=on]:font-semibold data-[state=on]:text-[var(--tone,var(--accent))]",
           className,
         )}
         {...props}

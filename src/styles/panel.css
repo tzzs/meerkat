@@ -11,13 +11,14 @@
   min-width: 340px;
   display: flex;
   flex-direction: column;
-  background: var(--glass);
-  backdrop-filter: blur(28px) saturate(150%);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-lg);
+  background: var(--raised);
+  backdrop-filter: blur(24px);
+  /* No border: the panel's own shadow carries the 1px ring, which is how Vitals keeps a
+     translucent surface from looking like a picture frame. */
+  border-radius: var(--r-panel);
   box-shadow: var(--shadow);
   overflow: hidden;
-  animation: panel-in 180ms var(--ease);
+  animation: panel-in 200ms var(--ease);
 }
 
 @keyframes panel-in {
@@ -77,7 +78,7 @@
 }
 .icon-btn.on {
   color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .panel-metrics {
@@ -99,21 +100,12 @@
   gap: 2px;
   min-width: 0;
   padding: 8px 10px 6px;
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  border: 1px solid var(--hairline);
+  border-radius: var(--r-row);
+  /* A wash of the tile's own hue, as Vitals' `.surface` does it, rather than an opaque surface
+     with a coloured stripe down one edge: the stripe made every tile look pinned. */
+  background: color-mix(in srgb, var(--text) 5.5%, transparent);
   position: relative;
   overflow: hidden;
-}
-.tile::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--hue);
-  opacity: 0.8;
 }
 .tile-label {
   font-size: 10.5px;
@@ -179,17 +171,17 @@
   font-size: 12px;
 }
 .panel-app.clickable:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   outline-offset: -2px;
 }
 .panel-app:hover {
   background: var(--surface-2);
 }
 .panel-app.pinned {
-  background: color-mix(in oklab, var(--accent) 9%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .panel-app:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
   outline-offset: -2px;
 }
 /* The × used to stay at opacity 0 here: the reveal rule only matched the window's .row. */

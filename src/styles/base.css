@@ -59,9 +59,10 @@
 }
 
 .num {
-  font-family: var(--font-num);
+  font-family: var(--font-figure);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.02em;
+  font-weight: 700;
 }
 
 .muted {
@@ -141,12 +142,13 @@
   flex: 1 1 auto;
 }
 
+/* The tab bar is a container, not a row: the tablists inside it are a pill, and the space
+   around them is a gap rather than a rule. */
 .tabbar {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: var(--sp-2) var(--sp-4);
-  border-bottom: 1px solid var(--hairline);
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   background: var(--bg);
   flex: none;
   overflow-x: auto;
@@ -155,29 +157,64 @@
 .tabbar::-webkit-scrollbar {
   display: none;
 }
+
+/* A pill list inside the bar's own row. */
+.tabbar [role="tablist"] {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* Vitals' tab: a rounded-off capsule that takes the metric's own colour when it is the one
+   on screen, and nothing at all otherwise. */
+.tabbar [role="tab"] {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.tabbar [role="tab"]:hover {
+  background: transparent;
+  color: var(--text);
+}
+.tabbar [role="tab"][data-state="active"] {
+  color: var(--tone, var(--text));
+  background: color-mix(in srgb, var(--tone, var(--text)) 16%, transparent);
+}
+/* The left dot each tab carries: its own metric's colour, so the bar reads as a set of hues
+   before anything is selected. */
+.tabbar [role="tab"]::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone, var(--text-3));
+  opacity: 0.75;
+  flex: none;
+}
+.tabbar [role="tab"][data-state="active"]::before {
+  opacity: 1;
+}
+
 /* Carries a tab's shortcut tooltip; a box of its own, so the tooltip has something to anchor to. */
 .tab-hint {
   display: inline-flex;
   flex: none;
-}
-
-/* The selection draws itself in, so switching tabs has a beginning rather than only a
-   result. Keyed on Radix's data-state, scaled from the centre under the label. */
-[role="tab"]::after {
-  content: "";
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 1px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-  transform: scaleX(0);
-  transform-origin: center;
-  transition: transform var(--t-med);
-}
-[role="tab"][data-state="active"]::after {
-  transform: scaleX(1);
 }
 
 .content {

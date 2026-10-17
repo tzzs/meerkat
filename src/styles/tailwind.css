@@ -37,20 +37,20 @@
   --accent-foreground: var(--text);
   --destructive: var(--m-danger);
   --destructive-foreground: #ffffff;
-  --border: var(--hairline);
-  --input: var(--hairline-strong);
+  --border: var(--line);
+  --input: var(--ring);
   --ring: var(--accent);
   --radius: var(--r-md);
   /* Tinted fills, named once so a component says "accent tint" instead of repeating a
      colour-mix formula as an arbitrary value. */
-  --accent-tint: color-mix(in oklab, var(--accent) 18%, transparent);
+  --accent-tint: color-mix(in srgb, var(--accent) 18%, transparent);
   /* The filled part of a slider: strong enough to read as "this much is set", weak enough that
      the live level drawn inside it is still the brighter of the two. */
-  --accent-fill: color-mix(in oklab, var(--accent) 34%, transparent);
-  --danger-tint: color-mix(in oklab, var(--m-danger) 14%, transparent);
-  --danger-edge: color-mix(in oklab, var(--m-danger) 45%, var(--hairline));
+  --accent-fill: color-mix(in srgb, var(--accent) 34%, transparent);
+  --danger-tint: color-mix(in srgb, var(--m-danger) 14%, transparent);
+  --danger-edge: color-mix(in srgb, var(--m-danger) 45%, var(--hairline));
   /* What sits behind a dialog: the page colour pushed most of the way opaque. */
-  --overlay: color-mix(in oklab, var(--bg-deep) 62%, transparent);
+  --overlay: color-mix(in srgb, var(--bg-deep) 62%, transparent);
 }
 
 /* `inline` so the utilities resolve through the aliases at use time, which is what lets the

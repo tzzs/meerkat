@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   formatBytes,
   formatDuration,
@@ -130,7 +130,7 @@ function useRanking(hours: number): RankingRow[] | null {
   return rows;
 }
 
-export function RangePicker({ value, onChange }: { value: number; onChange: (seconds: number) => void }) {
+export function RangePicker({ value, onChange, tone }: { value: number; onChange: (seconds: number) => void; tone?: string }) {
   const { t } = useStore();
   return (
     <ToggleGroup
@@ -140,6 +140,7 @@ export function RangePicker({ value, onChange }: { value: number; onChange: (sec
         if (next) onChange(Number(next));
       }}
       aria-label={t("label.range")}
+      style={tone ? ({ ["--tone" as string]: tone } as CSSProperties) : undefined}
     >
       {RANGES.map((range) => (
         <ToggleChip key={range.seconds} value={String(range.seconds)}>
@@ -245,7 +246,7 @@ function HistoryCard({
   const { units, t } = useStore();
   const stacked = series.length > 1;
   return (
-    <Card right={<RangePicker value={range} onChange={onRangeChange} />}>
+    <Card right={<RangePicker value={range} onChange={onRangeChange} tone={series[0]?.tone} />}>
       <div className="history-stack">
         {series.map((entry, index) => (
           <HistoryChart

@@ -48,7 +48,7 @@
   height: 9px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .titlebar .find {
@@ -142,11 +142,12 @@
 }
 
 .huge {
-  font-family: var(--font-display);
-  font-size: 40px;
+  font-family: var(--font-figure);
+  font-size: 44px;
   font-weight: 700;
   line-height: 1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .hint {
@@ -177,17 +178,15 @@
   gap: 3px;
   min-width: 0;
   text-align: left;
-  padding: var(--sp-3);
-  border-radius: var(--r-md);
-  border: 1px solid var(--hairline);
-  background: var(--surface);
-  transition: border-color var(--t-fast), transform var(--t-fast), background var(--t-fast);
+  padding: var(--sp-4);
+  border-radius: var(--r-card);
+  background: var(--card, var(--surface));
+  box-shadow: var(--card-shadow);
+  transition: background var(--t-fast);
   cursor: pointer;
 }
 .metric-card:hover {
-  border-color: color-mix(in oklab, var(--tone) 45%, var(--hairline));
   background: var(--surface-2);
-  transform: translateY(-1px);
 }
 .metric-card .chart {
   height: 30px;
@@ -207,12 +206,12 @@
   flex: none;
 }
 .metric-value {
-  font-family: var(--font-display);
+  font-family: var(--font-figure);
   font-size: 21px;
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.02em;
-  color: var(--tone);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -334,7 +333,7 @@
 }
 .core-fill {
   width: 100%;
-  background: linear-gradient(180deg, var(--m-cpu), color-mix(in oklab, var(--m-cpu) 45%, transparent));
+  background: linear-gradient(180deg, var(--m-cpu), color-mix(in srgb, var(--m-cpu) 45%, transparent));
   border-radius: 3px;
   transition: height var(--t-fast);
 }
@@ -372,9 +371,11 @@
 }
 
 .meter {
-  height: 5px;
+  height: 6px;
   border-radius: 3px;
-  background: var(--surface-3);
+  /* The empty part of the track is the same hue as the fill, a little way down: Vitals'
+     neutral grey track reads as unconnected to the bar in front of it. */
+  background: color-mix(in srgb, var(--tone, var(--text-3)) 14%, transparent);
   overflow: hidden;
 }
 .meter-fill {
@@ -384,7 +385,8 @@
   /* Scaled, not resized. Every row redraws its meter on every sample, and animating `width`
      makes the browser lay the whole list out each time; a transform is composited. */
   transform-origin: left center;
-  transition: transform var(--t-med);
+  /* Vitals' 600ms: a bar that moves this fast twitches, and a measurement does not. */
+  transition: transform var(--t-bar);
 }
 
 .legend {
@@ -408,7 +410,7 @@
 }
 .swatch.sys,
 .split.sys {
-  background: color-mix(in oklab, var(--m-cpu) 45%, var(--surface-3));
+  background: color-mix(in srgb, var(--m-cpu) 45%, var(--surface-3));
 }
 
 .split-bar {
@@ -523,8 +525,8 @@
   grid-template-columns: 24px minmax(120px, 300px) minmax(60px, 1fr) 84px 22px;
   align-items: center;
   gap: var(--sp-3);
-  padding: 7px 4px;
-  border-radius: var(--r-sm);
+  padding: 7px var(--sp-3);
+  border-radius: var(--r-row);
   transition: background var(--t-fast);
 }
 /* An insight has no meter and no value, so it does not use the application row's columns. */
@@ -533,10 +535,10 @@
 }
 
 .row:hover {
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--text) 9.5%, transparent);
 }
 .row.pinned {
-  background: color-mix(in oklab, var(--accent) 9%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .row-main {
   display: flex;
@@ -572,7 +574,7 @@
 }
 /* A row opens its app's details; the keyboard gets there too, so it needs a visible focus. */
 .row.clickable:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   outline-offset: -2px;
 }
 .row-quit {
@@ -588,7 +590,7 @@
   opacity: 1;
 }
 .row:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
   outline-offset: -2px;
 }
 
@@ -691,7 +693,7 @@
 }
 .row-quit:hover {
   color: var(--m-danger);
-  background: color-mix(in oklab, var(--m-danger) 16%, transparent);
+  background: color-mix(in srgb, var(--m-danger) 16%, transparent);
 }
 
 .mono-avatar {
@@ -1155,7 +1157,7 @@
   background: var(--surface-2);
 }
 .event-row.clickable:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   outline-offset: -2px;
 }
 .event-dot {
@@ -1196,7 +1198,7 @@
   opacity: 1;
 }
 .port-row.clickable:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   outline-offset: -2px;
 }
 .port-number {
