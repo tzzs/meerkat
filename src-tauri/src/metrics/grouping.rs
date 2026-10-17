@@ -3,24 +3,22 @@
 //!
 //! Rule: a process belongs to the nearest ancestor that lives in the same installation
 //! directory, so `chrome.exe --type=renderer`, `Code Helper (Plugin).exe` and
-//! `msedge.exe --type=utility` fold into the app the user can see. Where Windows itself
-//! splits one executable into many roles (`svchost.exe -k NetworkService`), the role is
-//! part of the key instead.
-//!
-//! Same directory is evidence of one application only where the directory is the application's
-//! own. The Windows directory is shared by hundreds of unrelated programs, and the processes
-//! that start them (the session manager, the service controller, the shell) are never the
-//! application: see [`is_host`].
+//! `msedge.exe --type=utility` fold into the app the user can see. The Windows directory is the
+//! exception: everything in it shares one folder without being one program. Where Windows itself
+//! splits one executable into many roles (`svchost.exe`), the services it runs are part of the
+//! key instead, and name the row.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
-use sysinfo::{Pid, Process, System};
 use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
 
 use super::netinfo::TcpOwnership;
+use super::ntproc::{Processes, Sampled};
+use super::services::Service;
 use super::wins::TopWindow;
 use crate::models::{AppInfo, AppKind, WindowInfo};
 
@@ -36,8 +34,6 @@ pub struct ProcSample {
     pub cpu_percent: f64,
     pub read_total: u64,
     pub write_total: u64,
-    /// When the process started, in milliseconds since the Unix epoch (a resolution of one
-    /// second). `None` when Windows would not say.
     pub started_at_ms: Option<u64>,
     pub args: Vec<String>,
     pub measurable: bool,
@@ -72,107 +68,69 @@ impl ProcSample {
     }
 }
 
-pub fn collect(sys: &System) -> Vec<ProcSample> {
-    let snapshot = snapshot_names();
-    let mut out = Vec::with_capacity(sys.processes().len());
-    for (pid, p) in sys.processes() {
-        out.push(sample(pid, p, &snapshot));
-    }
-    out
+pub fn collect(processes: &mut Processes) -> Vec<ProcSample> {
+    let sampled = processes.sample();
+    let created: HashMap<u32, u64> = sampled
+        .iter()
+        .map(|s| (s.process.pid, s.process.create_time))
+        .collect();
+    sampled.into_iter().map(|s| sample(s, &created)).collect()
 }
 
-/// The image name of every process on the machine.
-///
-/// sysinfo can only describe a process it can open, and without administrative rights most
-/// of Session 0 cannot be opened — which left 181 of 285 rows in the app list with an empty
-/// name and an empty path. A Toolhelp snapshot needs no handle rights at all, so it supplies
-/// the name sysinfo has to leave blank.
-fn snapshot_names() -> HashMap<u32, String> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
-
-    let mut out = HashMap::new();
-    unsafe {
-        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return out;
-        };
-        let mut entry = PROCESSENTRY32W {
-            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
-        if Process32FirstW(snapshot, &mut entry).is_ok() {
-            loop {
-                let used = entry
-                    .szExeFile
-                    .iter()
-                    .position(|c| *c == 0)
-                    .unwrap_or(entry.szExeFile.len());
-                out.insert(
-                    entry.th32ProcessID,
-                    String::from_utf16_lossy(&entry.szExeFile[..used]),
-                );
-                if Process32NextW(snapshot, &mut entry).is_err() {
-                    break;
-                }
-            }
-        }
-        let _ = CloseHandle(snapshot);
-    }
-    out
-}
-
-fn sample(pid: &Pid, p: &Process, snapshot: &HashMap<u32, String>) -> ProcSample {
-    let exe = p
-        .exe()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir = exe
+fn sample(s: Sampled, created: &HashMap<u32, u64>) -> ProcSample {
+    let Sampled { process, identity, cpu_percent } = s;
+    let dir = identity
+        .exe
         .rsplit_once(['\\', '/'])
         .map(|(head, _)| head.to_lowercase())
         .unwrap_or_default();
-    let usage = p.disk_usage();
-    // sysinfo's start time is whole seconds since the Unix epoch.
-    let started_at_ms = if p.start_time() == 0 {
-        None
-    } else {
-        Some(p.start_time().saturating_mul(1000))
-    };
-    let measurable = !exe.is_empty();
-    let reported = p.name().to_string_lossy().to_string();
-    let name = if reported.is_empty() {
-        snapshot.get(&pid.as_u32()).cloned().unwrap_or_default()
-    } else {
-        reported
-    };
-    let can_quit = !exe.is_empty();
+    // Windows records the pid of whoever started a process and never updates it, so once that
+    // parent exits the number can be handed to something unrelated. A real parent is older than
+    // its child; anything younger wearing the parent's pid is a stranger.
+    let ppid = (process.parent_pid != 0 && process.parent_pid != process.pid)
+        .then_some(process.parent_pid)
+        .filter(|ppid| created.get(ppid).is_some_and(|born| *born <= process.create_time));
     ProcSample {
-        pid: pid.as_u32(),
-        ppid: p.parent().map(|pp| pp.as_u32()),
-        name,
-        exe,
+        pid: process.pid,
+        ppid,
+        started_at_ms: process.started_at_ms(),
+        session: Some(process.session_id),
+        memory_bytes: process.working_set,
+        cpu_percent,
+        read_total: process.read_bytes,
+        write_total: process.write_bytes,
+        private_bytes: process.private_bytes,
+        threads: process.threads,
+        handles: process.handles,
+        project: identity.project,
+        name: process.name,
+        exe: identity.exe,
         dir,
-        session: p.session_id().map(|s| s.as_u32()),
-        memory_bytes: p.memory(),
-        cpu_percent: p.cpu_usage() as f64,
-        read_total: usage.total_read_bytes,
-        write_total: usage.total_written_bytes,
-        started_at_ms,
-        args: p.cmd().iter().map(|s| s.to_string_lossy().to_string()).collect(),
-        measurable,
-        // A row may only offer to close what this user is allowed to end. With sysinfo's
-        // handle-based view that is anything with a path, which excludes the Session 0 rows.
-        can_quit,
-        private_bytes: p.memory(),
-        threads: 0,
-        handles: 0,
-        project: None,
+        args: identity.args,
+        // The kernel's table measures every process, readable or not.
+        measurable: true,
+        can_quit: identity.can_terminate,
     }
 }
 
-/// Per-process byte rates derived from sysinfo's cumulative counters.
+/// `C:\Windows`, lowercased like `ProcSample::dir`.
+fn windows_dir() -> &'static str {
+    static DIR: OnceLock<String> = OnceLock::new();
+    DIR.get_or_init(|| {
+        std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| "C:\\Windows".to_string())
+            .trim_end_matches('\\')
+            .to_lowercase()
+    })
+}
+
+fn in_windows_dir(dir: &str) -> bool {
+    let root = windows_dir();
+    dir == root || (dir.starts_with(root) && dir[root.len()..].starts_with('\\'))
+}
+
+/// Per-process byte rates derived from the kernel's cumulative transfer counters.
 pub struct IoRates {
     previous: HashMap<u32, (u64, u64)>,
     elapsed: std::time::Instant,
@@ -339,6 +297,7 @@ pub fn group(
     tcp: &TcpOwnership,
     io: &HashMap<u32, (f64, f64)>,
     names: &mut NameCache,
+    services: &HashMap<u32, Vec<Service>>,
 ) -> Vec<AppInfo> {
     let by_pid: HashMap<u32, &ProcSample> = procs.iter().map(|p| (p.pid, p)).collect();
 
@@ -358,6 +317,10 @@ pub fn group(
         connections: usize,
         ports: Vec<u16>,
         unmeasured: usize,
+        services: Vec<String>,
+        /// The processes the others were folded into: the app as the user started it.
+        roots: Vec<u32>,
+        project: Option<String>,
     }
 
     let mut groups: HashMap<String, Agg> = HashMap::new();
@@ -365,11 +328,10 @@ pub fn group(
     let mut hidden: Vec<u32> = Vec::new();
 
     for p in procs {
-        // A process we cannot open has no path, no memory and no cpu, so on a machine without
-        // administrative rights it becomes a row of nothing — 181 of them here, most of them
-        // service hosts. They fold into one row that says how many were set aside rather than
-        // burying the applications. Anything still showing evidence of life (a window, a
-        // socket, a listening port) stays listed under the name the snapshot gives us.
+        // A process with no figures at all would be a row of nothing. The kernel's table
+        // measures every process, so this no longer happens in practice, but a sample built any
+        // other way still folds such processes into one row that says how many were set aside.
+        // Anything showing evidence of life (a window, a socket, a listening port) stays listed.
         if !p.measurable
             && p.cpu_percent == 0.0
             && p.memory_bytes == 0
@@ -380,7 +342,7 @@ pub fn group(
             hidden.push(p.pid);
             continue;
         }
-        let (anchor_key, anchor_exe, anchor_name) = resolve_anchor(p, &by_pid, names);
+        let (anchor_key, anchor_exe, anchor_name, root) = resolve_anchor(p, &by_pid, names, services);
         let g = groups.entry(anchor_key.clone()).or_insert_with(|| Agg {
             key: anchor_key,
             exe: anchor_exe,
@@ -388,6 +350,17 @@ pub fn group(
             ..Default::default()
         });
         g.pids.push(p.pid);
+        if !g.roots.contains(&root) {
+            g.roots.push(root);
+        }
+        if g.project.is_none() {
+            g.project = by_pid.get(&root).and_then(|r| r.project.clone());
+        }
+        for service in services.get(&p.pid).into_iter().flatten() {
+            if !g.services.contains(&service.display_name) {
+                g.services.push(service.display_name.clone());
+            }
+        }
         g.cpu += p.cpu_percent;
         g.memory += p.memory_bytes;
         if let Some((r, w)) = io.get(&p.pid) {
@@ -442,15 +415,20 @@ pub fn group(
         titled.sort_by(|a, b| b.visible.cmp(&a.visible));
         titled.truncate(24);
         g.ports.sort_unstable();
-        let pids: &[u32] = &g.pids;
 
-        let kind = classify(&g.exe, &g.name, g.pids.iter().min().copied().unwrap_or(0), &by_pid, any_visible);
+        // What the app is, and whether it can be ended, is decided by the processes it was
+        // started as, not by its helpers: Defender's session helper is the user's own process,
+        // but ending it would not end Defender, and it does not make Defender a background app.
+        g.roots.sort_unstable();
+        let main = g.roots.first().copied().unwrap_or(0);
+        let can_quit = g.roots.iter().any(|root| by_pid.get(root).is_some_and(|p| p.can_quit));
+        let kind = classify(&g.exe, main, &by_pid, any_visible);
         out.push(AppInfo {
             key: g.key,
             name: g.name,
             exe_path: g.exe,
             kind,
-            main_pid: g.pids.iter().copied().min().unwrap_or(0),
+            main_pid: main,
             process_count: g.pids.len(),
             cpu_percent: g.cpu,
             memory_bytes: g.memory,
@@ -462,12 +440,12 @@ pub fn group(
             listening_ports: g.ports,
             oldest_started_at_ms: g.oldest,
             windows: titled,
-            pids: pids.to_vec(),
+            pids: g.pids,
             unmeasured_processes: g.unmeasured,
-            services: Vec::new(),
-            can_quit: pids.iter().any(|pid| by_pid.get(pid).is_some_and(|p| p.can_quit)),
-            control: crate::models::AppControl::default(),
-            project: None,
+            services: g.services,
+            can_quit,
+            control: Default::default(),
+            project: g.project,
         });
     }
 
@@ -503,7 +481,7 @@ pub fn group(
             unmeasured_processes: count,
             services: Vec::new(),
             can_quit: false,
-            control: crate::models::AppControl::default(),
+            control: Default::default(),
             project: None,
         });
     }
@@ -511,60 +489,24 @@ pub fn group(
     out
 }
 
-/// The lower-cased image name: the file name of the path, or the snapshot's name for a process
-/// whose path could not be read.
-fn image_name(p: &ProcSample) -> String {
-    let from_path = p.exe.rsplit(['\\', '/']).next().unwrap_or("");
-    let name = if from_path.is_empty() { p.name.as_str() } else { from_path };
-    name.to_lowercase()
-}
-
-/// A process that starts programs which have nothing to do with it: the session manager and
-/// the processes it starts, the service controller and its service hosts, the logon and
-/// security processes, and the shell. They live in the Windows directory next to every other
-/// tool, so "same directory as the parent" says nothing there. Elevated, `svchost.exe` →
-/// `services.exe` → `wininit.exe` is a chain of System32 images, and folding it by directory
-/// turned every service host, and every System32 helper started by one, into a single
-/// "wininit" app and wiped out the per-role split of `svchost.exe`.
-fn is_host(p: &ProcSample) -> bool {
-    let image = image_name(p);
-    PIDDEN_EXES.contains(&image.as_str()) || matches!(image.as_str(), "explorer.exe" | "lsm.exe")
-}
-
-/// Whether this user may end the process: anything with a real executable path is theirs to
-/// close, and the rows with no path are Windows' own. `quit` checks again through the handle it
-/// opens, so this is only what the row offers.
-fn can_terminate(exe: &str) -> bool {
-    !exe.is_empty()
-}
-
-/// Whether `child` is part of the application `parent` anchors: they live in the same directory,
-/// neither is a host, and the parent did not start after the child — a parent id can have been
-/// reused by an unrelated process once the real parent exited, and such a "parent" is younger
-/// than the child it claims.
-fn folds_into(child: &ProcSample, parent: &ProcSample) -> bool {
-    if child.dir.is_empty() || parent.dir.is_empty() || child.dir != parent.dir {
-        return false;
-    }
-    if is_host(child) || is_host(parent) {
-        return false;
-    }
-    match (child.started_at_ms, parent.started_at_ms) {
-        (Some(child_start), Some(parent_start)) => parent_start <= child_start,
-        _ => true,
-    }
-}
-
 fn resolve_anchor(
     p: &ProcSample,
     by_pid: &HashMap<u32, &ProcSample>,
     names: &mut NameCache,
-) -> (String, String, String) {
+    services: &HashMap<u32, Vec<Service>>,
+) -> (String, String, String, u32) {
     let mut current: &ProcSample = p;
     for _ in 0..16 {
         let Some(ppid) = current.ppid else { break };
         let Some(parent) = by_pid.get(&ppid) else { break };
-        if !folds_into(current, parent) {
+        if current.dir.is_empty() || parent.dir.is_empty() || parent.dir != current.dir {
+            break;
+        }
+        // System32 is shared by hundreds of programs that start one another: services.exe
+        // starts every service host, a service host starts brokers and COM surrogates, and
+        // wininit starts services.exe. Climbing through them would fold half of Windows into
+        // wininit, so in the Windows directory each executable stands on its own.
+        if in_windows_dir(&current.dir) {
             break;
         }
         current = parent;
@@ -572,7 +514,7 @@ fn resolve_anchor(
 
     let exe = current.exe.clone();
     // Without a path there is no product name to read either, so the image name from the
-    // snapshot is the best label available.
+    // kernel's table is the best label available.
     let base = if exe.is_empty() {
         current.name.as_str()
     } else {
@@ -580,23 +522,45 @@ fn resolve_anchor(
     };
     let stem = base.trim_end_matches(".exe").to_string();
 
-    // svchost and dllhost reuse one executable for many unrelated roles.
-    let role = role_suffix(current);
-    let key = if exe.is_empty() {
-        format!("pid:{}", current.pid)
-    } else {
-        match &role {
-            Some(r) => format!("{}|{}", exe.to_lowercase(), r),
-            None => exe.to_lowercase(),
-        }
-    };
+    if exe.is_empty() {
+        // The pseudo processes (System, Registry, Memory Compression) have no file but do have
+        // a fixed name, which keeps their key the same from one boot to the next; history and
+        // dismissed alerts are filed under it.
+        let key = if current.name.is_empty() {
+            format!("pid:{}", current.pid)
+        } else {
+            format!("image:{}", current.name.to_lowercase())
+        };
+        return (key, exe, stem, current.pid);
+    }
 
-    let display = match (&role, names.describe(&exe)) {
-        (Some(r), _) => format!("Service host: {r}"),
-        (None, Some(description)) => description,
-        (None, None) => stem,
-    };
-    (key, exe, display)
+    let lower = exe.to_lowercase();
+    // One `node.exe` serves every project on the machine; the project is what the row is.
+    if super::projects::is_runtime(base) {
+        if let Some(project) = &current.project {
+            let folder = project.rsplit(['\\', '/']).next().unwrap_or(project);
+            return (format!("{lower}|project:{}", project.to_lowercase()), exe.clone(), format!("{folder} · {stem}"), current.pid);
+        }
+    }
+    if base.eq_ignore_ascii_case("svchost.exe") {
+        // One executable, a hundred unrelated services. The services a host runs are what it
+        // is, so they make the key and the first of them names the row.
+        if let Some(hosted) = services.get(&current.pid).filter(|list| !list.is_empty()) {
+            let mut ids: Vec<String> = hosted.iter().map(|s| s.name.to_lowercase()).collect();
+            ids.sort_unstable();
+            return (format!("{lower}|svc:{}", ids.join("+")), exe, hosted[0].display_name.clone(), current.pid);
+        }
+        // Not in the service list (it started a moment ago): the group from its command line,
+        // when its owner lets us read that, and otherwise the process itself.
+        let key = match role_suffix(current) {
+            Some(role) => format!("{lower}|{role}"),
+            None => format!("{lower}|pid:{}", current.pid),
+        };
+        return (key, exe, stem, current.pid);
+    }
+
+    let display = names.describe(&exe).unwrap_or(stem);
+    (lower, exe, display, current.pid)
 }
 
 fn role_suffix(p: &ProcSample) -> Option<String> {
@@ -613,16 +577,10 @@ fn role_suffix(p: &ProcSample) -> Option<String> {
     p.args.get(position + 1).cloned()
 }
 
-fn classify(
-    exe: &str,
-    _display: &str,
-    lowest_pid: u32,
-    by_pid: &HashMap<u32, &ProcSample>,
-    has_visible_window: bool,
-) -> AppKind {
+fn classify(exe: &str, main: u32, by_pid: &HashMap<u32, &ProcSample>, has_visible_window: bool) -> AppKind {
     let lower = exe.to_lowercase();
     let file = lower.rsplit(['\\', '/']).next().unwrap_or("");
-    if lowest_pid <= 8 || file.is_empty() {
+    if main <= 8 || file.is_empty() {
         return AppKind::System;
     }
     if lower.contains("\\windowsapps\\") {
@@ -635,10 +593,16 @@ fn classify(
             AppKind::System
         };
     }
-    if let Some(p) = by_pid.get(&lowest_pid) {
-        if p.session == Some(0) {
-            return AppKind::Service;
-        }
+    let root = by_pid.get(&main);
+    if root.is_some_and(|p| p.session == Some(0)) {
+        return AppKind::Service;
+    }
+    // A Windows component running in the user's session under an account of its own: the
+    // desktop compositor is the one everybody sees, and calling it a background app the user
+    // could close would be wrong on both counts.
+    let dir = lower.rsplit_once('\\').map(|(head, _)| head).unwrap_or("");
+    if in_windows_dir(dir) && root.is_some_and(|p| !p.can_quit) {
+        return AppKind::System;
     }
     if has_visible_window {
         AppKind::App
@@ -670,25 +634,209 @@ mod tests {
             started_at_ms: None,
             args: Vec::new(),
             measurable,
-            can_quit: true,
+            can_quit: false,
             private_bytes: 0,
-            threads: 0,
-            handles: 0,
+            threads: 1,
+            handles: 1,
             project: None,
         }
     }
 
+    fn child(pid: u32, ppid: u32, exe: &str) -> ProcSample {
+        let image = exe.rsplit('\\').next().unwrap_or(exe);
+        ProcSample { ppid: Some(ppid), memory_bytes: 1 << 20, ..proc(pid, exe, image, true) }
+    }
+
+    /// What makes a helper is that it lives with the program it serves, not that it is the same
+    /// executable: `chrome_proxy.exe` is a different file in Chrome's own folder, and a group
+    /// that split on file name would show the browser twice.
+    #[test]
+    fn a_differently_named_helper_in_the_same_folder_is_still_the_app() {
+        let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        let procs = vec![
+            ProcSample { can_quit: true, ..child(1000, 1, chrome) },
+            child(1001, 1000, chrome),
+            child(1002, 1000, r"C:\Program Files\Google\Chrome\Application\chrome_proxy.exe"),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 1, "the proxy folded into the browser");
+        assert_eq!(apps[0].process_count, 3);
+    }
+
+    /// The shell starts almost everything in a person's session, and Windows' own tools live in
+    /// the same folder it does: folding by directory would make regedit, notepad and every other
+    /// System32 program a piece of Explorer.
+    #[test]
+    fn what_the_shell_starts_from_its_own_directory_is_not_the_shell() {
+        let procs = vec![
+            child(900, 1, r"C:\Windows\explorer.exe"),
+            child(901, 900, r"C:\Windows\regedit.exe"),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(keys(&apps), vec![r"c:\windows\explorer.exe", r"c:\windows\regedit.exe"]);
+    }
+
+    fn keys(apps: &[AppInfo]) -> Vec<String> {
+        let mut keys: Vec<String> = apps.iter().map(|app| app.key.clone()).collect();
+        keys.sort();
+        keys
+    }
+
     fn empty_tcp() -> TcpOwnership {
-        TcpOwnership {
-            connections: HashMap::new(),
-            listening: HashMap::new(),
-            total_connections: 0,
-            listeners: Vec::new(),
-        }
+        TcpOwnership::default()
     }
 
     fn group_of(procs: &[ProcSample], tcp: TcpOwnership, windows: &[TopWindow]) -> Vec<AppInfo> {
-        group(procs, windows, &tcp, &HashMap::new(), &mut NameCache::default())
+        group(procs, windows, &tcp, &HashMap::new(), &mut NameCache::default(), &HashMap::new())
+    }
+
+    fn group_with_services(procs: &[ProcSample], services: &HashMap<u32, Vec<Service>>) -> Vec<AppInfo> {
+        group(procs, &[], &empty_tcp(), &HashMap::new(), &mut NameCache::default(), services)
+    }
+
+    fn service(name: &str, display: &str) -> Service {
+        Service { name: name.to_string(), display_name: display.to_string() }
+    }
+
+    const SVCHOST: &str = r"C:\Windows\System32\svchost.exe";
+
+    /// Every service host is the same executable; the services in it are what tell them apart,
+    /// and the name Windows gives the service is what the row says.
+    #[test]
+    fn service_hosts_are_keyed_and_named_by_their_services() {
+        let procs = vec![child(1000, 900, SVCHOST), child(1001, 900, SVCHOST), child(1002, 900, SVCHOST)];
+        let mut services = HashMap::new();
+        services.insert(1000, vec![service("wuauserv", "Windows 更新")]);
+        services.insert(1001, vec![service("WSearch", "Windows Search")]);
+        services.insert(1002, vec![service("mpssvc", "Windows Defender Firewall"), service("BFE", "Base Filtering Engine")]);
+
+        let apps = group_with_services(&procs, &services);
+
+        assert_eq!(apps.len(), 3, "three hosts, three rows");
+        let update = apps.iter().find(|a| a.pids == vec![1000]).unwrap();
+        assert_eq!(update.name, "Windows 更新");
+        assert_eq!(update.key, format!("{}|svc:wuauserv", SVCHOST.to_lowercase()));
+        assert_eq!(update.kind, AppKind::Service);
+        let shared = apps.iter().find(|a| a.pids == vec![1002]).unwrap();
+        assert_eq!(shared.key, format!("{}|svc:bfe+mpssvc", SVCHOST.to_lowercase()), "sorted, so the key is stable");
+        assert_eq!(shared.services, vec!["Windows Defender Firewall", "Base Filtering Engine"]);
+    }
+
+    /// services.exe starts every service host from the same folder. Climbing the tree there
+    /// folded every service on the machine into one row named after wininit.
+    #[test]
+    fn programs_in_the_windows_directory_do_not_fold_into_their_parent() {
+        let procs = vec![
+            child(600, 500, r"C:\Windows\System32\wininit.exe"),
+            child(700, 600, r"C:\Windows\System32\services.exe"),
+            child(800, 700, SVCHOST),
+            child(810, 800, r"C:\Windows\System32\dllhost.exe"),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 4, "each executable is its own row");
+    }
+
+    /// The rule the whole engine exists for still holds outside the Windows directory.
+    #[test]
+    fn helpers_in_an_install_directory_fold_into_the_app() {
+        let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        let root = ProcSample { can_quit: true, ..child(2000, 1, chrome) };
+        let procs = vec![root, child(2001, 2000, chrome), child(2002, 2001, chrome)];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].process_count, 3);
+        assert_eq!(apps[0].main_pid, 2000, "the process the others fold into");
+        assert!(apps[0].can_quit);
+    }
+
+    /// Measured on Defender: the engine runs in Session 0 and starts a helper in the user's
+    /// session. The helper has the lower pid and is the user's to end, and judging the row by
+    /// it called Defender a background app with a working ×.
+    #[test]
+    fn an_app_is_judged_by_its_root_not_by_a_helper() {
+        let platform = r"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18\";
+        let engine = ProcSample { session: Some(0), ..child(6180, 2004, &format!("{platform}MsMpEng.exe")) };
+        let helper = ProcSample { can_quit: true, ..child(3356, 6180, &format!("{platform}DefenderSessionHelper.exe")) };
+        let apps = group_of(&[engine, helper], empty_tcp(), &[]);
+        assert_eq!(apps.len(), 1, "the helper folds into the engine");
+        assert_eq!(apps[0].kind, AppKind::Service);
+        assert!(!apps[0].can_quit, "ending the helper would not end Defender");
+    }
+
+    /// The desktop compositor runs in the user's session under an account of its own.
+    #[test]
+    fn a_windows_component_the_user_cannot_end_is_system() {
+        let dwm = child(2396, 1100, r"C:\Windows\System32\dwm.exe");
+        assert_eq!(group_of(&[dwm.clone()], empty_tcp(), &[])[0].kind, AppKind::System);
+        let mine = ProcSample { can_quit: true, ..child(4000, 1100, r"C:\Windows\System32\ctfmon.exe") };
+        assert_eq!(group_of(&[mine], empty_tcp(), &[])[0].kind, AppKind::Background);
+    }
+
+    /// Three worktrees each running a dev server were one "Node.js" row with three ports.
+    #[test]
+    fn runtime_processes_split_by_project() {
+        let node = r"C:\Program Files\nodejs\node.exe";
+        let in_project = |pid: u32, project: &str| ProcSample { project: Some(project.to_string()), ..child(pid, 1, node) };
+        let procs = vec![
+            in_project(100, r"E:\work\site"),
+            ProcSample { ppid: Some(100), ..in_project(101, r"E:\work\site") },
+            in_project(200, r"E:\work\api"),
+            child(300, 1, node),
+        ];
+        let apps = group_of(&procs, empty_tcp(), &[]);
+        assert_eq!(apps.len(), 3, "two projects and one node with no project");
+        let site = apps.iter().find(|a| a.name == "site · node").expect("named after the project folder");
+        assert_eq!(site.process_count, 2);
+        assert_eq!(site.project.as_deref(), Some(r"E:\work\site"));
+        assert!(site.key.ends_with(r"|project:e:\work\site"));
+    }
+
+    /// A row Windows will not let this user end must not offer to end it.
+    #[test]
+    fn a_group_nobody_may_end_says_so() {
+        let apps = group_of(&[child(1000, 900, SVCHOST)], empty_tcp(), &[]);
+        assert!(!apps[0].can_quit);
+    }
+
+    /// The pseudo processes have no file but a fixed name, and that name keys them, so the
+    /// same row comes back after a reboot gave them different pids.
+    #[test]
+    fn a_process_without_a_file_is_keyed_by_its_name() {
+        let apps = group_of(&[child(4, 0, ""), child(3112, 4, "")], empty_tcp(), &[]);
+        assert_eq!(apps.len(), 2, "with no name either, each falls back to its pid");
+        assert!(apps.iter().any(|a| a.key == "pid:4"));
+        // The kernel's table calls it "Memory Compression"; the image-path query says
+        // "MemCompression". The table is where the name comes from.
+        let named = group_of(&[ProcSample { name: "Memory Compression".into(), ..child(3112, 4, "") }], empty_tcp(), &[]);
+        assert_eq!(named[0].key, "image:memory compression");
+        assert_eq!(named[0].name, "Memory Compression");
+        assert_eq!(named[0].kind, AppKind::System);
+    }
+
+    /// Windows never updates a process's parent pid, so a dead parent's number can be handed to
+    /// something younger; only an older process can really be the parent.
+    #[test]
+    fn a_younger_process_wearing_the_parents_pid_is_not_the_parent() {
+        use super::super::ntproc::{Identity, NtProcess, Sampled};
+        let process = |pid: u32, parent_pid: u32, create_time: u64| NtProcess {
+            pid,
+            parent_pid,
+            name: "x.exe".into(),
+            session_id: 1,
+            create_time,
+            cpu_time: 0,
+            working_set: 1,
+            private_bytes: 1,
+            read_bytes: 0,
+            write_bytes: 0,
+            threads: 1,
+            handles: 1,
+        };
+        let sampled = |p: NtProcess| Sampled { process: p, identity: Identity::default(), cpu_percent: 0.0 };
+        let created: HashMap<u32, u64> = [(10, 500), (20, 100)].into_iter().collect();
+        assert_eq!(sample(sampled(process(30, 10, 400)), &created).ppid, None, "pid 10 started after it");
+        assert_eq!(sample(sampled(process(31, 20, 400)), &created).ppid, Some(20));
+        assert_eq!(sample(sampled(process(32, 99, 400)), &created).ppid, None, "a parent that is gone");
     }
 
     /// Ten processes nobody can open have to become one honest row, not ten blank ones.
@@ -717,17 +865,12 @@ mod tests {
         let procs = vec![proc(300, "", "svchost.exe", false)];
         let mut listening = HashMap::new();
         listening.insert(300u32, vec![445u16]);
-        let tcp = TcpOwnership {
-            connections: HashMap::new(),
-            listening,
-            total_connections: 1,
-            listeners: Vec::new(),
-        };
+        let tcp = TcpOwnership { listening, total_connections: 1, ..Default::default() };
 
         let apps = group_of(&procs, tcp, &[]);
 
         assert_eq!(apps.len(), 1);
-        assert_eq!(apps[0].key, "pid:300");
+        assert_eq!(apps[0].key, "image:svchost.exe");
         assert_eq!(apps[0].name, "svchost");
         assert_eq!(apps[0].listening_ports, vec![445]);
     }
@@ -749,144 +892,6 @@ mod tests {
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].name, "protected");
         assert_eq!(apps[0].windows[0].title, "Something");
-    }
-
-    const SYSTEM32: &str = "C:\\Windows\\System32\\";
-
-    /// A process of `exe` started by `ppid`, at `started` seconds since the epoch.
-    fn child(pid: u32, ppid: u32, exe: &str, started: u64) -> ProcSample {
-        let image = exe.rsplit(['\\', '/']).next().unwrap_or(exe);
-        let mut p = proc(pid, exe, image, true);
-        p.ppid = Some(ppid);
-        p.started_at_ms = Some(started * 1000);
-        p
-    }
-
-    fn with_args(mut p: ProcSample, args: &[&str]) -> ProcSample {
-        p.args = args.iter().map(|a| a.to_string()).collect();
-        p
-    }
-
-    fn keys(apps: &[AppInfo]) -> Vec<String> {
-        let mut keys: Vec<String> = apps.iter().map(|a| a.key.clone()).collect();
-        keys.sort();
-        keys
-    }
-
-    /// Elevated, every System32 image can be read, and they all share one directory. This chain
-    /// used to fold into a single app named after its root.
-    #[test]
-    fn the_windows_service_chain_stays_apart() {
-        let procs = vec![
-            child(300, 4, &format!("{SYSTEM32}smss.exe"), 100),
-            child(400, 300, &format!("{SYSTEM32}wininit.exe"), 101),
-            child(410, 400, &format!("{SYSTEM32}lsass.exe"), 102),
-            child(500, 400, &format!("{SYSTEM32}services.exe"), 102),
-            with_args(child(600, 500, &format!("{SYSTEM32}svchost.exe"), 103), &["-k", "netsvcs"]),
-            with_args(child(610, 500, &format!("{SYSTEM32}svchost.exe"), 103), &["-k", "DcomLaunch"]),
-            // Started by a service host, in the same directory: its own program.
-            child(700, 610, &format!("{SYSTEM32}RuntimeBroker.exe"), 200),
-        ];
-
-        let apps = group_of(&procs, empty_tcp(), &[]);
-
-        assert_eq!(
-            keys(&apps),
-            vec![
-                "c:\\windows\\system32\\lsass.exe",
-                "c:\\windows\\system32\\runtimebroker.exe",
-                "c:\\windows\\system32\\services.exe",
-                "c:\\windows\\system32\\smss.exe",
-                "c:\\windows\\system32\\svchost.exe|DcomLaunch",
-                "c:\\windows\\system32\\svchost.exe|netsvcs",
-                "c:\\windows\\system32\\wininit.exe",
-            ]
-        );
-        assert!(apps.iter().all(|a| a.process_count == 1), "nothing was folded into anything");
-    }
-
-    #[test]
-    fn a_browser_and_its_helpers_are_one_app() {
-        let chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-        let procs = vec![
-            child(900, 1, "C:\\Windows\\explorer.exe", 50),
-            child(1000, 900, chrome, 100),
-            with_args(child(1001, 1000, chrome, 101), &["--type=renderer"]),
-            with_args(child(1002, 1000, chrome, 101), &["--type=renderer"]),
-            with_args(child(1003, 1000, chrome, 102), &["--type=gpu-process"]),
-            // A helper that has its own executable in the same directory.
-            child(1004, 1000, "C:\\Program Files\\Google\\Chrome\\Application\\chrome_proxy.exe", 103),
-        ];
-
-        let apps = group_of(&procs, empty_tcp(), &[]);
-
-        assert_eq!(apps.len(), 2, "the browser and the shell that started it");
-        let browser = apps.iter().find(|a| a.exe_path == chrome).expect("the browser group");
-        assert_eq!(browser.process_count, 5);
-        let mut pids = browser.pids.clone();
-        pids.sort_unstable();
-        assert_eq!(pids, vec![1000, 1001, 1002, 1003, 1004]);
-    }
-
-    /// The shell is a host: a tool that happens to sit in the Windows directory is its own
-    /// app when started from it, not part of "Windows Explorer".
-    #[test]
-    fn what_the_shell_starts_from_its_own_directory_is_not_the_shell() {
-        let procs = vec![
-            child(900, 1, "C:\\Windows\\explorer.exe", 50),
-            child(901, 900, "C:\\Windows\\regedit.exe", 400),
-        ];
-        let apps = group_of(&procs, empty_tcp(), &[]);
-        assert_eq!(keys(&apps), vec!["c:\\windows\\explorer.exe", "c:\\windows\\regedit.exe"]);
-    }
-
-    /// Once its real parent has exited, a process id can be handed to anything. A "parent"
-    /// that started after the child cannot be its parent.
-    #[test]
-    fn a_reused_parent_id_is_not_a_parent() {
-        let launcher = "C:\\Apps\\Studio\\launcher.exe";
-        let worker = "C:\\Apps\\Studio\\worker.exe";
-
-        let genuine = vec![child(50, 1, launcher, 1_000), child(60, 50, worker, 1_005)];
-        assert_eq!(group_of(&genuine, empty_tcp(), &[]).len(), 1, "an older parent folds");
-
-        let same_second = vec![child(50, 1, launcher, 1_000), child(60, 50, worker, 1_000)];
-        assert_eq!(group_of(&same_second, empty_tcp(), &[]).len(), 1, "the clock has one-second steps");
-
-        let reused = vec![child(50, 1, launcher, 2_000), child(60, 50, worker, 1_000)];
-        assert_eq!(group_of(&reused, empty_tcp(), &[]).len(), 2, "this 'parent' is younger");
-    }
-
-    /// An unknown start time proves nothing either way, so it does not block the fold.
-    #[test]
-    fn an_unknown_start_time_does_not_stop_a_fold() {
-        let mut parent = child(50, 1, "C:\\Apps\\Studio\\launcher.exe", 1_000);
-        parent.started_at_ms = None;
-        let worker = child(60, 50, "C:\\Apps\\Studio\\worker.exe", 1_000);
-        assert_eq!(group_of(&[parent, worker], empty_tcp(), &[]).len(), 1);
-    }
-
-    /// sysinfo reports the start time as seconds since the epoch. It was once read as seconds
-    /// since boot, which turned the field into the process's age, and with it the "younger than
-    /// ten minutes" test of the memory alert into one nothing could fail.
-    #[test]
-    fn the_start_time_of_a_live_process_is_a_moment_not_an_age() {
-        use sysinfo::{ProcessesToUpdate, System};
-        let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::All, true);
-        let me = std::process::id();
-        let sample = collect(&system)
-            .into_iter()
-            .find(|p| p.pid == me)
-            .expect("this test process is in the list");
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let started = sample.started_at_ms.expect("a process can read its own start time");
-        assert!(started <= now, "{started} is in the future of {now}");
-        assert!(now - started < 3_600_000, "a test process is not an hour old: {started} vs {now}");
     }
 
     /// Measured against notepad.exe here: a well-formed block reports characters, with the

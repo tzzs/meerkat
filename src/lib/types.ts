@@ -166,7 +166,7 @@ export interface ProcessRow {
   canQuit: boolean;
 }
 
-/** Bytes moved on one local day while Pulse was running. */
+/** Bytes moved on one local day while Meerkat was running. */
 export interface DailyTotal {
   dayStartMs: number;
   readBytes: number;
@@ -223,7 +223,7 @@ export interface AppInfo {
   services: string[];
   /** Whether this user may end at least one of its processes; the system's own answer no. */
   canQuit: boolean;
-  /** The rules Pulse applies to it, and whether Pulse has paused it. */
+  /** The rules Meerkat applies to it, and whether Meerkat has paused it. */
   control: AppControl;
   /** For a runtime grouped by project (node, python…): the project's folder. */
   project: string | null;
@@ -238,7 +238,7 @@ export interface AppControl {
   paused: boolean;
 }
 
-/** What Pulse remembers about how one app should run. */
+/** What Meerkat remembers about how one app should run. */
 export interface AppRule {
   key: string;
   name: string;
@@ -281,7 +281,7 @@ export interface AppUsage {
   name: string;
   exePath: string;
   kind: AppKind;
-  /** How long Pulse saw it running in the span. */
+  /** How long Meerkat saw it running in the span. */
   seconds: number;
   /** CPU time used, in seconds of one core. */
   cpuSeconds: number;
@@ -418,7 +418,7 @@ export interface Settings {
   panel: { layout: PanelLayout; tiles: SectionConfig[] };
   window: { tabs: TabConfig[] };
   alerts: AlertThresholds;
-  /** Whether AI assistants may read Pulse over MCP. */
+  /** Whether AI assistants may read Meerkat over MCP. */
   mcpEnabled: boolean;
 }
 

@@ -1,9 +1,9 @@
 //! Bytes per local day, kept for 120 days.
 //!
 //! Two things depended on this not existing. "Today" was a counter in the sampler, so it went
-//! back to zero every time Pulse restarted while still saying "since midnight". And the 7- and
+//! back to zero every time Meerkat restarted while still saying "since midnight". And the 7- and
 //! 30-day totals the network tab has always had strings for could only have been guessed from
-//! the averaged history, which counts an hour Pulse ran for ten minutes as a whole hour.
+//! the averaged history, which counts an hour Meerkat ran for ten minutes as a whole hour.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -62,7 +62,7 @@ impl Daily {
     }
 
     /// The last `count` days up to and including `today`, oldest first, with a zero row for any
-    /// day Pulse did not run at all, so a chart's bars line up with the calendar.
+    /// day Meerkat did not run at all, so a chart's bars line up with the calendar.
     pub fn recent(&self, today: i64, count: u32, day_start_ms: impl Fn(i64) -> u64) -> Vec<DailyTotal> {
         let first = today - i64::from(count.max(1)) + 1;
         (first..=today)

@@ -1,11 +1,11 @@
-//! Pulse for AI assistants, over the Model Context Protocol.
+//! Meerkat for AI assistants, over the Model Context Protocol.
 //!
 //! `pulse.exe --mcp` is the program an assistant such as Claude Code starts. It speaks MCP's
-//! JSON-RPC on stdin and stdout, and answers each question by asking the Pulse that is already
+//! JSON-RPC on stdin and stdout, and answers each question by asking the Meerkat that is already
 //! running, through a named pipe that only this Windows user can open. It never samples anything
 //! itself, so what an assistant reads is what the window shows.
 //!
-//! It is read-only. The one action, quitting an app, is a request: Pulse brings up its own
+//! It is read-only. The one action, quitting an app, is a request: Meerkat brings up its own
 //! confirmation, and nothing closes unless the user says so there. And it is off until the user
 //! turns it on, because command lines and window titles can carry things worth keeping private,
 //! and an assistant may send what it reads to a model elsewhere.
@@ -42,7 +42,7 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// The signed-in user's SID as text (`S-1-5-21-…`). It names the pipe, so each user's Pulse has
+/// The signed-in user's SID as text (`S-1-5-21-…`). It names the pipe, so each user's Meerkat has
 /// its own, and it is the only account the pipe's access list lets in.
 fn user_sid() -> Option<String> {
     unsafe {
@@ -68,7 +68,7 @@ fn pipe_name(sid: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// The pipe server, inside the running Pulse
+// The pipe server, inside the running Meerkat
 // ---------------------------------------------------------------------------
 
 /// Starts answering on the pipe, once. Called when the setting is on at startup or is turned on;
@@ -111,7 +111,7 @@ fn serve(app: AppHandle) {
             )
         };
         if pipe.is_invalid() {
-            // Another Pulse of this user already serves the name; try again later.
+            // Another Meerkat of this user already serves the name; try again later.
             std::thread::sleep(std::time::Duration::from_secs(10));
             continue;
         }
@@ -168,7 +168,7 @@ fn write_all(pipe: HANDLE, mut bytes: &[u8]) {
 fn dispatch(app: &AppHandle, request: &Value) -> Value {
     let state = app.state::<AppState>();
     if !state.mcp_enabled.load(Ordering::Relaxed) {
-        return json!({ "ok": false, "error": "AI assistant access is turned off in Pulse (Settings → AI assistants)." });
+        return json!({ "ok": false, "error": "AI assistant access is turned off in Meerkat (Settings → AI assistants)." });
     }
     let args = &request["args"];
     let result = match request["tool"].as_str().unwrap_or("") {
@@ -198,7 +198,7 @@ fn gb(bytes: f64) -> String {
     if unit == 0 { format!("{value:.0} B") } else { format!("{value:.1} {}", UNITS[unit]) }
 }
 
-/// Process CPU is kept per core inside Pulse (two busy cores read 200%); an assistant is told
+/// Process CPU is kept per core inside Meerkat (two busy cores read 200%); an assistant is told
 /// the share of the whole machine, which is the number people mean.
 fn machine_share(cpu_percent: f64, cores: usize) -> f64 {
     (cpu_percent / cores.max(1) as f64 * 10.0).round() / 10.0
@@ -225,7 +225,7 @@ fn app_json(app: &crate::models::AppInfo, cores: usize) -> Value {
 }
 
 fn latest(state: &AppState) -> Result<crate::models::Snapshot, String> {
-    state.latest.read().unwrap_or_else(|p| p.into_inner()).clone().ok_or_else(|| "Pulse has no reading yet".to_string())
+    state.latest.read().unwrap_or_else(|p| p.into_inner()).clone().ok_or_else(|| "Meerkat has no reading yet".to_string())
 }
 
 fn summary(state: &AppState) -> Result<Value, String> {
@@ -422,7 +422,7 @@ fn history(state: &AppState, args: &Value) -> Result<Value, String> {
             "gpuTimeMinutes": (u.gpu_seconds / 60.0 * 10.0).round() / 10.0,
             "observedHours": (u.seconds / 3600.0 * 10.0).round() / 10.0,
         })).collect::<Vec<_>>(),
-        "note": "Only time Pulse was running is counted.",
+        "note": "Only time Meerkat was running is counted.",
     }))
 }
 
@@ -451,14 +451,14 @@ fn request_quit(app: &AppHandle, state: &AppState, args: &Value) -> Result<Value
     let s = latest(state)?;
     let (target, _) = find_app(&s, query).ok_or_else(|| format!("no running app matches {query:?}"))?;
     if !target.can_quit {
-        return Err(format!("{} belongs to Windows or another account; Pulse cannot end it.", target.name));
+        return Err(format!("{} belongs to Windows or another account; Meerkat cannot end it.", target.name));
     }
     // The window comes up with its own confirmation; the user decides there.
     crate::menu::show_main(app, Some(&format!("quit:{}", target.key)));
     Ok(json!({
         "asked": true,
         "app": target.name,
-        "note": "Pulse is asking the user in its own window. Nothing is closed unless they confirm there.",
+        "note": "Meerkat is asking the user in its own window. Nothing is closed unless they confirm there.",
     }))
 }
 
@@ -514,7 +514,7 @@ pub fn redact(args: &[String]) -> String {
 // The stdio side: what the assistant starts
 // ---------------------------------------------------------------------------
 
-/// Asks the running Pulse one question over the pipe.
+/// Asks the running Meerkat one question over the pipe.
 fn ask(tool: &str, args: &Value) -> Result<Value, String> {
     let sid = user_sid().ok_or("cannot read this user's identity")?;
     let name = wide(&pipe_name(&sid));
@@ -531,14 +531,14 @@ fn ask(tool: &str, args: &Value) -> Result<Value, String> {
                 let _ = unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 2_000) };
             }
             Err(_) => {
-                return Err("Pulse is not running, or 'Let AI assistants read Pulse' is off in its Settings. \
-                            (Pulse 没有运行，或者设置里没有打开「允许 AI 助手读取」。)"
+                return Err("Meerkat is not running, or 'Let AI assistants read Meerkat' is off in its Settings. \
+                            (Meerkat 没有运行，或者设置里没有打开「允许 AI 助手读取」。)"
                     .into())
             }
         }
     }
     if pipe.is_invalid() {
-        return Err("Pulse is busy; try again.".into());
+        return Err("Meerkat is busy; try again.".into());
     }
     let mut request = serde_json::to_vec(&json!({ "tool": tool, "args": args })).unwrap_or_default();
     request.push(b'\n');
@@ -556,11 +556,11 @@ fn ask(tool: &str, args: &Value) -> Result<Value, String> {
         }
     }
     let _ = unsafe { CloseHandle(pipe) };
-    let value: Value = serde_json::from_slice(response.trim_ascii()).map_err(|e| format!("bad answer from Pulse: {e}"))?;
+    let value: Value = serde_json::from_slice(response.trim_ascii()).map_err(|e| format!("bad answer from Meerkat: {e}"))?;
     if value["ok"].as_bool() == Some(true) {
         Ok(value["result"].clone())
     } else {
-        Err(value["error"].as_str().unwrap_or("Pulse refused").to_string())
+        Err(value["error"].as_str().unwrap_or("Meerkat refused").to_string())
     }
 }
 
@@ -568,7 +568,7 @@ fn tools() -> Value {
     json!([
         {
             "name": "pulse_summary",
-            "description": "What this Windows PC is doing right now: CPU, memory, disk, network, GPU and temperature, the busiest apps by CPU and by memory, and alerts Pulse has raised. Processes are grouped by app.",
+            "description": "What this Windows PC is doing right now: CPU, memory, disk, network, GPU and temperature, the busiest apps by CPU and by memory, and alerts Meerkat has raised. Processes are grouped by app.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
@@ -592,7 +592,7 @@ fn tools() -> Value {
         },
         {
             "name": "pulse_history",
-            "description": "The heaviest apps over the last N hours (up to 30 days) by CPU time, average memory, disk writes or GPU time, from Pulse's own per-minute history.",
+            "description": "The heaviest apps over the last N hours (up to 30 days) by CPU time, average memory, disk writes or GPU time, from Meerkat's own per-minute history.",
             "inputSchema": { "type": "object", "properties": {
                 "hours": { "type": "number", "minimum": 0.1, "maximum": 720 },
                 "by": { "type": "string", "enum": ["cpu", "memory", "disk_writes", "gpu"] }
@@ -608,7 +608,7 @@ fn tools() -> Value {
         },
         {
             "name": "pulse_request_quit",
-            "description": "Ask the user, in Pulse's own window, whether to quit an app. Nothing is closed unless the user confirms there; this returns as soon as the question is shown.",
+            "description": "Ask the user, in Meerkat's own window, whether to quit an app. Nothing is closed unless the user confirms there; this returns as soon as the question is shown.",
             "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }
         }
     ])
@@ -648,7 +648,7 @@ pub fn reply_to(message: &Value) -> Option<Value> {
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
                 "serverInfo": { "name": "pulse", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Pulse is the system monitor running on this Windows PC. Ask it what is using the CPU, memory, disk or a port, what an app did over the last days, and what Windows logged (crashes, blue screens, driver resets). It cannot close anything by itself: pulse_request_quit only asks the user."
+                "instructions": "Meerkat is the system monitor running on this Windows PC. Ask it what is using the CPU, memory, disk or a port, what an app did over the last days, and what Windows logged (crashes, blue screens, driver resets). It cannot close anything by itself: pulse_request_quit only asks the user."
             }))
         }
         "ping" => Ok(json!({})),
@@ -720,13 +720,13 @@ mod tests {
         assert!(pipe_name(&sid).starts_with(r"\\.\pipe\pulse-mcp-S-1-"));
     }
 
-    /// With no Pulse running the tools answer with an explanation, not a hang or a crash.
+    /// With no Meerkat running the tools answer with an explanation, not a hang or a crash.
     #[test]
     fn a_question_with_nobody_to_answer_it_says_so() {
         let reply = call_tool(&json!({ "name": "pulse_summary", "arguments": {} }));
-        // Either a real Pulse of this user answered, or the explanation came back.
+        // Either a real Meerkat of this user answered, or the explanation came back.
         if reply["isError"] == true {
-            assert!(reply["content"][0]["text"].as_str().unwrap().contains("Pulse"));
+            assert!(reply["content"][0]["text"].as_str().unwrap().contains("Meerkat"));
         }
     }
 }

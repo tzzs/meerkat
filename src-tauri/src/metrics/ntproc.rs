@@ -2,7 +2,7 @@
 //!
 //! sysinfo reads a process's figures through a handle it opens on that process, and an ordinary
 //! user cannot open most of Session 0. Windows Update, Defender, the search indexer and every
-//! service host came back as zeros and were folded into "processes Pulse cannot open", which hid
+//! service host came back as zeros and were folded into "processes Meerkat cannot open", which hid
 //! exactly the programs that make a machine slow for no visible reason. Measured on the machine
 //! this was written on: 173 Session 0 processes, none readable through a handle, while Defender
 //! alone held 936 MB and had burned 79 minutes of CPU since boot.
@@ -392,7 +392,7 @@ fn to_dos_path(nt: &str, pairs: &[(String, String)]) -> Option<String> {
 }
 
 /// The command line of a process this user owns. Others refuse the handle, and that is fine:
-/// nothing in Pulse depends on reading a service's arguments.
+/// nothing in Meerkat depends on reading a service's arguments.
 fn command_line(pid: u32) -> Option<Vec<String>> {
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
     let mut needed = 0u32;

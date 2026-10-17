@@ -17,7 +17,7 @@ pub mod wins;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use sysinfo::{Components, Disks, Networks, System};
+use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
@@ -82,7 +82,14 @@ pub struct Sampler {
     pdh_index: HashMap<String, usize>,
     gpu_probe: Option<EngineProbe>,
     sensors_asked_at: Option<Instant>,
+    /// Every process on the machine, read from the kernel's own table. sysinfo opens a handle
+    /// per process and an ordinary user cannot open most of Session 0, which left Defender,
+    /// Windows Update and every service host reading as zero.
+    processes: ntproc::Processes,
+    /// Which service runs in which process, so a service host is named for the service.
+    services: services::ServiceDirectory,
     io: grouping::IoRates,
+    last_processes: Vec<grouping::ProcSample>,
     names: NameCache,
     previous_network: HashMap<String, (u64, u64)>,
     previous_disk: HashMap<String, (u64, u64)>,
@@ -91,13 +98,12 @@ pub struct Sampler {
     traces: HashMap<&'static str, Trace>,
     battery_health: battery::HealthReader,
     day_key: String,
+    /// The local day `day_*` below add up, so the daily store knows what to write where.
+    day: i64,
     day_read: u64,
     day_write: u64,
     day_down: u64,
     day_up: u64,
-    /// The local day the totals above belong to, and every process of the last tick.
-    day: i64,
-    last_processes: Vec<grouping::ProcSample>,
     machine: MachineInfo,
 }
 
@@ -129,7 +135,14 @@ impl Sampler {
             None => None,
         };
 
-        let system = System::new_all();
+        // Processes come from the kernel's table (see ntproc), so sysinfo only has to keep the
+        // processor and memory figures; asking it for processes too would open a handle on each
+        // of them every tick and still come back empty for most of the system.
+        let system = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
         let machine = machine_info(&system);
 
         Self {
@@ -141,7 +154,10 @@ impl Sampler {
             pdh_index,
             gpu_probe: EngineProbe::new(),
             sensors_asked_at: None,
+            processes: ntproc::Processes::default(),
+            services: services::ServiceDirectory::default(),
             io: grouping::IoRates::default(),
+            last_processes: Vec::new(),
             names: NameCache::default(),
             previous_network: HashMap::new(),
             previous_disk: HashMap::new(),
@@ -150,12 +166,11 @@ impl Sampler {
             traces,
             battery_health: battery::HealthReader::default(),
             day_key: String::new(),
+            day: local_day(now_ms()),
             day_read: 0,
             day_write: 0,
             day_down: 0,
             day_up: 0,
-            day: local_day(now_ms()),
-            last_processes: Vec::new(),
             machine,
         }
     }
@@ -176,19 +191,30 @@ impl Sampler {
 
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
-        self.system
-            .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         // One PDH collection per tick: the values read below are whatever this collected.
         if let Some(query) = self.pdh.as_mut() {
             query.collect();
         }
 
-        let processes = grouping::collect(&self.system);
+        let processes = grouping::collect(&mut self.processes);
         self.last_processes = processes.clone();
         let io = self.io.advance(&processes).clone();
         let windows_list = wins::toplevel_windows();
         let tcp = netinfo::collect();
-        let apps = grouping::group(&processes, &windows_list, &tcp, &io, &mut self.names);
+        let hosts: Vec<u32> = processes
+            .iter()
+            .filter(|p| p.name.eq_ignore_ascii_case("svchost.exe"))
+            .map(|p| p.pid)
+            .collect();
+        self.services.refresh(&hosts);
+        let apps = grouping::group(
+            &processes,
+            &windows_list,
+            &tcp,
+            &io,
+            &mut self.names,
+            self.services.by_pid(),
+        );
 
         let mut cpu = self.cpu();
         let mut memory = self.memory();
@@ -281,6 +307,38 @@ impl Sampler {
         self.day_up += (network.upload_bytes_per_second * elapsed) as u64;
     }
 
+    /// Restores the running totals of the local day Meerkat is starting in, so "today" survives
+    /// a restart instead of counting from zero again while still saying "since midnight".
+    pub fn restore_day(&mut self, day: i64, totals: crate::daily::DayTotals) {
+        if day != local_day(now_ms()) {
+            return;
+        }
+        self.day = day;
+        self.day_read = totals.read;
+        self.day_write = totals.write;
+        self.day_down = totals.download;
+        self.day_up = totals.upload;
+    }
+
+    /// Every process of the last tick, which is what an app's detail view opens: the snapshot
+    /// carries them already grouped, and the detail view is the one place that un-groups them.
+    pub fn processes(&self) -> &[grouping::ProcSample] {
+        &self.last_processes
+    }
+
+    /// The running count for the day the last sample fell in.
+    pub fn day_totals(&self) -> (i64, crate::daily::DayTotals) {
+        (
+            self.day,
+            crate::daily::DayTotals {
+                read: self.day_read,
+                write: self.day_write,
+                download: self.day_down,
+                upload: self.day_up,
+            },
+        )
+    }
+
     fn cpu(&mut self) -> CpuMetric {
         let core_percents: Vec<f64> = self.system.cpus().iter().map(|c| c.cpu_usage() as f64).collect();
         let total_percent = self.system.global_cpu_usage() as f64;
@@ -335,11 +393,19 @@ impl Sampler {
         };
 
         let committed = commit_limit.saturating_sub(commit_free);
-        let pagefile_total = commit_limit.saturating_sub(total);
-        let pagefile_used = self
-            .pdh_value("pagefile")
-            .map(|usage| pagefile_used_bytes(pagefile_total, usage))
-            .unwrap_or(0);
+        // Both sides of the page file come from one kernel record, so the used figure is a
+        // measurement rather than an inference. `\Paging Files(_Total)\% Usage` against an
+        // inferred total is the fallback, not the first choice: it multiplies one estimate
+        // (limit minus RAM) by a percentage whose own base Windows does not promise to be that.
+        let page_files = ntproc::page_files();
+        let pagefile_total = page_files.map_or(commit_limit.saturating_sub(total), |(size, _)| size);
+        let pagefile_used = match page_files {
+            Some((_, used)) => used,
+            None => self
+                .pdh_value("pagefile")
+                .map(|usage| pagefile_used_bytes(pagefile_total, usage))
+                .unwrap_or(0),
+        };
         let paged_pool = self
             .pdh_value("paged_pool")
             .map(|v| v.max(0.0) as u64)
@@ -429,53 +495,12 @@ impl Sampler {
         }
     }
 
-/// Every listening socket with the app key that owns it, so the ports card can name a process
-/// it knows rather than showing a pid only.
-fn listening_of(tcp: &netinfo::TcpOwnership, apps: &[crate::models::AppInfo]) -> Vec<crate::models::ListeningPort> {
-    let key_of = |pid: u32| apps.iter().find(|app| app.pids.contains(&pid)).map(|app| app.key.clone()).unwrap_or_default();
-    tcp.listeners
-        .iter()
-        .map(|listener| crate::models::ListeningPort {
-            port: listener.port,
-            address: listener.address.clone(),
-            pid: listener.pid,
-            app_key: key_of(listener.pid),
-        })
-        .collect()
-}
-
-/// Restores the running totals of the local day Meerkat is starting in, so "today" survives a
-/// restart instead of counting from zero.
-pub fn restore_day(&mut self, day: i64, totals: crate::daily::DayTotals) {
-    if day != local_day(now_ms()) {
-        return;
-    }
-    self.day = day;
-    self.day_read = totals.read;
-    self.day_write = totals.write;
-    self.day_down = totals.download;
-    self.day_up = totals.upload;
-}
-
-/// Every process of the last tick, which is what the app's detail view opens.
-pub fn processes(&self) -> &[grouping::ProcSample] {
-    &self.last_processes
-}
-
-/// The running count for the day the last sample fell in.
-pub fn day_totals(&self) -> (i64, crate::daily::DayTotals) {
-    (
-        self.day,
-        crate::daily::DayTotals {
-            read: self.day_read,
-            write: self.day_write,
-            download: self.day_down,
-            upload: self.day_up,
-        },
-    )
-}
-
-    fn network(&mut self, elapsed: f64, tcp: &netinfo::TcpOwnership, apps: &[crate::models::AppInfo]) -> NetworkMetric {
+    fn network(
+        &mut self,
+        elapsed: f64,
+        tcp: &netinfo::TcpOwnership,
+        apps: &[crate::models::AppInfo],
+    ) -> NetworkMetric {
         self.networks.refresh(true);
         // One walk of the interface table per refresh, shared by every adapter row. An empty
         // map is a normal outcome: the speeds stay unset and the traffic numbers survive.
@@ -541,6 +566,29 @@ pub fn day_totals(&self) -> (i64, crate::daily::DayTotals) {
         }
     }
 
+    /// Every listening socket with the app key that owns it, so the ports card can name a
+    /// program it knows rather than showing a number only Windows can look up.
+    fn listening_of(
+        tcp: &netinfo::TcpOwnership,
+        apps: &[crate::models::AppInfo],
+    ) -> Vec<crate::models::ListeningPort> {
+        let key_of = |pid: u32| {
+            apps.iter()
+                .find(|app| app.pids.contains(&pid))
+                .map(|app| app.key.clone())
+                .unwrap_or_default()
+        };
+        tcp.listeners
+            .iter()
+            .map(|listener| crate::models::ListeningPort {
+                port: listener.port,
+                address: listener.address.clone(),
+                pid: listener.pid,
+                app_key: key_of(listener.pid),
+            })
+            .collect()
+    }
+
     fn gpu(&mut self, on_ac_power: bool) -> GpuMetric {
         let Some(probe) = self.gpu_probe.as_mut() else {
             return GpuMetric {
@@ -591,6 +639,8 @@ pub fn day_totals(&self) -> (i64, crate::daily::DayTotals) {
             is_charging: live.is_charging,
             is_critical: live.is_critical,
             remaining_seconds: live.remaining_seconds,
+            // WinRT's aggregate report, not sysinfo: it is the only figure that says which way
+            // the energy is moving, and it answers without a handle on the battery device.
             power_watts: if live.has_battery { battery::power_watts() } else { None },
             design_capacity_wh: health.design_capacity_wh,
             full_charge_capacity_wh: health.full_charge_capacity_wh,
@@ -951,19 +1001,19 @@ fn match_link_speed(name: &str, index: &HashMap<String, u64>) -> Option<u64> {
     (speed > 0).then_some(speed)
 }
 
-/// The local calendar day, as days since the epoch. Daily totals roll at local midnight, so this
-/// is what keys a day's record; `day_key` below is the string version.
-pub fn local_day(at_ms: u64) -> i64 {
-    (at_ms as i64 + local_offset_ms()) / 86_400_000
-}
-
-/// The Unix milliseconds at which `local_day`'s day started.
-pub fn local_day_start_ms(day: i64) -> u64 {
-    (day * 86_400_000 - local_offset_ms()) as u64
-}
-
 pub fn day_key(at_ms: u64) -> String {
     ((at_ms as i64 + local_offset_ms()) / 86_400_000).to_string()
+}
+
+/// The local calendar day, as days since the epoch. Daily totals roll at local midnight, not
+/// UTC midnight, so this is what keys a day's record.
+pub fn local_day(at_ms: u64) -> i64 {
+    (at_ms as i64 + local_offset_ms()).div_euclid(86_400_000)
+}
+
+/// The Unix milliseconds at which `local_day`'s day began.
+pub fn local_day_start_ms(day: i64) -> u64 {
+    (day * 86_400_000 - local_offset_ms()).max(0) as u64
 }
 
 /// Daily totals must roll at local midnight, not UTC midnight.

@@ -63,7 +63,7 @@ const HISTORY_RANGES = [
 ] as const;
 
 /**
- * The app's own line through Pulse's history: CPU and memory over a day, a week or a month, and
+ * The app's own line through Meerkat's history: CPU and memory over a day, a week or a month, and
  * what that adds up to. This is the part a list cannot show, and the part that answers "has it
  * always used this much, or did it start growing yesterday".
  */
@@ -248,7 +248,7 @@ async function copy(text: string): Promise<boolean> {
 }
 
 /**
- * Everything Pulse knows about one app, opened by clicking its row. The lists show one line per
+ * Everything Meerkat knows about one app, opened by clicking its row. The lists show one line per
  * app because that is what a list is for; this is where the line opens up: which processes it
  * is made of and what each was started with, its windows, its ports, the services inside it,
  * how long it has been running and how much it has read and written since.

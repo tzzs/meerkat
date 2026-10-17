@@ -52,7 +52,7 @@ pub struct AppUsage {
     pub name: String,
     pub exe_path: String,
     pub kind: String,
-    /// How long Pulse saw it running in the span.
+    /// How long Meerkat saw it running in the span.
     pub seconds: f64,
     /// CPU time it used, in seconds of one core.
     pub cpu_seconds: f64,

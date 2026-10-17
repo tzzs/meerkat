@@ -34,7 +34,7 @@ pub struct TcpOwnership {
     pub listeners: Vec<Listener>,
 }
 
-/// One row of either table, reduced to what Pulse uses.
+/// One row of either table, reduced to what Meerkat uses.
 struct Row {
     pid: u32,
     state: u32,

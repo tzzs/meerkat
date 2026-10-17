@@ -1,8 +1,8 @@
 //! Per-app rules that outlive the app: efficiency mode, a priority, alerts muted. Windows forgets
-//! all of these the moment the process exits; Pulse already keeps each app's volume across
+//! all of these the moment the process exits; Meerkat already keeps each app's volume across
 //! restarts the same way (audio.rs), and this does it for how the app runs.
 //!
-//! Also the list of processes Pulse has paused, kept on disk so that if Pulse itself goes away
+//! Also the list of processes Meerkat has paused, kept on disk so that if Meerkat itself goes away
 //! while an app is paused, the next start finds it and lets it run again rather than leaving it
 //! frozen with nothing on screen to explain why.
 
@@ -135,7 +135,7 @@ impl Rules {
         self.applied.retain(|id| live.contains(id));
     }
 
-    /// Pauses or resumes an app's processes. Never Pulse itself or anything it started (its
+    /// Pauses or resumes an app's processes. Never Meerkat itself or anything it started (its
     /// WebView2 processes share a group with every other app's), and never Explorer, which is the
     /// taskbar and desktop the user would need to undo it.
     pub fn pause(&mut self, key: &str, pause: bool, running: &[&ProcSample], protected: &HashSet<u32>) -> Result<usize, String> {
@@ -187,7 +187,7 @@ impl Rules {
         self.save_paused();
     }
 
-    /// Writes what Pulse knows about an app's control state into its row.
+    /// Writes what Meerkat knows about an app's control state into its row.
     pub fn annotate(&self, apps: &mut [AppInfo]) {
         for app in apps {
             let rule = self.rule(&app.key);

@@ -202,7 +202,7 @@ pub struct ProcessRow {
     pub can_quit: bool,
 }
 
-/// Bytes moved on one local calendar day while Pulse was running.
+/// Bytes moved on one local calendar day while Meerkat was running.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyTotal {
@@ -279,7 +279,7 @@ pub struct AppInfo {
     pub services: Vec<String>,
     /// Whether this user may end at least one of its processes. The system's own answer no.
     pub can_quit: bool,
-    /// The rules Pulse applies to it and whether it is paused, filled in after grouping.
+    /// The rules Meerkat applies to it and whether it is paused, filled in after grouping.
     #[serde(default)]
     pub control: AppControl,
     /// For a runtime grouped by project (node, python…): the project's folder.

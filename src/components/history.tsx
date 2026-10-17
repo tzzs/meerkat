@@ -141,7 +141,7 @@ export function HistoryTab() {
 /**
  * The machine-wide figure over the chosen range, with the system's events marked along the
  * bottom edge. It is a picker as much as a chart: a click chooses the moment the panel below
- * describes. Gaps where Pulse was not running are left as gaps rather than joined across.
+ * describes. Gaps where Meerkat was not running are left as gaps rather than joined across.
  */
 function TimelineChart({
   points,

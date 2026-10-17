@@ -1,6 +1,6 @@
 //! Changing how an app runs rather than only whether it runs: Windows' efficiency mode, its
 //! scheduling priority, and pausing it outright. Task Manager offers the first two and forgets
-//! them the moment the app restarts; Pulse keeps them as rules (rules.rs) and applies them to
+//! them the moment the app restarts; Meerkat keeps them as rules (rules.rs) and applies them to
 //! every process the app starts.
 //!
 //! Every call opens the process with only the right it needs, so it works for the user's own
