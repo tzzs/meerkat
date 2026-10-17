@@ -334,6 +334,9 @@ fn spawn_sampler(app: AppHandle) {
                 }
             }
             let mut last_sample = std::time::Instant::now();
+            // Started false so the first tick posts whatever the stored setting says: a machine
+            // that was held awake before Meerkat closed is held awake again once it is back.
+            let mut keep_awake = false;
             loop {
                 let mut snapshot = sampler.sample();
                 let elapsed = last_sample.elapsed().as_secs_f64();
@@ -341,19 +344,11 @@ fn spawn_sampler(app: AppHandle) {
                 // Read after the sampling, which takes a while, so a setting that was saved in
                 // the meantime already counts for this tick.
                 let settings = state.settings.get();
-                // The keep-awake request is thread-affine, so this thread owns it and re-asserts
-                // it here as the setting changes.
-                let accepted = keepawake::set(settings.keep_awake);
-                if settings.keep_awake && !accepted {
-                    // Windows did not take the request; write the real state back so the switch
-                    // does not claim a hold the system never granted.
-                    diag::warn("keep awake: Windows did not accept the request");
-                    let mut corrected = settings.clone();
-                    corrected.keep_awake = false;
-                    if let Err(error) = state.settings.set(corrected) {
-                        diag::warn(format!("keep awake: could not record the refusal: {error}"));
-                    }
-                    let _ = app.emit("settings-changed", ());
+                // Only when it moved: the request is standing once Windows has taken it, and a
+                // call per tick would post a closure to the main thread every second for nothing.
+                if settings.keep_awake != keep_awake {
+                    keep_awake = settings.keep_awake;
+                    keepawake::request(&app, keep_awake);
                 }
                 // The rules remember how each app should run and apply it to every process the
                 // app starts; `muted` is what the watcher should not raise alerts about.
