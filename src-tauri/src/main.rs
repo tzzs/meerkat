@@ -258,7 +258,7 @@ fn on_exit(app: &AppHandle) {
 /// over its settings or history. Nothing else can redirect it: Windows answers the known-folder
 /// lookup from the user's token, not from APPDATA.
 ///
-/// The first launch after the old build (which was called Meerkat, and kept its files under
+/// The first launch after the old build (which was called Pulse, and kept its files under
 /// `com.tzz.pulse`) adopts what that one left behind. The folder is part of the app's identity,
 /// so a rename alone would have started a user with default settings, an empty history and no
 /// remembered volumes, and nothing on screen to say where they went.
@@ -533,9 +533,11 @@ mod autostart {
     }
 
     /// The name the autostart plugin wrote the login item under before the app was renamed, and
-    /// the executable name the old build had.
+    /// the executable name the old build had. Both are the *former* product's, on purpose: the
+    /// release code below compares them against the current name and does nothing when they are
+    /// the same, so writing "Meerkat" here would silently switch the cleanup off.
     #[cfg(not(debug_assertions))]
-    const FORMER_NAME: &str = "Meerkat";
+    const FORMER_NAME: &str = "Pulse";
     #[cfg(any(test, not(debug_assertions)))]
     const FORMER_EXE: &str = "pulse.exe";
 
@@ -543,8 +545,8 @@ mod autostart {
     /// without arguments after it.
     ///
     /// `launches` above compares whole paths, so it cannot tell a registration left by *this*
-    /// program when it was called Meerkat from one belonging to some other program named Meerkat.
-    /// This is deliberately narrower than "the key is called Meerkat": the entry is only ours to
+    /// program when it was called Pulse from one belonging to some other program named Pulse.
+    /// This is deliberately narrower than "the key is called Pulse": the entry is only ours to
     /// remove when the file it launches is the one the former build was.
     #[cfg(any(test, not(debug_assertions)))]
     fn names_former_app(command: &str) -> bool {
@@ -667,13 +669,13 @@ mod autostart {
         #[cfg(any(test, not(debug_assertions)))]
         #[test]
         fn only_a_command_line_for_the_former_build_is_ours_to_delete() {
-            assert!(names_former_app(r"C:\Users\me\AppData\Local\Meerkat\pulse.exe --autostart"));
-            assert!(names_former_app(r#""C:\Program Files\Meerkat\pulse.exe""#));
+            assert!(names_former_app(r"C:\Users\me\AppData\Local\Pulse\pulse.exe --autostart"));
+            assert!(names_former_app(r#""C:\Program Files\Pulse\pulse.exe""#));
             assert!(names_former_app("PULSE.EXE"));
             assert!(names_former_app(r"e:\workspaces\pulse\src-tauri\target\release\PULSE.EXE"));
-            assert!(!names_former_app(r"C:\Program Files\Meerkat Sync\pulsesync.exe"), "another program");
+            assert!(!names_former_app(r"C:\Program Files\Pulse Sync\pulsesync.exe"), "another program");
             assert!(!names_former_app(r"C:\tools\pulse.exe.old"), "a longer file name is another file");
-            assert!(!names_former_app(r#""C:\Meerkat\pulse.exe"#), "an unterminated quote is not a match");
+            assert!(!names_former_app(r#""C:\Pulse\pulse.exe"#), "an unterminated quote is not a match");
             assert!(!names_former_app(""));
         }
 

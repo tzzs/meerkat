@@ -1,6 +1,6 @@
 //! Meerkat for AI assistants, over the Model Context Protocol.
 //!
-//! `pulse.exe --mcp` is the program an assistant such as Claude Code starts. It speaks MCP's
+//! `meerkat.exe --mcp` is the program an assistant such as Claude Code starts. It speaks MCP's
 //! JSON-RPC on stdin and stdout, and answers each question by asking the Meerkat that is already
 //! running, through a named pipe that only this Windows user can open. It never samples anything
 //! itself, so what an assistant reads is what the window shows.
@@ -64,7 +64,7 @@ fn user_sid() -> Option<String> {
 }
 
 fn pipe_name(sid: &str) -> String {
-    format!(r"\\.\pipe\pulse-mcp-{sid}")
+    format!(r"\\.\pipe\meerkat-mcp-{sid}")
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ pub fn start(app: AppHandle) {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let _ = std::thread::Builder::new().name("pulse-mcp".into()).spawn(move || serve(app));
+    let _ = std::thread::Builder::new().name("meerkat-mcp".into()).spawn(move || serve(app));
 }
 
 fn serve(app: AppHandle) {
@@ -567,12 +567,12 @@ fn ask(tool: &str, args: &Value) -> Result<Value, String> {
 fn tools() -> Value {
     json!([
         {
-            "name": "pulse_summary",
+            "name": "meerkat_summary",
             "description": "What this Windows PC is doing right now: CPU, memory, disk, network, GPU and temperature, the busiest apps by CPU and by memory, and alerts Meerkat has raised. Processes are grouped by app.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
-            "name": "pulse_apps",
+            "name": "meerkat_apps",
             "description": "List running apps (processes grouped by app, Windows services named), sorted by CPU, memory or disk. CPU is a percent of the whole machine.",
             "inputSchema": { "type": "object", "properties": {
                 "sort_by": { "type": "string", "enum": ["cpu", "memory", "disk"] },
@@ -581,17 +581,17 @@ fn tools() -> Value {
             } }
         },
         {
-            "name": "pulse_port",
+            "name": "meerkat_port",
             "description": "Which app and process is listening on a TCP port, whether it is reachable from the network, the project folder of a dev server, and its command line (secrets redacted).",
             "inputSchema": { "type": "object", "properties": { "port": { "type": "integer", "minimum": 1, "maximum": 65535 } }, "required": ["port"] }
         },
         {
-            "name": "pulse_app",
+            "name": "meerkat_app",
             "description": "Details of one running app: its processes and their command lines (secrets redacted), windows, ports, project folder, and what it used over the last 24 hours.",
             "inputSchema": { "type": "object", "properties": { "query": { "type": "string", "description": "App name, part of its file name, or its project folder." } }, "required": ["query"] }
         },
         {
-            "name": "pulse_history",
+            "name": "meerkat_history",
             "description": "The heaviest apps over the last N hours (up to 30 days) by CPU time, average memory, disk writes or GPU time, from Meerkat's own per-minute history.",
             "inputSchema": { "type": "object", "properties": {
                 "hours": { "type": "number", "minimum": 0.1, "maximum": 720 },
@@ -599,7 +599,7 @@ fn tools() -> Value {
             } }
         },
         {
-            "name": "pulse_events",
+            "name": "meerkat_events",
             "description": "System events from Windows' logs: app crashes and hangs, blue screens, unexpected shutdowns, graphics driver resets, hardware errors, failed updates, service crashes; optionally sleep, wake and boot too.",
             "inputSchema": { "type": "object", "properties": {
                 "hours": { "type": "number", "minimum": 0.1, "maximum": 2160 },
@@ -607,7 +607,7 @@ fn tools() -> Value {
             } }
         },
         {
-            "name": "pulse_request_quit",
+            "name": "meerkat_request_quit",
             "description": "Ask the user, in Meerkat's own window, whether to quit an app. Nothing is closed unless the user confirms there; this returns as soon as the question is shown.",
             "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }
         }
@@ -618,13 +618,13 @@ fn call_tool(params: &Value) -> Value {
     let name = params["name"].as_str().unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
     let tool = match name {
-        "pulse_summary" => "summary",
-        "pulse_apps" => "apps",
-        "pulse_port" => "port",
-        "pulse_app" => "app",
-        "pulse_history" => "history",
-        "pulse_events" => "events",
-        "pulse_request_quit" => "request_quit",
+        "meerkat_summary" => "summary",
+        "meerkat_apps" => "apps",
+        "meerkat_port" => "port",
+        "meerkat_app" => "app",
+        "meerkat_history" => "history",
+        "meerkat_events" => "events",
+        "meerkat_request_quit" => "request_quit",
         _ => return json!({ "content": [{ "type": "text", "text": format!("unknown tool {name}") }], "isError": true }),
     };
     match ask(tool, &args) {
@@ -647,8 +647,8 @@ pub fn reply_to(message: &Value) -> Option<Value> {
             Ok(json!({
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "pulse", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Meerkat is the system monitor running on this Windows PC. Ask it what is using the CPU, memory, disk or a port, what an app did over the last days, and what Windows logged (crashes, blue screens, driver resets). It cannot close anything by itself: pulse_request_quit only asks the user."
+                "serverInfo": { "name": "meerkat", "version": env!("CARGO_PKG_VERSION") },
+                "instructions": "Meerkat is the system monitor running on this Windows PC. Ask it what is using the CPU, memory, disk or a port, what an app did over the last days, and what Windows logged (crashes, blue screens, driver resets). It cannot close anything by itself: meerkat_request_quit only asks the user."
             }))
         }
         "ping" => Ok(json!({})),
@@ -662,7 +662,7 @@ pub fn reply_to(message: &Value) -> Option<Value> {
     })
 }
 
-/// `pulse.exe --mcp`: one JSON-RPC message per line in, one per line out, until stdin closes.
+/// `meerkat.exe --mcp`: one JSON-RPC message per line in, one per line out, until stdin closes.
 pub fn run_stdio() {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -708,7 +708,7 @@ mod tests {
         assert_eq!(unknown["result"]["protocolVersion"], PROTOCOL_VERSIONS[0]);
         let list = reply_to(&json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list" })).unwrap();
         let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert!(names.contains(&"pulse_port") && names.contains(&"pulse_request_quit"));
+        assert!(names.contains(&"meerkat_port") && names.contains(&"meerkat_request_quit"));
         assert!(reply_to(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).is_none(), "notifications get no answer");
         assert_eq!(reply_to(&json!({ "jsonrpc": "2.0", "id": 4, "method": "nope" })).unwrap()["error"]["code"], -32601);
     }
@@ -717,13 +717,13 @@ mod tests {
     fn the_pipe_is_named_after_this_user() {
         let sid = user_sid().expect("the current user has a SID");
         assert!(sid.starts_with("S-1-"));
-        assert!(pipe_name(&sid).starts_with(r"\\.\pipe\pulse-mcp-S-1-"));
+        assert!(pipe_name(&sid).starts_with(r"\\.\pipe\meerkat-mcp-S-1-"));
     }
 
     /// With no Meerkat running the tools answer with an explanation, not a hang or a crash.
     #[test]
     fn a_question_with_nobody_to_answer_it_says_so() {
-        let reply = call_tool(&json!({ "name": "pulse_summary", "arguments": {} }));
+        let reply = call_tool(&json!({ "name": "meerkat_summary", "arguments": {} }));
         // Either a real Meerkat of this user answered, or the explanation came back.
         if reply["isError"] == true {
             assert!(reply["content"][0]["text"].as_str().unwrap().contains("Meerkat"));
