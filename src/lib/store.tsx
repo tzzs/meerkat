@@ -39,6 +39,7 @@ export const fallbackSettings: Settings = {
   window: {
     tabs: [
       { id: "overview", visible: true, sections: [] },
+      { id: "history", visible: true, sections: [] },
       { id: "cpu", visible: true, sections: [] },
       { id: "memory", visible: true, sections: [] },
       { id: "disk", visible: true, sections: [] },
@@ -57,7 +58,16 @@ export const fallbackSettings: Settings = {
     networkBytesPerSecond: 20000000,
     sustainedSeconds: 30,
   },
+  mcpEnabled: false,
 };
+
+/** Enough to name an app that is not running: its key, label, file and kind. */
+export interface AppSeed {
+  key: string;
+  name: string;
+  exePath: string;
+  kind: AppInfo["kind"];
+}
 
 interface StoreValue {
   snapshot: Snapshot | null;
@@ -80,6 +90,15 @@ interface StoreValue {
   toasts: Toast[];
   pushToast: (toast: Omit<Toast, "id">) => void;
   dismissToast: (id: number) => void;
+  /** The app whose detail sheet is open, by key, so it follows the app through every sample. */
+  detailKey: string | null;
+  /**
+   * What to call it when it is not running: the history and the event list can open apps that
+   * have since exited, and the live snapshot knows nothing about those.
+   */
+  detailSeed: AppSeed | null;
+  openDetail: (key: string, seed?: AppSeed) => void;
+  closeDetail: () => void;
 }
 
 export interface QuitRequest {
@@ -113,6 +132,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [pendingQuit, setPendingQuit] = useState<QuitRequest | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [detailSeed, setDetailSeed] = useState<AppSeed | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastSeq = useRef(0);
   // Saves the backend has not answered yet. A settings value fetched meanwhile (because some
@@ -241,6 +262,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
   const clearQuit = useCallback(() => setPendingQuit(null), []);
+  const openDetail = useCallback((key: string, seed?: AppSeed) => {
+    setDetailKey(key);
+    setDetailSeed(seed ?? null);
+  }, []);
+  const closeDetail = useCallback(() => setDetailKey(null), []);
 
   const dismissToast = useCallback((id: number) => setToasts((list) => list.filter((toast) => toast.id !== id)), []);
   const pushToast = useCallback(
@@ -271,11 +297,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       toasts,
       pushToast,
       dismissToast,
+      detailKey,
+      detailSeed,
+      openDetail,
+      closeDetail,
     }),
     [
       toasts,
       pushToast,
       dismissToast,
+      detailKey,
+      detailSeed,
+      openDetail,
+      closeDetail,
       snapshot,
       settings,
       settingsLoaded,

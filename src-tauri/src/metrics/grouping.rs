@@ -41,6 +41,35 @@ pub struct ProcSample {
     pub started_at_ms: Option<u64>,
     pub args: Vec<String>,
     pub measurable: bool,
+    /// Whether this user may end the process. Service hosts and the rest of the system answer
+    /// no, and the list must not offer what Windows will refuse.
+    pub can_quit: bool,
+    pub private_bytes: u64,
+    pub threads: u32,
+    pub handles: u32,
+    /// For a runtime (node, python…): the project folder it is working for.
+    pub project: Option<String>,
+}
+
+impl ProcSample {
+    pub fn row(&self) -> crate::models::ProcessRow {
+        crate::models::ProcessRow {
+            pid: self.pid,
+            parent_pid: self.ppid,
+            name: self.name.clone(),
+            exe_path: self.exe.clone(),
+            command_line: self.args.clone(),
+            cpu_percent: self.cpu_percent,
+            memory_bytes: self.memory_bytes,
+            private_bytes: self.private_bytes,
+            read_bytes_total: self.read_total,
+            write_bytes_total: self.write_total,
+            threads: self.threads,
+            handles: self.handles,
+            started_at_ms: self.started_at_ms,
+            can_quit: self.can_quit,
+        }
+    }
 }
 
 pub fn collect(sys: &System) -> Vec<ProcSample> {
@@ -118,6 +147,7 @@ fn sample(pid: &Pid, p: &Process, snapshot: &HashMap<u32, String>) -> ProcSample
     } else {
         reported
     };
+    let can_quit = !exe.is_empty();
     ProcSample {
         pid: pid.as_u32(),
         ppid: p.parent().map(|pp| pp.as_u32()),
@@ -132,6 +162,13 @@ fn sample(pid: &Pid, p: &Process, snapshot: &HashMap<u32, String>) -> ProcSample
         started_at_ms,
         args: p.cmd().iter().map(|s| s.to_string_lossy().to_string()).collect(),
         measurable,
+        // A row may only offer to close what this user is allowed to end. With sysinfo's
+        // handle-based view that is anything with a path, which excludes the Session 0 rows.
+        can_quit,
+        private_bytes: p.memory(),
+        threads: 0,
+        handles: 0,
+        project: None,
     }
 }
 
@@ -405,6 +442,7 @@ pub fn group(
         titled.sort_by(|a, b| b.visible.cmp(&a.visible));
         titled.truncate(24);
         g.ports.sort_unstable();
+        let pids: &[u32] = &g.pids;
 
         let kind = classify(&g.exe, &g.name, g.pids.iter().min().copied().unwrap_or(0), &by_pid, any_visible);
         out.push(AppInfo {
@@ -424,8 +462,12 @@ pub fn group(
             listening_ports: g.ports,
             oldest_started_at_ms: g.oldest,
             windows: titled,
-            pids: g.pids,
+            pids: pids.to_vec(),
             unmeasured_processes: g.unmeasured,
+            services: Vec::new(),
+            can_quit: pids.iter().any(|pid| by_pid.get(pid).is_some_and(|p| p.can_quit)),
+            control: crate::models::AppControl::default(),
+            project: None,
         });
     }
 
@@ -459,6 +501,10 @@ pub fn group(
             windows: Vec::new(),
             pids: hidden,
             unmeasured_processes: count,
+            services: Vec::new(),
+            can_quit: false,
+            control: crate::models::AppControl::default(),
+            project: None,
         });
     }
 
@@ -483,6 +529,13 @@ fn image_name(p: &ProcSample) -> String {
 fn is_host(p: &ProcSample) -> bool {
     let image = image_name(p);
     PIDDEN_EXES.contains(&image.as_str()) || matches!(image.as_str(), "explorer.exe" | "lsm.exe")
+}
+
+/// Whether this user may end the process: anything with a real executable path is theirs to
+/// close, and the rows with no path are Windows' own. `quit` checks again through the handle it
+/// opens, so this is only what the row offers.
+fn can_terminate(exe: &str) -> bool {
+    !exe.is_empty()
 }
 
 /// Whether `child` is part of the application `parent` anchors: they live in the same directory,
@@ -617,6 +670,11 @@ mod tests {
             started_at_ms: None,
             args: Vec::new(),
             measurable,
+            can_quit: true,
+            private_bytes: 0,
+            threads: 0,
+            handles: 0,
+            project: None,
         }
     }
 
@@ -625,6 +683,7 @@ mod tests {
             connections: HashMap::new(),
             listening: HashMap::new(),
             total_connections: 0,
+            listeners: Vec::new(),
         }
     }
 
@@ -662,6 +721,7 @@ mod tests {
             connections: HashMap::new(),
             listening,
             total_connections: 1,
+            listeners: Vec::new(),
         };
 
         let apps = group_of(&procs, tcp, &[]);

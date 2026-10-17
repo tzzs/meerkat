@@ -1,5 +1,21 @@
 import type { LogLevel } from "./report";
-import type { AudioState, HistorySeries, Insight, QuitResult, RankingRow, Settings, Snapshot } from "./types";
+import type {
+  AppPoint,
+  AppRule,
+  AppUsage,
+  AudioState,
+  DailyTotal,
+  HistorySeries,
+  Insight,
+  ProcessRow,
+  QuitResult,
+  RankBy,
+  RankingRow,
+  Settings,
+  Snapshot,
+  SystemEvent,
+  WslMemory,
+} from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -71,6 +87,43 @@ export const ipc = {
     emptySeries(metric, rangeSeconds),
   historyRanking: async (hours: number) =>
     (await call<RankingRow[]>("history_ranking", { hours })) ?? [],
+  /** The heaviest apps over the last `rangeSeconds`, by one measure. */
+  appRanking: async (rangeSeconds: number, by: RankBy) =>
+    (await call<AppUsage[]>("app_ranking", { rangeSeconds, by })) ?? [],
+  /** The heaviest apps since local midnight. */
+  appRankingToday: async (by: RankBy) => (await call<AppUsage[]>("app_ranking_today", { by })) ?? [],
+  /** What was running at one moment, busiest first. */
+  appsAt: async (atMs: number) => (await call<AppUsage[]>("apps_at", { atMs })) ?? [],
+  appSeries: async (key: string, rangeSeconds: number) =>
+    (await call<AppPoint[]>("app_series", { key, rangeSeconds })) ?? [],
+  systemEvents: async (rangeSeconds: number) => (await call<SystemEvent[]>("system_events", { rangeSeconds })) ?? [],
+  rules: async () => (await call<AppRule[]>("rules_list")) ?? [],
+  /** Stores an app's rule and applies it at once; null when it worked, else the reason. */
+  setRule: async (rule: AppRule): Promise<string | null> => {
+    const result = await attempt<null>("rule_set", { rule });
+    return result.ok ? null : result.error;
+  },
+  /** Pauses or resumes an app; null when it worked, else the reason. */
+  pauseApp: async (key: string, pause: boolean): Promise<string | null> => {
+    const result = await attempt<number>("app_pause", { key, pause });
+    return result.ok ? null : result.error;
+  },
+  /** The processes behind one app row, one each, heaviest first. */
+  appProcesses: async (key: string) => (await call<ProcessRow[]>("app_processes", { key })) ?? [],
+  /** Brings one of an app's windows to the front; null when it worked, else the reason. */
+  focusWindow: async (hwnd: number): Promise<string | null> => {
+    const result = await attempt<null>("focus_window", { hwnd });
+    return result.ok ? null : result.error;
+  },
+  revealInExplorer: (path: string) => void call("reveal_in_explorer", { path }),
+  /** Opens the project folder of a runtime grouped by project. */
+  openProject: (key: string) => void call("open_project", { key }),
+  /** The command that adds this Meerkat to Claude Code as an MCP server. */
+  mcpCommand: async () => (await call<string>("mcp_command")) ?? "",
+  /** The WSL virtual machine's memory as Linux sees it; null without WSL running. */
+  wslMemory: () => call<WslMemory>("wsl_memory"),
+  /** Bytes per local day, oldest first, zero for days Meerkat was not running. */
+  dailyTotals: async (days: number) => (await call<DailyTotal[]>("daily_totals", { days })) ?? [],
   insights: async () => (await call<Insight[]>("insights")) ?? [],
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
   quitApp: (key: string, force: boolean) => call<QuitResult>("quit_app", { key, force }),
@@ -200,3 +253,4 @@ export async function listenEvent<T = unknown>(name: string, handler: (payload: 
 function emptySeries(metric: string, rangeSeconds: number): HistorySeries {
   return { metric, bucketSeconds: 60, rangeSeconds, points: [] };
 }
+

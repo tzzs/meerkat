@@ -104,10 +104,27 @@ impl Watcher {
     /// Insights worth a notification since the last tick — at most three. Repeats update the
     /// stored row and stay quiet until RE_NOTIFY_AFTER has passed.
     pub fn evaluate(&mut self, snapshot: &Snapshot, settings: &Settings) -> Vec<Insight> {
-        self.evaluate_at(snapshot, settings, now_seconds())
+        self.evaluate_at(snapshot, settings, &Default::default(), now_seconds())
     }
 
-    fn evaluate_at(&mut self, snapshot: &Snapshot, settings: &Settings, now: u64) -> Vec<Insight> {
+    /// `muted` holds the apps whose rule says not to watch them: OBS and a compiler are meant to
+    /// keep the CPU busy, and the only answer to that used to be dismissing the row every day.
+    pub fn evaluate_muted(
+        &mut self,
+        snapshot: &Snapshot,
+        settings: &Settings,
+        muted: &std::collections::HashSet<String>,
+    ) -> Vec<Insight> {
+        self.evaluate_at(snapshot, settings, muted, now_seconds())
+    }
+
+    fn evaluate_at(
+        &mut self,
+        snapshot: &Snapshot,
+        settings: &Settings,
+        muted: &std::collections::HashSet<String>,
+        now: u64,
+    ) -> Vec<Insight> {
         if !settings.alerts.enabled {
             self.states.clear();
             return Vec::new();
@@ -119,7 +136,7 @@ impl Watcher {
         let settled = now >= self.opened_at.saturating_add(SETTLE_SECONDS);
 
         let mut hits: Vec<Hit> = Vec::new();
-        for app in &snapshot.apps {
+        for app in snapshot.apps.iter().filter(|app| !muted.contains(&app.key)) {
             if !self.states.contains_key(&app.key) {
                 self.states.insert(app.key.clone(), Watch::default());
             }
@@ -451,6 +468,10 @@ mod tests {
             windows: Vec::new(),
             pids: vec![4242],
             unmeasured_processes: 0,
+            services: Vec::new(),
+            can_quit: true,
+            control: Default::default(),
+            project: None,
         }
     }
 
@@ -518,8 +539,8 @@ mod tests {
     /// Over the threshold at `now` and again at `now + 5`: the second evaluation is the one a
     /// five-second sustain lets through.
     fn sustained(watcher: &mut Watcher, shot: &Snapshot, settings: &Settings, now: u64) -> Vec<Insight> {
-        assert!(watcher.evaluate_at(shot, settings, now).is_empty(), "nothing before the sustain");
-        watcher.evaluate_at(shot, settings, now + 5)
+        assert!(watcher.evaluate_at(shot, settings, &Default::default(), now).is_empty(), "nothing before the sustain");
+        watcher.evaluate_at(shot, settings, &Default::default(), now + 5)
     }
 
     #[test]
@@ -544,7 +565,7 @@ mod tests {
         // Quiet thresholds yield nothing at all.
         assert!(
             watcher
-                .evaluate_at(&snapshot(app("chrome", 10.0)), &alert_settings(), DAY_ONE + 10)
+                .evaluate_at(&snapshot(app("chrome", 10.0)), &alert_settings(), &Default::default(), DAY_ONE + 10)
                 .is_empty()
         );
         let _ = fs::remove_dir_all(&dir);
@@ -581,8 +602,8 @@ mod tests {
         };
         // 137 idle apps; a threshold of 0 used to announce every one of them at once.
         let idle: Vec<AppInfo> = (0..137).map(|i| app(&format!("app{i}"), 0.5)).collect();
-        assert!(watcher.evaluate_at(&snapshot_of(idle.clone(), 2), &settings, DAY_ONE).is_empty());
-        assert!(watcher.evaluate_at(&snapshot_of(idle, 2), &settings, DAY_ONE + 5).is_empty(), "clamped to 1%");
+        assert!(watcher.evaluate_at(&snapshot_of(idle.clone(), 2), &settings, &Default::default(), DAY_ONE).is_empty());
+        assert!(watcher.evaluate_at(&snapshot_of(idle, 2), &settings, &Default::default(), DAY_ONE + 5).is_empty(), "clamped to 1%");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -775,7 +796,7 @@ mod tests {
             one.memory_bytes = curve(now);
             announced.extend(
                 watcher
-                    .evaluate_at(&snapshot(one), &settings, now)
+                    .evaluate_at(&snapshot(one), &settings, &Default::default(), now)
                     .into_iter()
                     .filter(|i| i.kind == InsightKind::GrowingMemory),
             );

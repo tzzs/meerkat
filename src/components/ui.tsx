@@ -37,6 +37,7 @@ import {
   holdOrder,
   orderApps,
   rowSignature,
+  serviceNote,
   visibleWindowTitles,
   type AppMetric,
 } from "../lib/apps";
@@ -539,6 +540,7 @@ interface RowProps {
   t: Translate;
   measure: (node: Element | null) => void;
   onMenu: (app: AppInfo, label: string, element: HTMLElement, event?: React.MouseEvent<HTMLElement>) => void;
+  onOpen: (key: string) => void;
   onQuit: (app: AppInfo) => void;
 }
 
@@ -580,28 +582,37 @@ const AppRow = memo(function AppRow({
   t,
   measure,
   onMenu,
+  onOpen,
   onQuit,
 }: RowProps) {
   // The synthetic row is a count of processes that need administrative rights to open, not an
   // application: it has no figures, and it must never offer to close anything.
   const unreadable = app.key === UNREADABLE_GROUP;
   const hint = unreadable ? t("list.unreadableHint") : visibleWindowTitles(app).join("\u000a") || app.exePath || label;
+  const services = serviceNote(app, t);
   return (
     <Hint className="max-w-[420px] whitespace-pre-line text-left" label={hint}>
       <div
         data-index={index}
         ref={measure}
         tabIndex={0}
-        className={`row ${pinned ? "pinned" : ""}`}
+        className={`row clickable ${pinned ? "pinned" : ""}`}
         style={{ position: "absolute", top: 0, left: 0, right: 0, transform: `translateY(${offset}px)` }}
+        onClick={() => !unreadable && onOpen(app.key)}
+        onKeyDown={(event) => {
+          // Enter or Space opens the app's details; the menu key (ContextMenu, Shift+F10)
+          // brings up the same menu a right click does, as the row's focus implies.
+          if (isMenuKey(event)) {
+            event.preventDefault();
+            onMenu(app, label, event.currentTarget);
+          } else if ((event.key === "Enter" || event.key === " ") && !unreadable) {
+            event.preventDefault();
+            onOpen(app.key);
+          }
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           onMenu(app, label, event.currentTarget, event);
-        }}
-        onKeyDown={(event) => {
-          if (!isMenuKey(event)) return;
-          event.preventDefault();
-          onMenu(app, label, event.currentTarget);
         }}
       >
         <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
@@ -610,6 +621,12 @@ const AppRow = memo(function AppRow({
           <span className={`row-sub ${KIND_TONE[app.kind]}`}>
             {t(`kind.${app.kind}`)}
             {app.processCount > 1 ? ` · ${app.processCount} ${t("label.processes").toLowerCase()}` : ""}
+            {services ? ` · ${services}` : ""}
+            {app.control?.paused
+              ? ` · ${t("control.paused")}`
+              : app.control?.efficiency
+                ? ` · ${t("control.efficiencyShort")}`
+                : ""}
             {app.listeningPorts.length > 0 ? ` · ${app.listeningPorts.slice(0, 4).join(", ")}` : ""}
           </span>
         </div>
@@ -618,7 +635,15 @@ const AppRow = memo(function AppRow({
         </div>
         <span className="row-value num">{unreadable ? "—" : value}</span>
         {canQuit(app) && (
-          <button className="row-quit" tabIndex={-1} onClick={() => onQuit(app)} aria-label={t("action.quitApp")}>
+          <button
+            className="row-quit"
+            tabIndex={-1}
+            onClick={(event) => {
+              event.stopPropagation();
+              onQuit(app);
+            }}
+            aria-label={t("action.quitApp")}
+          >
             ×
           </button>
         )}
@@ -644,7 +669,7 @@ export function AppTable({
   cap?: number;
   seedQuery?: string;
 }) {
-  const { requestQuit } = useStore();
+  const { requestQuit, openDetail } = useStore();
   const [pins, togglePin] = usePins();
   const [query, setQuery] = useState(seedQuery ?? "");
   const [held, setHeld] = useState<string[] | null>(null);
@@ -846,6 +871,7 @@ export function AppTable({
               t={t}
               measure={virtualizer.measureElement}
               onMenu={openMenu}
+              onOpen={openDetail}
               onQuit={requestQuit}
             />
           );

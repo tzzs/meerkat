@@ -105,6 +105,20 @@ pub struct NetworkMetric {
     pub connections: usize,
     pub history_download: Vec<f64>,
     pub history_upload: Vec<f64>,
+    /// Every listening TCP socket, with the app that holds it.
+    #[serde(default)]
+    pub listening: Vec<ListeningPort>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListeningPort {
+    pub port: u16,
+    /// What it is bound to: `0.0.0.0` or `::` takes connections from the network, `127.0.0.1`
+    /// or `::1` only from this machine.
+    pub address: String,
+    pub pid: u32,
+    pub app_key: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -154,6 +168,50 @@ pub struct BatteryMetric {
     pub cycle_count: Option<u32>,
     pub source: Availability,
     pub history: Vec<f64>,
+    /// One point per week from Windows' own battery report, back to when it started keeping
+    /// one: how much the battery holds when full, against what it held new.
+    pub capacity_history: Vec<CapacityPoint>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CapacityPoint {
+    pub at_ms: u64,
+    pub design_wh: f64,
+    pub full_charge_wh: f64,
+    pub cycle_count: Option<u32>,
+}
+
+/// One process of an app, for the app's detail view.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessRow {
+    pub pid: u32,
+    pub parent_pid: Option<u32>,
+    pub name: String,
+    pub exe_path: String,
+    pub command_line: Vec<String>,
+    pub cpu_percent: f64,
+    pub memory_bytes: u64,
+    pub private_bytes: u64,
+    pub read_bytes_total: u64,
+    pub write_bytes_total: u64,
+    pub threads: u32,
+    pub handles: u32,
+    pub started_at_ms: Option<u64>,
+    pub can_quit: bool,
+}
+
+/// Bytes moved on one local calendar day while Pulse was running.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyTotal {
+    /// Local midnight that starts the day, as Unix milliseconds.
+    pub day_start_ms: u64,
+    pub read_bytes: u64,
+    pub write_bytes: u64,
+    pub download_bytes: u64,
+    pub upload_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -217,6 +275,25 @@ pub struct AppInfo {
     pub windows: Vec<WindowInfo>,
     pub pids: Vec<u32>,
     pub unmeasured_processes: usize,
+    /// The Windows services this app's processes run, by the name Windows shows for them.
+    pub services: Vec<String>,
+    /// Whether this user may end at least one of its processes. The system's own answer no.
+    pub can_quit: bool,
+    /// The rules Pulse applies to it and whether it is paused, filled in after grouping.
+    #[serde(default)]
+    pub control: AppControl,
+    /// For a runtime grouped by project (node, python…): the project's folder.
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppControl {
+    pub efficiency: bool,
+    pub priority: Option<crate::control::Priority>,
+    pub mute_alerts: bool,
+    pub paused: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,23 +1,30 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod alerts;
+mod apphistory;
 mod audio;
+mod control;
+mod daily;
 #[cfg(debug_assertions)]
 mod devmirror;
 mod diag;
+mod events;
 mod history;
 mod i18n;
 mod icons;
 mod ipc;
+mod mcp;
 mod menu;
 mod metrics;
 mod models;
 mod nvml;
 mod quit;
+mod rules;
 mod settings;
 mod toast;
 mod tray;
 mod tray_render;
+mod wsl;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -25,6 +32,7 @@ use std::sync::{Mutex, OnceLock, RwLock};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 use crate::alerts::Watcher;
+use crate::daily::Daily;
 use crate::history::History;
 use crate::ipc::AppState;
 use crate::metrics::Sampler;
@@ -35,6 +43,13 @@ fn main() -> tauri::Result<()> {
     // Before anything that can fail: this is a build with no console, and a Meerkat that does not
     // start (no WebView2 runtime is the usual reason) has nowhere else to say why.
     diag::init_early(toast::AUMID);
+    // Started by an AI assistant as its MCP server: answer on stdio by asking the running
+    // Meerkat, and never open a window or a tray icon of its own. Before the builder, because
+    // that path has no app to attach to.
+    if std::env::args().any(|arg| arg == "--mcp") {
+        mcp::run_stdio();
+        return Ok(());
+    }
     let result = run();
     if let Err(error) = &result {
         diag::error(format!("Meerkat stopped: {error}"));
@@ -65,7 +80,14 @@ fn run() -> tauri::Result<()> {
             ipc::settings_get,
             ipc::settings_set,
             ipc::history_series,
-            ipc::history_ranking,
+            ipc::app_ranking,
+            ipc::app_ranking_today,
+            ipc::apps_at,
+            ipc::app_series,
+            ipc::system_events,
+            ipc::rules_list,
+            ipc::rule_set,
+            ipc::app_pause,
             ipc::insights,
             ipc::insight_dismiss,
             ipc::quit_app,
@@ -81,7 +103,14 @@ fn run() -> tauri::Result<()> {
             ipc::audio_set_volume,
             ipc::audio_set_endpoint,
             ipc::app_icon,
-            ipc::relaunch_elevated
+            ipc::relaunch_elevated,
+            ipc::app_processes,
+            ipc::focus_window,
+            ipc::reveal_in_explorer,
+            ipc::open_project,
+            ipc::mcp_command,
+            ipc::wsl_memory,
+            ipc::daily_totals
         ])
         // One listener for every tray icon, however often the icons are rebuilt: a handler set
         // on each icon builder was registered again with every rebuild.
@@ -116,7 +145,7 @@ fn run() -> tauri::Result<()> {
             _ => {}
         })
         .setup(|app| {
-            let app_data = app.path().app_data_dir()?;
+            let app_data = data_dir(app)?;
             std::fs::create_dir_all(&app_data).ok();
             // Before the settings and the history are read: what they have to say about a damaged
             // file is exactly what a report should carry.
@@ -139,11 +168,17 @@ fn run() -> tauri::Result<()> {
                 settings,
                 settings_saving: Mutex::new(()),
                 history: Mutex::new(History::open(&app_data)),
+                daily: Mutex::new(Daily::open(&app_data)),
+                processes: RwLock::new(Vec::new()),
                 watcher: Mutex::new(Watcher::open(&app_data)),
+                app_history: Mutex::new(apphistory::AppHistory::open(&app_data)),
+                rules: Mutex::new(rules::Rules::open(&app_data)),
+                events: Mutex::new(None),
                 tray: Mutex::new(TrayManager::new()),
                 main_visible: AtomicBool::new(false),
                 panel_visible: AtomicBool::new(false),
                 interface_visible: AtomicBool::new(false),
+                mcp_enabled: AtomicBool::new(initial.mcp_enabled),
                 panel_pinned: AtomicBool::new(false),
                 panel_anchor: Mutex::new(None),
                 panel_size: Mutex::new(None),
@@ -162,15 +197,17 @@ fn run() -> tauri::Result<()> {
             autostart::reconcile(&handle, initial.start_at_login);
 
             spawn_sampler(handle.clone());
+            if initial.mcp_enabled {
+                mcp::start(handle.clone());
+            }
 
             // Restore remembered app volumes before anything starts playing sound.
             if audio::init_com().is_ok() {
-                if let Ok(dir) = handle.path().app_data_dir() {
-                    match audio::apply_saved_volumes(&dir.join("audio-volumes.json")) {
-                        Ok(0) => {}
-                        Ok(count) => crate::diag::info(format!("restored {count} saved app volumes")),
-                        Err(error) => crate::diag::warn(format!("restore saved volumes: {error}")),
-                    }
+                let dir = handle.state::<AppState>().data_dir.clone();
+                match audio::apply_saved_volumes(&dir.join("audio-volumes.json")) {
+                    Ok(0) => {}
+                    Ok(count) => crate::diag::info(format!("restored {count} saved app volumes")),
+                    Err(error) => crate::diag::warn(format!("restore saved volumes: {error}")),
                 }
             }
 
@@ -204,9 +241,27 @@ fn on_exit(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         // A poisoned lock is still the data: losing the history because a thread panicked
         // while it held it would be the worse outcome.
-        state.history.lock().unwrap_or_else(|p| p.into_inner()).flush();
+        let mut history = state.history.lock().unwrap_or_else(|p| p.into_inner());
+        history.flush();
+        drop(history);
+        state.app_history.lock().unwrap_or_else(|p| p.into_inner()).flush();
+        // A paused app must not outlive the program that paused it. A crash skips this; the
+        // list on disk catches that case at the next start (rules.rs).
+        state.rules.lock().unwrap_or_else(|p| p.into_inner()).resume_all();
     }
     diag::info("exit");
+}
+
+/// Where settings, history and alerts live. A debug build can be pointed elsewhere with
+/// `MEERKAT_DATA_DIR`, so a test instance can run beside the one in daily use without writing
+/// over its settings or history. Nothing else can redirect it: Windows answers the known-folder
+/// lookup from the user's token, not from APPDATA.
+fn data_dir(app: &tauri::App) -> tauri::Result<std::path::PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(dir) = std::env::var_os("MEERKAT_DATA_DIR") {
+        return Ok(std::path::PathBuf::from(dir));
+    }
+    app.path().app_data_dir()
 }
 
 fn panel_pinned(window: &tauri::Window) -> bool {
@@ -223,22 +278,52 @@ fn spawn_sampler(app: AppHandle) {
             let state = app.state::<AppState>();
             let _ = state.app.set(app.clone());
             let toaster = toast::Toaster::start(app.clone());
+            // WinRT's battery report is read on this thread, and WinRT needs COM.
+            if let Err(error) = audio::init_com() {
+                diag::warn(format!("sampler COM: {error}"));
+            }
             let mut sampler = Sampler::new();
+            {
+                let daily = state.daily.lock().unwrap_or_else(|p| p.into_inner());
+                let today = metrics::local_day(history::now_seconds() * 1000);
+                if let Some(totals) = daily.day(today) {
+                    sampler.restore_day(today, totals);
+                }
+            }
+            let mut last_sample = std::time::Instant::now();
             loop {
-                let snapshot = sampler.sample();
+                let mut snapshot = sampler.sample();
+                let elapsed = last_sample.elapsed().as_secs_f64();
+                last_sample = std::time::Instant::now();
                 // Read after the sampling, which takes a while, so a setting that was saved in
                 // the meantime already counts for this tick.
                 let settings = state.settings.get();
+                // The rules remember how each app should run and apply it to every process the
+                // app starts; `muted` is what the watcher should not raise alerts about.
+                let muted = {
+                    let mut rules = state.rules.lock().unwrap_or_else(|p| p.into_inner());
+                    let by_pid: std::collections::HashMap<u32, &metrics::grouping::ProcSample> =
+                        sampler.processes().iter().map(|p| (p.pid, p)).collect();
+                    rules.enforce(&snapshot.apps, &by_pid);
+                    rules.annotate(&mut snapshot.apps);
+                    rules.muted()
+                };
 
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
+                *state.processes.write().unwrap_or_else(|p| p.into_inner()) = sampler.processes().to_vec();
                 state.history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot);
+                {
+                    let (day, totals) = sampler.day_totals();
+                    state.daily.lock().unwrap_or_else(|p| p.into_inner()).record(day, totals);
+                }
+                state.app_history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot, elapsed);
 
                 // The watcher's lock is released before anything is emitted or shown.
                 let insights = state
                     .watcher
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .evaluate(&snapshot, &settings);
+                    .evaluate_muted(&snapshot, &settings, &muted);
                 for insight in insights {
                     let _ = app.emit("insight", &insight);
                     if settings.alerts.enabled {

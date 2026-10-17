@@ -77,6 +77,14 @@ export interface AdapterInfo {
   isLoopback: boolean;
 }
 
+export interface ListeningPort {
+  port: number;
+  /** `0.0.0.0` or `::` takes connections from the network; `127.0.0.1` or `::1` only from here. */
+  address: string;
+  pid: number;
+  appKey: string;
+}
+
 export interface NetworkMetric {
   downloadBytesPerSecond: number;
   uploadBytesPerSecond: number;
@@ -86,6 +94,8 @@ export interface NetworkMetric {
   connections: number;
   historyDownload: number[];
   historyUpload: number[];
+  /** Every listening TCP socket, with the app that holds it. */
+  listening: ListeningPort[];
 }
 
 export interface GpuAdapter {
@@ -127,6 +137,42 @@ export interface BatteryMetric {
   cycleCount: number | null;
   source: Availability;
   history: number[];
+  /** Weekly points from Windows' battery report: what the battery holds when full, over time. */
+  capacityHistory: CapacityPoint[];
+}
+
+export interface CapacityPoint {
+  atMs: number;
+  designWh: number;
+  fullChargeWh: number;
+  cycleCount: number | null;
+}
+
+/** One process of an app, for its detail view. */
+export interface ProcessRow {
+  pid: number;
+  parentPid: number | null;
+  name: string;
+  exePath: string;
+  commandLine: string[];
+  cpuPercent: number;
+  memoryBytes: number;
+  privateBytes: number;
+  readBytesTotal: number;
+  writeBytesTotal: number;
+  threads: number;
+  handles: number;
+  startedAtMs: number | null;
+  canQuit: boolean;
+}
+
+/** Bytes moved on one local day while Pulse was running. */
+export interface DailyTotal {
+  dayStartMs: number;
+  readBytes: number;
+  writeBytes: number;
+  downloadBytes: number;
+  uploadBytes: number;
 }
 
 export interface SensorReading {
@@ -173,6 +219,32 @@ export interface AppInfo {
   windows: WindowInfo[];
   pids: number[];
   unmeasuredProcesses: number;
+  /** The Windows services its processes run, by the name Windows shows for them. */
+  services: string[];
+  /** Whether this user may end at least one of its processes; the system's own answer no. */
+  canQuit: boolean;
+  /** The rules Pulse applies to it, and whether Pulse has paused it. */
+  control: AppControl;
+  /** For a runtime grouped by project (node, python…): the project's folder. */
+  project: string | null;
+}
+
+export type Priority = "low" | "belowNormal" | "normal" | "aboveNormal" | "high";
+
+export interface AppControl {
+  efficiency: boolean;
+  priority: Priority | null;
+  muteAlerts: boolean;
+  paused: boolean;
+}
+
+/** What Pulse remembers about how one app should run. */
+export interface AppRule {
+  key: string;
+  name: string;
+  efficiency: boolean;
+  priority: Priority | null;
+  muteAlerts: boolean;
 }
 
 export interface Snapshot {
@@ -203,16 +275,73 @@ export interface HistorySeries {
   points: HistoryPoint[];
 }
 
+/** One app over a span of its history. */
+export interface AppUsage {
+  key: string;
+  name: string;
+  exePath: string;
+  kind: AppKind;
+  /** How long Pulse saw it running in the span. */
+  seconds: number;
+  /** CPU time used, in seconds of one core. */
+  cpuSeconds: number;
+  memoryAverage: number;
+  memoryPeak: number;
+  readBytes: number;
+  writeBytes: number;
+  gpuSeconds: number;
+}
+
+/** The two things the backend ranks apps by, once an hour. */
+export type RankingMetric = "memory" | "cpu";
+
+/** One app inside an hour's ranking: the figure it was ranked by, in that metric's unit. */
 export interface RankedApp {
   key: string;
   name: string;
   value: number;
 }
 
+/** One hour of "the busiest apps", for one metric, from the machine-wide history store. */
 export interface RankingRow {
   hourStartMs: number;
-  metric: string;
+  metric: RankingMetric;
   apps: RankedApp[];
+}
+
+export type RankBy = "cpu" | "memory" | "disk" | "write" | "gpu";
+
+export interface AppPoint {
+  atMs: number;
+  spanSeconds: number;
+  /** Average over the point, in percent of one core. */
+  cpuPercent: number;
+  memoryBytes: number;
+  readBytes: number;
+  writeBytes: number;
+}
+
+export type SystemEventKind =
+  | "appCrash"
+  | "appHang"
+  | "blueScreen"
+  | "powerLoss"
+  | "sleep"
+  | "wake"
+  | "boot"
+  | "shutdown"
+  | "driverReset"
+  | "hardwareError"
+  | "updateInstalled"
+  | "updateFailed"
+  | "diskError"
+  | "serviceCrash";
+
+export interface SystemEvent {
+  atMs: number;
+  kind: SystemEventKind;
+  subject: string;
+  detail: string;
 }
 
 export type InsightKind = "highCpu" | "growingMemory" | "heavyDisk" | "heavyNetwork" | "heat";
@@ -289,6 +418,8 @@ export interface Settings {
   panel: { layout: PanelLayout; tiles: SectionConfig[] };
   window: { tabs: TabConfig[] };
   alerts: AlertThresholds;
+  /** Whether AI assistants may read Pulse over MCP. */
+  mcpEnabled: boolean;
 }
 
 export const METRIC_ORDER: MetricKind[] = [
@@ -301,7 +432,7 @@ export const METRIC_ORDER: MetricKind[] = [
   "temperature",
 ];
 
-export const TAB_ORDER = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
+export const TAB_ORDER = ["overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
 export type TabId = (typeof TAB_ORDER)[number];
 
 /**
@@ -404,4 +535,14 @@ export interface AudioState {
   inputEndpoints: AudioEndpoint[];
   render: AudioSession[];
   capture: AudioSession[];
+}
+
+/** The WSL virtual machine's memory, as Linux inside it accounts for it. */
+export interface WslMemory {
+  distros: string[];
+  totalBytes: number;
+  usedBytes: number;
+  /** File cache and reclaimable memory Linux gives back when asked. */
+  cacheBytes: number;
+  freeBytes: number;
 }

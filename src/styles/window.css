@@ -565,6 +565,16 @@
   font-size: 12px;
   font-weight: 550;
 }
+/* The detail sheet is narrower than a card, and its figures sit two to a row. */
+.detail-figures .stat-value {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+/* A row opens its app's details; the keyboard gets there too, so it needs a visible focus. */
+.row.clickable:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
 .row-quit {
   opacity: 0;
   color: var(--text-3);
@@ -1085,4 +1095,124 @@
 }
 .hour-more {
   margin-top: var(--sp-2);
+}
+
+/* ---------- history: the timeline, the moment under it, events ---------- */
+
+.timeline-plot {
+  position: relative;
+  cursor: crosshair;
+  user-select: none;
+}
+.timeline-plot svg {
+  display: block;
+}
+.timeline-tip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 2px 7px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-xs);
+  background: var(--glass);
+  font-size: 11px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.moment {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--hairline);
+}
+/* A ranked row says its figure in words ("CPU time 2h 4m"), which needs more than a number's
+   column. */
+.row.ranked {
+  grid-template-columns: 24px minmax(120px, 300px) minmax(60px, 1fr) minmax(84px, max-content) 0;
+}
+.history-value {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.event-row {
+  display: grid;
+  grid-template-columns: 8px 92px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px 4px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+}
+.event-row.clickable:hover {
+  background: var(--surface-2);
+}
+.event-row.clickable:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
+.event-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  opacity: 0.6;
+}
+.event-dot.problem {
+  background: var(--m-danger);
+  opacity: 1;
+}
+.event-time {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.event-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- listening ports ---------- */
+
+.port-row {
+  display: grid;
+  grid-template-columns: 64px 104px 22px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 6px 4px;
+  border-radius: var(--r-sm);
+}
+.port-row:hover {
+  background: var(--surface-2);
+}
+.port-row:hover .row-quit {
+  opacity: 1;
+}
+.port-row.clickable:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
+.port-number {
+  font-size: 13px;
+  font-weight: 650;
+}
+.port-scope {
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* Reachable from other machines: worth noticing, not alarming. */
+.port-scope.open {
+  color: var(--m-warn);
+}
+.port-app {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }

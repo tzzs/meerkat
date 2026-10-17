@@ -82,6 +82,11 @@ export function format(lang: Lang, template: string, params: Params): string {
   return out;
 }
 
+/**
+ * `{name}` or `{name, plural, one {# thing} other {# things}}`. The forms are matched as
+ * `word {text}` pairs: splitting them on whitespace, as this used to, broke every form that
+ * contained a space, which is all of them, and every plural in the app rendered as nothing.
+ */
 function lookup(lang: Lang, key: Key, params?: Params): string {
   const template: string = tables[lang][key] ?? tables.en[key] ?? String(key);
   return params ? format(lang, template, params) : template;
@@ -90,6 +95,7 @@ function lookup(lang: Lang, key: Key, params?: Params): string {
 /** The label each window tab carries. The power tab's real label depends on the hardware. */
 export const TAB_LABEL: Record<string, Key> = {
   overview: "tab.overview",
+  history: "tab.history",
   cpu: "tab.cpu",
   memory: "tab.memory",
   disk: "tab.disk",

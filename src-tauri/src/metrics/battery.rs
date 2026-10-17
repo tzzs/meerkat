@@ -1,7 +1,7 @@
-//! Battery: live state from GetSystemPowerStatus, health figures from the
-//! report `powercfg` can already generate.
+//! Battery: live state from GetSystemPowerStatus, the charge rate from WinRT's aggregate
+//! report, and health figures from the report `powercfg` can already generate.
 
-use crate::models::Availability;
+use crate::models::{Availability, CapacityPoint};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -56,9 +56,21 @@ pub struct Health {
     pub design_capacity_wh: Option<f64>,
     pub full_charge_capacity_wh: Option<f64>,
     pub cycle_count: Option<u32>,
+    /// One point per week from Windows' own report, back to when it started keeping one: how
+    /// much the battery holds when full, against what it held new.
+    pub capacity_history: Vec<CapacityPoint>,
     /// Full charge over design capacity. Kept apart from the watt-hours because a battery that
     /// reports relative capacities still has an honest ratio but no watt-hours at all.
     pub health_percent: Option<f64>,
+}
+
+/// Watts going in (charging) or out (on battery), from the same aggregate report Settings uses.
+/// WinRT answers this without opening the battery device; the calling thread must have COM
+/// initialised, which the sampler thread does when it starts.
+pub fn power_watts() -> Option<f64> {
+    let report = windows::Devices::Power::Battery::AggregateBattery().ok()?.GetReport().ok()?;
+    let milliwatts = report.ChargeRateInMilliwatts().ok()?.Value().ok()?;
+    (milliwatts != 0).then(|| (milliwatts as f64).abs() / 1000.0)
 }
 
 /// The figures move over weeks, and every read runs `powercfg` for one to three seconds.
@@ -259,7 +271,79 @@ fn parse_report(xml: &str) -> Health {
         full_charge_capacity_wh: watt_hours(full),
         cycle_count: cycles,
         health_percent,
+        capacity_history: parse_capacity_history(xml),
     }
+}
+
+/// `<History>` rows carry their figures as attributes (`DesignCapacity="57000"`), one row per
+/// week, which is the only place a battery's decline over time is written down. Rows with no
+/// reading (a week the machine was off) are skipped rather than plotted as zero.
+fn parse_capacity_history(xml: &str) -> Vec<CapacityPoint> {
+    let mut out = Vec::new();
+    // HistoryEntry elements are self-closing, so their figures sit in the tag's attributes
+    // rather than in a body.
+    let mut at = 0usize;
+    while let Some(offset) = xml[at..].find("<HistoryEntry") {
+        let start = at + offset;
+        let Some(end) = xml[start..].find('>') else { break };
+        let tag = &xml[start..start + end];
+        at = start + end + 1;
+        let Some(design_mwh) = attr_number(tag, "DesignCapacity") else { continue };
+        let Some(full_mwh) = attr_number(tag, "FullChargeCapacity") else { continue };
+        let Some(stamp) = attr_text(tag, "StartDate") else { continue };
+        let Some(at_ms) = parse_report_time(&stamp) else { continue };
+        if design_mwh == 0 || full_mwh == 0 {
+            continue;
+        }
+        out.push(CapacityPoint {
+            at_ms,
+            design_wh: design_mwh as f64 / 1000.0,
+            full_charge_wh: full_mwh as f64 / 1000.0,
+            cycle_count: attr_number(tag, "CycleCount").filter(|count| *count > 0).map(|count| count.min(u32::MAX as u64) as u32),
+        });
+    }
+    out.sort_by_key(|point| point.at_ms);
+    out
+}
+
+/// One attribute's text: `Name="value"` or `Name='value'`.
+fn attr_text(tag: &str, name: &str) -> Option<String> {
+    let start = tag.find(&format!("{name}="))? + name.len() + 1;
+    let quote = tag[start..].chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let body = &tag[start + 1..];
+    let end = body.find(quote)?;
+    Some(body[..end].to_string())
+}
+
+fn attr_number(tag: &str, name: &str) -> Option<u64> {
+    attr_text(tag, name)?.trim().parse().ok()
+}
+
+/// `2012-01-01T00:00:00Z`, the report's own stamp, to Unix milliseconds.
+fn parse_report_time(stamp: &str) -> Option<u64> {
+    let bytes = stamp.as_bytes();
+    if bytes.len() < 20 {
+        return None;
+    }
+    let number = |from: usize, to: usize| stamp.get(from..to)?.parse::<i64>().ok();
+    let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
+    let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Days since the epoch, by the civil-from-days algorithm, so no date library is needed.
+    let (y, m) = if month <= 2 { (year - 1, month + 12) } else { (year, month) };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let seconds = days * 86_400 + hour * 3600 + minute * 60 + second;
+    u64::try_from(seconds).ok().map(|s| s * 1000)
 }
 
 /// The text of the first `local` element directly or indirectly inside `block`, as a number.

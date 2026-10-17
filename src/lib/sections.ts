@@ -55,6 +55,15 @@ export function visibleSections(settings: Pick<Settings, "window">, tab: string)
 }
 
 /**
+ * Whether a card is drawn. `shown` is what [`visibleSections`] returned; a tab whose saved list
+ * is empty draws everything, which is why the callers pass the effective list rather than the
+ * saved one.
+ */
+export function sectionShown(shown: readonly string[], id: string): boolean {
+  return shown.includes(id);
+}
+
+/**
  * `id` one place earlier or later among the items `movable` accepts; the others stay where they
  * are. The panel's tile list can hold ids that are not metrics, which are never drawn and are
  * not offered for reordering, so a step has to skip over them rather than swap with one.

@@ -23,6 +23,10 @@ serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk", "network", "component", "multithread"] }
+# The per-app timeline (apphistory.rs). Its own file, beside history.json rather than inside it:
+# a minute of every busy app is far more rows than a JSON document that is rewritten whole on
+# every flush can carry.
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dependencies.windows]
 version = "0.62"
@@ -51,6 +55,16 @@ features = [
   "Win32_System_Threading",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_UI_Shell_PropertiesSystem",
+  "Win32_System_Services",
+  "Wdk_System_SystemInformation",
+  "Wdk_System_Threading",
+  "Devices_Power",
+  "Win32_System_EventLog",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_System_Pipes",
+  "Win32_System_IO",
 ]
 
 [build-dependencies]

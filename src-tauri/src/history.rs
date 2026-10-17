@@ -825,6 +825,10 @@ mod tests {
             windows: Vec::new(),
             pids: vec![4242],
             unmeasured_processes: 0,
+            services: Vec::new(),
+            can_quit: true,
+            control: Default::default(),
+            project: None,
         }
     }
 

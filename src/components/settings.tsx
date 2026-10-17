@@ -9,6 +9,7 @@ import {
   isMetricKind,
   METRIC_ORDER,
   powerTabMode,
+  type AppRule,
   type MetricKind,
   type SectionConfig,
   type Settings,
@@ -301,6 +302,9 @@ function General({ settings, save }: { settings: Settings; save: (s: Settings) =
       <Row label={t("settings.alertDisk")}>{alertBox("diskBytesPerSecond")}</Row>
       <Row label={t("settings.alertNetwork")}>{alertBox("networkBytesPerSecond")}</Row>
       <Row label={t("settings.alertSustained")}>{alertBox("sustainedSeconds")}</Row>
+
+      <RulesList />
+      <McpSection />
     </div>
   );
 }
@@ -721,5 +725,89 @@ function About() {
         onConfirm={() => ipc.quitMeerkat()}
       />
     </div>
+  );
+}
+
+/**
+ * Off by default. What an assistant reads may go to a model elsewhere, and command lines and
+ * window titles can hold things worth keeping, so the switch says so next to itself.
+ */
+function McpSection() {
+  const { settings, save, t } = useStore();
+  const [command, setCommand] = useState("");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => void ipc.mcpCommand().then(setCommand), []);
+  return (
+    <>
+      <h4 className="section-title">{t("settings.mcp")}</h4>
+      <Row label={t("settings.mcpEnabled")}>
+        <input
+          type="checkbox"
+          checked={settings.mcpEnabled}
+          onChange={(e) => save({ ...settings, mcpEnabled: e.target.checked })}
+        />
+      </Row>
+      <p className="hint faint">{t("settings.mcpHelp")}</p>
+      {settings.mcpEnabled && command && (
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-sm bg-surface-2 px-2 py-1 font-num text-[11px]">{command}</code>
+          <Button
+            variant="chip"
+            onClick={() =>
+              void navigator.clipboard?.writeText(command).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              })
+            }
+          >
+            {copied ? t("detail.copied") : t("settings.mcpCopy")}
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * The per-app rules Meerkat is keeping. They are set from an app's details, where the app is in
+ * front of you; this is where to find them again, including for apps that are not running.
+ */
+function RulesList() {
+  const { t } = useStore();
+  const [rules, setRules] = useState<AppRule[]>([]);
+  const load = () => void ipc.rules().then(setRules);
+  useEffect(load, []);
+  const describe = (rule: AppRule) =>
+    [
+      rule.efficiency ? t("control.efficiency") : null,
+      rule.priority ? `${t("control.priority")}: ${t(`control.priority.${rule.priority}`)}` : null,
+      rule.muteAlerts ? t("control.mute") : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  return (
+    <>
+      <h4 className="section-title">{t("settings.rules")}</h4>
+      {rules.length === 0 ? (
+        <p className="hint faint">{t("settings.rulesEmpty")}</p>
+      ) : (
+        rules.map((rule) => (
+          <div className="tray-row" key={rule.key}>
+            <span className="tray-name">{rule.name}</span>
+            <span className="faint min-w-0 flex-1 truncate">{describe(rule)}</span>
+            <Button
+              variant="chip"
+              onClick={() =>
+                void ipc
+                  .setRule({ ...rule, efficiency: false, priority: null, muteAlerts: false })
+                  .then(load)
+              }
+            >
+              {t("settings.rulesRemove")}
+            </Button>
+          </div>
+        ))
+      )}
+    </>
   );
 }

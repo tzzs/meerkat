@@ -8,7 +8,10 @@ pub mod battery;
 pub mod gpu;
 pub mod grouping;
 pub mod netinfo;
+pub mod ntproc;
 pub mod pdh;
+pub mod projects;
+pub mod services;
 pub mod wins;
 
 use std::collections::{HashMap, VecDeque};
@@ -92,6 +95,9 @@ pub struct Sampler {
     day_write: u64,
     day_down: u64,
     day_up: u64,
+    /// The local day the totals above belong to, and every process of the last tick.
+    day: i64,
+    last_processes: Vec<grouping::ProcSample>,
     machine: MachineInfo,
 }
 
@@ -148,6 +154,8 @@ impl Sampler {
             day_write: 0,
             day_down: 0,
             day_up: 0,
+            day: local_day(now_ms()),
+            last_processes: Vec::new(),
             machine,
         }
     }
@@ -176,6 +184,7 @@ impl Sampler {
         }
 
         let processes = grouping::collect(&self.system);
+        self.last_processes = processes.clone();
         let io = self.io.advance(&processes).clone();
         let windows_list = wins::toplevel_windows();
         let tcp = netinfo::collect();
@@ -184,7 +193,7 @@ impl Sampler {
         let mut cpu = self.cpu();
         let mut memory = self.memory();
         let mut disk = self.disk(elapsed);
-        let mut network = self.network(elapsed, &tcp);
+        let mut network = self.network(elapsed, &tcp, &apps);
         // The battery first: which power source the machine is on decides how eagerly the GPU
         // probe asks NVIDIA's driver for its sensors.
         let mut battery_metric = self.battery();
@@ -260,6 +269,7 @@ impl Sampler {
         let key = day_key(taken_at_ms);
         if key != self.day_key {
             self.day_key = key;
+            self.day = local_day(taken_at_ms);
             self.day_read = 0;
             self.day_write = 0;
             self.day_down = 0;
@@ -419,7 +429,53 @@ impl Sampler {
         }
     }
 
-    fn network(&mut self, elapsed: f64, tcp: &netinfo::TcpOwnership) -> NetworkMetric {
+/// Every listening socket with the app key that owns it, so the ports card can name a process
+/// it knows rather than showing a pid only.
+fn listening_of(tcp: &netinfo::TcpOwnership, apps: &[crate::models::AppInfo]) -> Vec<crate::models::ListeningPort> {
+    let key_of = |pid: u32| apps.iter().find(|app| app.pids.contains(&pid)).map(|app| app.key.clone()).unwrap_or_default();
+    tcp.listeners
+        .iter()
+        .map(|listener| crate::models::ListeningPort {
+            port: listener.port,
+            address: listener.address.clone(),
+            pid: listener.pid,
+            app_key: key_of(listener.pid),
+        })
+        .collect()
+}
+
+/// Restores the running totals of the local day Meerkat is starting in, so "today" survives a
+/// restart instead of counting from zero.
+pub fn restore_day(&mut self, day: i64, totals: crate::daily::DayTotals) {
+    if day != local_day(now_ms()) {
+        return;
+    }
+    self.day = day;
+    self.day_read = totals.read;
+    self.day_write = totals.write;
+    self.day_down = totals.download;
+    self.day_up = totals.upload;
+}
+
+/// Every process of the last tick, which is what the app's detail view opens.
+pub fn processes(&self) -> &[grouping::ProcSample] {
+    &self.last_processes
+}
+
+/// The running count for the day the last sample fell in.
+pub fn day_totals(&self) -> (i64, crate::daily::DayTotals) {
+    (
+        self.day,
+        crate::daily::DayTotals {
+            read: self.day_read,
+            write: self.day_write,
+            download: self.day_down,
+            upload: self.day_up,
+        },
+    )
+}
+
+    fn network(&mut self, elapsed: f64, tcp: &netinfo::TcpOwnership, apps: &[crate::models::AppInfo]) -> NetworkMetric {
         self.networks.refresh(true);
         // One walk of the interface table per refresh, shared by every adapter row. An empty
         // map is a normal outcome: the speeds stay unset and the traffic numbers survive.
@@ -479,6 +535,7 @@ impl Sampler {
             upload_bytes_today: self.day_up,
             adapters,
             connections: tcp.total_connections,
+            listening: Self::listening_of(tcp, apps),
             history_download: Vec::new(),
             history_upload: Vec::new(),
         }
@@ -534,11 +591,12 @@ impl Sampler {
             is_charging: live.is_charging,
             is_critical: live.is_critical,
             remaining_seconds: live.remaining_seconds,
-            power_watts: None,
+            power_watts: if live.has_battery { battery::power_watts() } else { None },
             design_capacity_wh: health.design_capacity_wh,
             full_charge_capacity_wh: health.full_charge_capacity_wh,
             health_percent: health.health_percent,
             cycle_count: health.cycle_count,
+            capacity_history: health.capacity_history.clone(),
             source: if !live.has_battery {
                 Availability::Unavailable
             } else if health.health_percent.is_some() {
@@ -891,6 +949,17 @@ fn match_link_speed(name: &str, index: &HashMap<String, u64>) -> Option<u64> {
         .copied()
         .unwrap_or(0);
     (speed > 0).then_some(speed)
+}
+
+/// The local calendar day, as days since the epoch. Daily totals roll at local midnight, so this
+/// is what keys a day's record; `day_key` below is the string version.
+pub fn local_day(at_ms: u64) -> i64 {
+    (at_ms as i64 + local_offset_ms()) / 86_400_000
+}
+
+/// The Unix milliseconds at which `local_day`'s day started.
+pub fn local_day_start_ms(day: i64) -> u64 {
+    (day * 86_400_000 - local_offset_ms()) as u64
 }
 
 pub fn day_key(at_ms: u64) -> String {

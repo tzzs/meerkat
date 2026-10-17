@@ -236,9 +236,14 @@ pub struct Settings {
     pub panel: PanelConfig,
     pub window: WindowConfig,
     pub alerts: AlertThresholds,
+    /// Whether AI assistants may read Meerkat over MCP (mcp.rs). Off until the user turns it on:
+    /// what an assistant reads may be sent to a model elsewhere.
+    pub mcp_enabled: bool,
 }
 
-pub const TAB_IDS: [&str; 8] = ["overview", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"];
+pub const TAB_IDS: [&str; 9] = [
+    "overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound",
+];
 
 /// What the dropdown panel can draw. These are metrics, not tabs: the default used to be built
 /// from `TAB_IDS`, which handed the panel "sound" — a tab with no series behind it — and one
@@ -254,11 +259,12 @@ pub const PANEL_METRICS: [MetricKind; 6] = [
 
 pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
     let ids: Vec<&str> = match tab {
-        "overview" => vec!["summary", "charts", "topApps", "worthALook", "storage", "insights"],
+        "overview" => vec!["summary", "charts", "topApps", "worthALook", "storage", "insights", "byHour"],
+        "history" => vec!["timeline", "ranking", "events"],
         "cpu" => vec!["load", "perCore", "userSystem", "history", "apps"],
         "memory" => vec!["breakdown", "pressure", "commit", "history", "apps"],
         "disk" => vec!["rate", "volumes", "today", "history", "apps"],
-        "network" => vec!["rate", "adapters", "totals", "history", "connections"],
+        "network" => vec!["rate", "adapters", "totals", "ports", "history", "connections"],
         "gpu" => vec!["utilisation", "adapters", "memory", "history", "apps"],
         "battery" => vec!["charge", "health", "power", "history"],
         "sound" => vec!["output", "apps", "input"],
@@ -291,6 +297,7 @@ impl Default for Settings {
             panel: PanelConfig::default(),
             window: WindowConfig::default(),
             alerts: AlertThresholds::default(),
+            mcp_enabled: false,
         }
     }
 }
@@ -735,7 +742,7 @@ mod tests {
         let tabs: Vec<&str> = settings.window.tabs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             tabs,
-            vec!["cpu", "overview", "gpu", "memory", "disk", "network", "battery", "sound"],
+            vec!["cpu", "overview", "gpu", "memory", "disk", "network", "battery", "history", "sound"],
             "the user's order, then what is new"
         );
         assert!(!tab(&settings, "gpu").visible, "a hidden tab stays hidden");
@@ -746,7 +753,7 @@ mod tests {
         );
         assert_eq!(
             ids(&tab(&settings, "overview").sections),
-            vec!["summary", "charts", "topApps", "worthALook", "storage", "insights"],
+            vec!["summary", "charts", "topApps", "worthALook", "storage", "insights", "byHour"],
             "a section added since is appended"
         );
         let cpu = tab(&settings, "cpu");
@@ -982,10 +989,16 @@ mod tests {
         settings.sanitize();
 
         let tabs: Vec<&str> = settings.window.tabs.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(tabs, vec!["network", "cpu", "overview", "memory", "disk", "gpu", "battery", "sound"]);
+        assert_eq!(
+            tabs,
+            vec!["network", "cpu", "overview", "history", "memory", "disk", "gpu", "battery", "sound"],
+        );
         assert!(settings.window.tabs[0].visible, "the first of two repeats wins");
         assert!(!settings.window.tabs[1].visible);
-        assert_eq!(ids(&settings.window.tabs[0].sections), vec!["totals", "rate", "adapters", "history", "connections"]);
+        assert_eq!(
+            ids(&settings.window.tabs[0].sections),
+            vec!["totals", "rate", "adapters", "ports", "history", "connections"]
+        );
         assert!(!settings.window.tabs[0].sections[0].visible);
         assert_eq!(ids(&settings.panel.tiles), vec!["gpu", "cpu", "memory", "disk", "network", "battery"]);
         assert!(!settings.panel.tiles[0].visible);

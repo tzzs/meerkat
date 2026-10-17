@@ -14,9 +14,12 @@ import { ipc } from "../lib/ipc";
 import { formatHourLabel, iconPathForKey, rankingByHour, type RankingMetric } from "../lib/ranking";
 import { buildSeries, formatAxisTime, formatHistoryValue, historyCeiling, historyUnit } from "../lib/series";
 import { SPARK_CEILING } from "../lib/spark";
-import { visibleSections } from "../lib/sections";
+import { sectionShown, visibleSections } from "../lib/sections";
 import { useStore } from "../lib/store";
-import type { AppInfo, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow } from "../lib/types";
+import type { AppInfo, DailyTotal, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow } from "../lib/types";
+import { capacityTrend, sumDays } from "../lib/totals";
+import { portMatches, portRows } from "../lib/ports";
+import { useLoaded } from "../lib/use-loaded";
 import type { Translate } from "../i18n";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
@@ -44,7 +47,7 @@ export const RANGES: { seconds: number; key: "range.1h" | "range.12h" | "range.2
   { seconds: 30 * 86400, key: "range.30d" },
 ];
 
-const TONE: Record<MetricKind, string> = {
+export const TONE: Record<MetricKind, string> = {
   cpu: "var(--m-cpu)",
   memory: "var(--m-memory)",
   disk: "var(--m-disk)",
@@ -97,7 +100,7 @@ interface LoadedSeries {
  * is kept with the request it belongs to and handed out only for that request; a refresh of the
  * same request keeps showing the old drawing until the new one replaces it.
  */
-function useSeries(metric: string, rangeSeconds: number): LoadedSeries | null {
+export function useSeries(metric: string, rangeSeconds: number): LoadedSeries | null {
   const key = `${metric}@${rangeSeconds}`;
   const [loaded, setLoaded] = useState<LoadedSeries | null>(null);
   usePolling(
@@ -286,7 +289,7 @@ function useApps(): AppInfo[] {
  */
 const tabMemory = new Map<string, unknown>();
 
-function useTabState<T>(tab: string, field: string, initial: T): [T, (next: T) => void] {
+export function useTabState<T>(tab: string, field: string, initial: T): [T, (next: T) => void] {
   const id = `${tab}.${field}`;
   const [value, setValue] = useState<T>(() => (tabMemory.has(id) ? (tabMemory.get(id) as T) : initial));
   const set = useCallback(
@@ -630,6 +633,116 @@ export function MemoryTab({ search }: { search?: string }) {
   );
 }
 
+function useDailyTotals(days: number): DailyTotal[] {
+  const [rows, setRows] = useState<DailyTotal[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => void ipc.dailyTotals(days).then((next) => alive && setRows(next));
+    load();
+    // The store moves once a minute; the live "today" figure fills the gap in between.
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [days]);
+  return rows;
+}
+
+/**
+ * Today, the last 7 days and the last 30, from whole days Meerkat counted, with one bar per day.
+ * The strings for this have been in the app since the start; the per-day store behind them is
+ * what was missing, and without it a restart also used to zero "today".
+ */
+function TotalsCard({ kind }: { kind: "network" | "disk" }) {
+  const { snapshot, units, t } = useStore();
+  const rows = useDailyTotals(30);
+  if (!snapshot) return null;
+  const network = kind === "network";
+  const live = network
+    ? { download: snapshot.network.downloadBytesToday, upload: snapshot.network.uploadBytesToday }
+    : { read: snapshot.disk.readBytesToday, write: snapshot.disk.writeBytesToday };
+  const spans: [string, number][] = [
+    [t("totals.today"), 1],
+    [t("label.thisWeek"), 7],
+    [t("label.thisMonth"), 30],
+  ];
+  const pick = (sums: ReturnType<typeof sumDays>) => (network ? [sums.download, sums.upload] : [sums.read, sums.write]);
+  const labels = network ? [t("label.download"), t("label.upload")] : [t("label.read"), t("label.write")];
+  const bars = rows.map((row, index) => {
+    const isToday = index === rows.length - 1;
+    const [a, b] = pick(sumDays([row], 1, isToday ? live : undefined));
+    return a + b;
+  });
+  return (
+    <Card title={t(network ? "totals.network" : "totals.disk")}>
+      <div className="grid grid-cols-3 gap-4">
+        {spans.map(([label, days]) => {
+          const [first, second] = pick(sumDays(rows, days, live));
+          return (
+            <div key={days} className="min-w-0">
+              <div className="stat-label">{label}</div>
+              <div className="num truncate text-[15px] font-[650]">
+                {network ? "↓ " : `${labels[0]} `}
+                {formatBytes(first, units)}
+              </div>
+              <div className="num truncate text-[12px] text-ink-2">
+                {network ? "↑ " : `${labels[1]} `}
+                {formatBytes(second, units)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {bars.length > 1 && <Chart values={bars} color={TONE[kind]} variant="bars" height={48} />}
+      {!network && <TopWritersToday />}
+      <p className="hint faint">{t("totals.whileRunning")}</p>
+    </Card>
+  );
+}
+
+/**
+ * Who wrote today's bytes. On an SSD writes are what wears the drive, and "the disk wrote 40 GB
+ * today" only becomes something to act on once it says which programs did it.
+ */
+function TopWritersToday() {
+  const { units, t, openDetail } = useStore();
+  const writers = useLoaded(() => ipc.appRankingToday("write"), [], []);
+  const shown = writers.filter((app) => app.writeBytes >= 1024 * 1024).slice(0, 5);
+  if (shown.length === 0) return null;
+  const peak = Math.max(1, ...shown.map((app) => app.writeBytes));
+  return (
+    <div className="mt-2">
+      <h4 className="section-title">{t("totals.topWriters")}</h4>
+      <div className="rows">
+        {shown.map((app) => (
+          <div
+            key={app.key}
+            className="row clickable"
+            role="button"
+            tabIndex={0}
+            onClick={() => openDetail(app.key, { key: app.key, name: app.name, exePath: app.exePath, kind: app.kind })}
+            onKeyDown={(event) =>
+              event.key === "Enter" &&
+              openDetail(app.key, { key: app.key, name: app.name, exePath: app.exePath, kind: app.kind })
+            }
+          >
+            <AppIcon name={appLabel(app, t)} seed={app.key} exePath={app.exePath || undefined} />
+            <div className="row-main">
+              <span className="row-name">{appLabel(app, t)}</span>
+              <span className="row-sub">{t(`kind.${app.kind}`)}</span>
+            </div>
+            <div className="row-meter">
+              <Meter ratio={app.writeBytes / peak} color={TONE.disk} />
+            </div>
+            <span className="row-value num">{formatBytes(app.writeBytes, units)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function DiskTab() {
   const { snapshot, settings, units, t } = useStore();
   const order = visibleSections(settings, "disk");
@@ -673,6 +786,8 @@ export function DiskTab() {
           <AvailabilityNote state={d.availability} t={t} />
         </Card>
       </div>
+
+      {sectionShown(order, "today") && <TotalsCard kind="disk" />}
 
       <Sections
         order={order}
@@ -751,6 +866,8 @@ export function NetworkTab() {
         </Card>
       </div>
 
+      {sectionShown(order, "totals") && <TotalsCard kind="network" />}
+
       <Sections
         order={order}
         parts={{
@@ -796,6 +913,7 @@ export function NetworkTab() {
               ]}
             />
           ),
+          ports: <PortsCard />,
           connections: (
             <Card title={t("overview.topApps")} right={<p className="hint faint">{t("network.perAppHelp")}</p>}>
               <AppTable apps={apps} metric={metric} onMetricChange={setMetric} units={units} t={t} />
@@ -804,6 +922,86 @@ export function NetworkTab() {
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Who is listening, on which port, reachable from where. The question a developer asks of
+ * netstat several times a day ("what is holding 3000?") answered by name, with the project the
+ * process is serving and the way to stop it.
+ */
+function PortsCard() {
+  const { snapshot, t, openDetail, requestQuit } = useStore();
+  const [query, setQuery] = useState("");
+  const [mine, setMine] = useTabState("network", "portsMine", true);
+  if (!snapshot) return null;
+  const rows = portRows(snapshot.network.listening ?? [], snapshot.apps)
+    .filter((row) => !mine || row.app?.canQuit)
+    .filter((row) => portMatches(row, query));
+  const scope = (row: (typeof rows)[number]) =>
+    row.scope === "network" ? t("network.scopeAll") : row.scope === "local" ? t("network.scopeLocal") : row.address;
+  return (
+    <Card
+      title={t("network.ports")}
+      right={
+        <div className="flex items-center gap-2">
+          <input
+            className="find"
+            placeholder={t("network.portsFilter")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            spellCheck={false}
+          />
+          <ToggleGroup type="single" value={mine ? "mine" : "all"} onValueChange={(next) => next && setMine(next === "mine")}>
+            <ToggleChip value="mine">{t("network.portsMine")}</ToggleChip>
+            <ToggleChip value="all">{t("history.allEvents")}</ToggleChip>
+          </ToggleGroup>
+        </div>
+      }
+    >
+      <p className="hint faint">{t("network.portsHelp")}</p>
+      {rows.length === 0 ? (
+        <p className="empty faint">{t("network.portsEmpty")}</p>
+      ) : (
+        <div className="rows">
+          {rows.map((row) => {
+            const label = row.app ? appLabel(row.app, t) : `pid ${row.pid}`;
+            return (
+              <div
+                key={`${row.port}:${row.pid}`}
+                className="port-row clickable"
+                role="button"
+                tabIndex={0}
+                onClick={() => row.app && openDetail(row.app.key)}
+                onKeyDown={(event) => event.key === "Enter" && row.app && openDetail(row.app.key)}
+              >
+                <span className="port-number num">{row.port}</span>
+                <span className={`port-scope ${row.scope === "network" ? "open" : ""}`}>{scope(row)}</span>
+                <AppIcon name={label} seed={row.app?.key ?? String(row.pid)} exePath={row.app?.exePath || undefined} />
+                <span className="port-app">
+                  <span className="row-name">{label}</span>
+                  {row.app?.project && <span className="row-sub">{row.app.project}</span>}
+                </span>
+                {row.app?.canQuit ? (
+                  <button
+                    className="row-quit"
+                    aria-label={t("action.quitApp")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (row.app) requestQuit(row.app);
+                    }}
+                  >
+                    ×
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -926,6 +1124,7 @@ export function BatteryTab() {
             {b.fullChargeCapacityWh !== null && (
               <Stat label={t("label.fullCharge")} value={`${b.fullChargeCapacityWh.toFixed(0)} Wh`} />
             )}
+            <CapacityTrend />
             <AvailabilityNote state={b.source} t={t} />
           </Card>
         </div>
@@ -965,6 +1164,33 @@ export function BatteryTab() {
           ),
         }}
       />
+    </div>
+  );
+}
+
+/** The weekly full-charge readings Windows keeps, as a line: how fast this battery is wearing. */
+function CapacityTrend() {
+  const { snapshot, units, t } = useStore();
+  const points = snapshot?.battery.capacityHistory ?? [];
+  const trend = capacityTrend(points);
+  if (!trend) return null;
+  return (
+    <div className="stat">
+      <span className="stat-label">{t("battery.capacityTrend")}</span>
+      <Chart
+        values={points.filter((p) => p.designWh > 0).map((p) => (p.fullChargeWh / p.designWh) * 100)}
+        ceiling={100}
+        color={TONE.battery}
+        variant="line"
+        height={40}
+      />
+      <span className="stat-sub">
+        {t("battery.capacityTrendRange", {
+          from: formatPercent(trend.from, units.locale),
+          to: formatPercent(trend.to, units.locale),
+          weeks: trend.weeks,
+        })}
+      </span>
     </div>
   );
 }

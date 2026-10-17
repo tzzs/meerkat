@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppMenu, isMenuKey, menuTarget, type AppMenuTarget } from "../components/AppMenu";
-import { appLabel, canQuit, forLists, holdOrder, orderApps } from "../lib/apps";
+import { appHint, appLabel, canQuit, forLists, holdOrder, orderApps } from "../lib/apps";
 import { usePins } from "../lib/pins";
 import { cleanChipName, cpuDisplay, formatBytes, formatPercent, formatRateShort, formatTemp } from "../lib/format";
 import { ipc, listenEvent } from "../lib/ipc";
@@ -205,37 +205,46 @@ export function PanelApp() {
           {apps.map((app) => {
             const label = appLabel(app, t);
             return (
-              <Hint key={app.key} className="max-w-[320px] break-all" label={app.exePath || label}>
+              <Hint key={app.key} className="max-w-[320px] whitespace-pre-line break-all" label={appHint(app, t)}>
                 <div
-                  className={`panel-app ${pins.includes(app.key) ? "pinned" : ""}`}
+                  className={`panel-app clickable ${pins.includes(app.key) ? "pinned" : ""}`}
+                  role="button"
                   tabIndex={0}
+                  onClick={() => void ipc.showWindow(`app:${app.key}`)}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setMenu(menuTarget(app, label, event.currentTarget, event));
                   }}
                   onKeyDown={(event) => {
-                    if (!isMenuKey(event)) return;
-                    event.preventDefault();
-                    setMenu(menuTarget(app, label, event.currentTarget));
+                    if (isMenuKey(event)) {
+                      event.preventDefault();
+                      setMenu(menuTarget(app, label, event.currentTarget));
+                    } else if (event.key === "Enter") {
+                      void ipc.showWindow(`app:${app.key}`);
+                    }
                   }}
                 >
                   <AppIcon name={label} seed={app.key} exePath={app.exePath || undefined} />
                   <span className="panel-app-name">{label}</span>
                   <span className="panel-app-mem num">{formatBytes(app.memoryBytes, units)}</span>
                   <span className="panel-app-cpu num">{formatPercent(cpuDisplay(app.cpuPercent, units), units.locale)}</span>
-                  {canQuit(app) && (
+                  {canQuit(app) ? (
                     <Hint label={t("action.quitApp")}>
                       <button
                         className="row-quit"
                         tabIndex={-1}
                         aria-label={t("action.quitApp")}
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.stopPropagation();
                           requestQuit(app);
                         }}
                       >
                         ×
                       </button>
                     </Hint>
+                  ) : (
+                    // Holds the column so the figures stay aligned with the rows that have a ×.
+                    <span aria-hidden />
                   )}
                 </div>
               </Hint>

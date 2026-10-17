@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::AtomicBool as _;
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -22,6 +23,16 @@ pub struct AppState {
     /// held while waiting for the main thread, which therefore must never ask for it.
     pub settings_saving: Mutex<()>,
     pub history: Mutex<History>,
+    /// Bytes per local day, which is what "today", the last 7 and the last 30 add up.
+    pub daily: Mutex<crate::daily::Daily>,
+    /// Every process of the last tick; the snapshot only carries them grouped into apps.
+    pub processes: RwLock<Vec<crate::metrics::grouping::ProcSample>>,
+    /// What each app did, minute by minute (apphistory.rs).
+    pub app_history: Mutex<crate::apphistory::AppHistory>,
+    /// How each app should run, and which of them are paused.
+    pub rules: Mutex<crate::rules::Rules>,
+    /// The last event-log reading, when it was taken and how far back it reached.
+    pub events: Mutex<Option<(std::time::Instant, u64, Vec<crate::events::SystemEvent>)>>,
     pub watcher: Mutex<Watcher>,
     pub tray: Mutex<TrayManager>,
     /// Whether anyone can look at the window: shown, and not minimised. Kept per window so the
@@ -37,6 +48,8 @@ pub struct AppState {
     pub panel_size: Mutex<Option<(u32, u32)>>,
     /// `menu::now_ms()` when the panel was last hidden by losing focus; 0 = never.
     pub panel_blurred_at: AtomicU64,
+    /// Whether AI assistants may read Meerkat over MCP (mcp.rs). Off until the user turns it on.
+    pub mcp_enabled: std::sync::atomic::AtomicBool,
     pub data_dir: PathBuf,
     pub app: OnceLock<AppHandle>,
 }
@@ -496,4 +509,248 @@ mod tests {
         assert!(!is_on_screen(false, false));
         assert!(!is_on_screen(false, true));
     }
+}
+#[tauri::command]
+pub async fn wsl_memory() -> Option<crate::wsl::WslMemory> {
+    tauri::async_runtime::spawn_blocking(crate::wsl::memory).await.ok().flatten()
+}
+
+/// The line that adds this Meerkat to Claude Code, with this copy of Meerkat's real path in it.
+#[tauri::command]
+pub fn mcp_command() -> String {
+    let exe =
+        std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "meerkat.exe".into());
+    format!("claude mcp add meerkat -- \"{exe}\" --mcp")
+}
+
+use std::collections::HashSet;
+
+/// The processes of one app as the last sample saw them.
+fn running_of(state: &AppState, key: &str) -> Vec<crate::metrics::grouping::ProcSample> {
+    let pids: HashSet<u32> = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|snapshot| snapshot.apps.iter().find(|a| a.key == key).map(|a| a.pids.iter().copied().collect()))
+        .unwrap_or_default();
+    state
+        .processes
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .filter(|p| pids.contains(&p.pid))
+        .cloned()
+        .collect()
+}
+
+/// Meerkat and everything it started: its own WebView2 processes are grouped with every other
+/// program's WebView2, and pausing that group must not freeze the window doing the pausing.
+fn own_tree(state: &AppState) -> HashSet<u32> {
+    let processes = state.processes.read().unwrap_or_else(|p| p.into_inner());
+    let mut tree: HashSet<u32> = [std::process::id()].into_iter().collect();
+    loop {
+        let before = tree.len();
+        for process in processes.iter() {
+            if process.ppid.is_some_and(|parent| tree.contains(&parent)) {
+                tree.insert(process.pid);
+            }
+        }
+        if tree.len() == before {
+            return tree;
+        }
+    }
+}
+
+/// The processes of one app, one row each, heaviest first. The snapshot carries apps already
+/// grouped, which is what every list needs; the detail view is the one place that opens a group.
+#[tauri::command]
+pub fn app_processes(state: State<'_, AppState>, key: String) -> Vec<crate::models::ProcessRow> {
+    let pids: HashSet<u32> = match state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|snapshot| snapshot.apps.iter().find(|a| a.key == key).map(|a| a.pids.iter().copied().collect()))
+    {
+        Some(pids) => pids,
+        None => return Vec::new(),
+    };
+    let processes = state.processes.read().unwrap_or_else(|p| p.into_inner());
+    let mut rows: Vec<crate::models::ProcessRow> =
+        processes.iter().filter(|p| pids.contains(&p.pid)).map(|p| p.row()).collect();
+    rows.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+    rows
+}
+
+/// Brings one of an app's windows to the front, restoring it if it was minimised. Only windows
+/// the last sample listed are accepted, so the page cannot be used to poke at arbitrary handles.
+#[tauri::command]
+pub fn focus_window(state: State<'_, AppState>, hwnd: isize) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    let known = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.apps.iter().any(|a| a.windows.iter().any(|w| w.hwnd == hwnd)));
+    if !known {
+        return Err("not a window Meerkat listed".into());
+    }
+    let handle = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
+    unsafe {
+        if !IsWindow(Some(handle)).as_bool() {
+            return Err("that window is gone".into());
+        }
+        if IsIconic(handle).as_bool() {
+            let _ = ShowWindow(handle, SW_RESTORE);
+        }
+        // Meerkat is the foreground app at the moment of the click, which is what lets Windows
+        // honour this rather than flashing the taskbar button instead.
+        if !SetForegroundWindow(handle).as_bool() {
+            return Err("Windows kept the current window in front".into());
+        }
+    }
+    Ok(())
+}
+
+/// Opens Explorer on the folder holding an executable, with the file selected. The path must be
+/// one Meerkat itself reported: it ends up on a command line, and only paths that came from the
+/// process table are known to be plain file paths.
+#[tauri::command]
+pub fn reveal_in_explorer(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let known = state
+        .processes
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|p| !p.exe.is_empty() && p.exe.eq_ignore_ascii_case(&path));
+    if !known || path.contains('"') || !std::path::Path::new(&path).is_file() {
+        return Err("not a file Meerkat listed".into());
+    }
+    std::process::Command::new("explorer.exe")
+        // Explorer reads `/select,"C:\a b\c.exe"` itself; Rust's own quoting of the whole
+        // argument would hand it a string it does not parse.
+        .raw_arg(format!("/select,\"{path}\""))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Opens an app's project folder in Explorer. Looked up by app key, so the only folders this can
+/// open are ones Meerkat itself worked out from a running process.
+#[tauri::command]
+pub fn open_project(state: State<'_, AppState>, key: String) -> Result<(), String> {
+    let folder = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|snapshot| snapshot.apps.iter().find(|a| a.key == key).and_then(|a| a.project.clone()))
+        .ok_or("no project for that app")?;
+    if !std::path::Path::new(&folder).is_dir() {
+        return Err("the folder is gone".into());
+    }
+    std::process::Command::new("explorer.exe").arg(&folder).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Bytes per local day for the last `days` days, oldest first, zero for days Meerkat did not run.
+#[tauri::command]
+pub fn daily_totals(state: State<'_, AppState>, days: u32) -> Vec<crate::models::DailyTotal> {
+    let today = crate::metrics::local_day(crate::history::now_seconds() * 1000);
+    state
+        .daily
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .recent(today, days.clamp(1, 120), crate::metrics::local_day_start_ms)
+}
+
+/// The heaviest apps over the last `range_seconds`, by one measure.
+#[tauri::command]
+pub fn app_ranking(state: State<'_, AppState>, range_seconds: u64, by: crate::apphistory::RankBy) -> Vec<crate::apphistory::AppUsage> {
+    let now = crate::history::now_seconds();
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.ranking(now.saturating_sub(range_seconds), now + 60, by, 25)
+}
+
+/// The heaviest apps since local midnight by one measure: "who wrote the most today".
+#[tauri::command]
+pub fn app_ranking_today(state: State<'_, AppState>, by: crate::apphistory::RankBy) -> Vec<crate::apphistory::AppUsage> {
+    let now = crate::history::now_seconds();
+    let today = crate::metrics::local_day(now * 1000);
+    let midnight = crate::metrics::local_day_start_ms(today) / 1000;
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.ranking(midnight, now + 60, by, 8)
+}
+
+/// What was running at one moment (Unix milliseconds), busiest first.
+#[tauri::command]
+pub fn apps_at(state: State<'_, AppState>, at_ms: u64) -> Vec<crate::apphistory::AppUsage> {
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.at(at_ms / 1000, 12)
+}
+
+/// One app's history over the last `range_seconds`, in steps that keep a chart to a few hundred
+/// points whatever the range.
+#[tauri::command]
+pub fn app_series(state: State<'_, AppState>, key: String, range_seconds: u64) -> Vec<crate::apphistory::AppPoint> {
+    let now = crate::history::now_seconds();
+    let step = match range_seconds {
+        0..=21_600 => 60,
+        21_601..=86_400 => 300,
+        86_401..=604_800 => 3_600,
+        _ => 10_800,
+    };
+    let history = state.app_history.lock().unwrap_or_else(|p| p.into_inner());
+    history.series(&key, now.saturating_sub(range_seconds), now + 60, step)
+}
+
+/// The event-log entries that explain the timeline, newest first. Reading the log takes a
+/// moment, so it happens off the main thread and is kept for a minute.
+#[tauri::command]
+pub async fn system_events(app: AppHandle, range_seconds: u64) -> Vec<crate::events::SystemEvent> {
+    let state = app.state::<AppState>();
+    if let Some((at, range, events)) = state.events.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        if *range >= range_seconds && at.elapsed().as_secs() < 60 {
+            let from = crate::history::now_seconds().saturating_sub(range_seconds) * 1000;
+            return events.iter().filter(|e| e.at_ms >= from).cloned().collect();
+        }
+    }
+    let read = tauri::async_runtime::spawn_blocking(move || crate::events::recent(range_seconds * 1000, 2_000))
+        .await
+        .unwrap_or_default();
+    *state.events.lock().unwrap_or_else(|p| p.into_inner()) = Some((std::time::Instant::now(), range_seconds, read.clone()));
+    read
+}
+
+#[tauri::command]
+pub fn rules_list(state: State<'_, AppState>) -> Vec<crate::rules::AppRule> {
+    state.rules.lock().unwrap_or_else(|p| p.into_inner()).list()
+}
+
+/// Stores an app's rule and applies it to what is running now; from then on every process the
+/// app starts gets it too.
+#[tauri::command]
+pub fn rule_set(state: State<'_, AppState>, rule: crate::rules::AppRule) -> Result<(), String> {
+    let running = running_of(&state, &rule.key);
+    let refs: Vec<&crate::metrics::grouping::ProcSample> = running.iter().collect();
+    state.rules.lock().unwrap_or_else(|p| p.into_inner()).set(rule, &refs)
+}
+
+/// Pauses or resumes every process of an app this user may control. Returns how many changed.
+#[tauri::command]
+pub fn app_pause(state: State<'_, AppState>, key: String, pause: bool) -> Result<usize, String> {
+    let running = running_of(&state, &key);
+    let refs: Vec<&crate::metrics::grouping::ProcSample> = running.iter().collect();
+    let protected = own_tree(&state);
+    let changed = state.rules.lock().unwrap_or_else(|p| p.into_inner()).pause(&key, pause, &refs, &protected)?;
+    // The row's "paused" mark comes from the next sample; patch the current one so the button
+    // does not flip back for a second.
+    if let Some(snapshot) = state.latest.write().unwrap_or_else(|p| p.into_inner()).as_mut() {
+        if let Some(app) = snapshot.apps.iter_mut().find(|a| a.key == key) {
+            app.control.paused = pause && changed > 0;
+        }
+    }
+    Ok(changed)
 }

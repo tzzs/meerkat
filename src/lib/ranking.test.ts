@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { formatHourLabel, iconPathForKey, rankingByHour } from "./ranking";
-import type { RankingRow } from "./types";
+import type { RankingMetric, RankingRow } from "./types";
 
 const HOUR = 3_600_000;
-const row = (hour: number, metric: string, apps: [string, number][]): RankingRow => ({
+const row = (hour: number, metric: RankingMetric, apps: [string, number][]): RankingRow => ({
   hourStartMs: hour * HOUR,
   metric,
   apps: apps.map(([key, value]) => ({ key, name: key, value })),

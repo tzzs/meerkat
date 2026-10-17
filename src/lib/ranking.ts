@@ -1,7 +1,6 @@
-import type { RankedApp, RankingRow } from "./types";
+import type { RankedApp, RankingMetric, RankingRow } from "./types";
 
-/** The two things the backend ranks apps by, once an hour. */
-export type RankingMetric = "memory" | "cpu";
+export type { RankingMetric };
 
 export interface HourRanking {
   hourStartMs: number;

@@ -13,6 +13,8 @@ import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab
 import { QuitDialog, Toaster } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
+import { AppDetailSheet } from "./components/app-detail";
+import { HistoryTab } from "./components/history";
 
 /** `?tab=` lets a probe open the window on a given tab; it outranks the setting. */
 function tabFromUrl(): string | null {
@@ -20,12 +22,16 @@ function tabFromUrl(): string | null {
 }
 
 export default function App() {
-  const { snapshot, settings, settingsLoaded, t, units, connected, pendingQuit } = useStore();
+  const { snapshot, settings, settingsLoaded, t, units, connected, pendingQuit, openDetail, requestQuit } =
+    useStore();
   const [tab, setTab] = useState(() => tabFromUrl() || "overview");
   // Read during the first render, before the effect below can record the tab the window
   // merely started on as if it had been the user's choice.
   const [launchLastTab] = useState(() => readLastTab());
   const openingApplied = useRef(false);
+  // The navigate listener is registered once; it reads the newest snapshot through this.
+  const latest = useRef(snapshot);
+  latest.current = snapshot;
   const [search, setSearch] = useState("");
   const [page, setPage] = useState<null | "general" | "layout" | "about">(null);
   const [maximized, setMaximized] = useState(false);
@@ -66,13 +72,22 @@ export default function App() {
       subscribe(() =>
         listenNavigate((destination) => {
           if (destination === "settings") setPage("general");
-          else if (isTabId(destination)) {
+          // The tray panel's app rows open that app's detail here.
+          else if (destination.startsWith("app:")) {
+            setPage(null);
+            openDetail(destination.slice(4));
+          }
+          // An AI assistant asked to quit an app (mcp.rs); the user answers the usual confirmation.
+          else if (destination.startsWith("quit:")) {
+            const app = latest.current?.apps.find((a) => a.key === destination.slice(5));
+            if (app) requestQuit(app);
+          } else if (isTabId(destination)) {
             setPage(null);
             setTab(destination);
           }
         }),
       ),
-    [],
+    [openDetail, requestQuit],
   );
 
   // The tabs the bar shows, in its order: what Ctrl+digit counts along.
@@ -254,6 +269,9 @@ export default function App() {
             <TabsContent value="overview">
               <OverviewTab onOpenTab={(next) => setTab(next as TabId)} />
             </TabsContent>
+            <TabsContent value="history">
+              <HistoryTab />
+            </TabsContent>
             <TabsContent value="cpu">
               <CpuTab />
             </TabsContent>
@@ -290,6 +308,7 @@ export default function App() {
           {snapshot ? t("status.samplerCost", { ms: (snapshot.samplerCostMicroseconds / 1000).toFixed(1) }) : ""}
         </span>
       </footer>
+      <AppDetailSheet />
       <QuitDialog />
       <Toaster />
     </Tabs>
