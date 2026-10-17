@@ -2,9 +2,9 @@
 # a screen grab because a fullscreen game can own the z-order, and because the window may be
 # behind everything and still have to be inspected.
 param(
-  [string]$Title = "Pulse",
-  [string]$Out = "E:\workspaces\Pulse\shots\window.png",
-  [string]$Process = "pulse",
+  [string]$Title = "Meerkat",
+  [string]$Out = (Join-Path (Split-Path $PSScriptRoot) "shots\window.png"),
+  [string]$Process = "meerkat",
   [int]$Index = 0
 )
 Add-Type -AssemblyName System.Drawing

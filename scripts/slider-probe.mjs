@@ -1,17 +1,17 @@
 // Checks the mixer fader in the real window: what the Radix slider is actually wearing, and
 // whether the hand still gets an immediate answer from it.
 //
-//   PULSE_CDP=9334 node scripts/slider-probe.mjs styles
-//   PULSE_CDP=9334 node scripts/slider-probe.mjs keys   "立体声混音"
-//   PULSE_CDP=9334 node scripts/slider-probe.mjs drag   "立体声混音"
-//   PULSE_CDP=9334 node scripts/slider-probe.mjs drag   "立体声混音" 55
+//   MEERKAT_CDP=9334 node scripts/slider-probe.mjs styles
+//   MEERKAT_CDP=9334 node scripts/slider-probe.mjs keys   "立体声混音"
+//   MEERKAT_CDP=9334 node scripts/slider-probe.mjs drag   "立体声混音"
+//   MEERKAT_CDP=9334 node scripts/slider-probe.mjs drag   "立体声混音" 55
 //
 // `keys` and `drag` change a volume, so they take the row to change by name and put it back
 // afterwards; point them at a device nothing is playing through, never at an app. A fourth
 // argument overrides the value to restore to, for tidying up after an earlier run.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PORT = process.env.PULSE_CDP ?? "9334";
+const PORT = process.env.MEERKAT_CDP ?? "9334";
 const phase = process.argv[2] ?? "styles";
 const rowName = process.argv[3] ?? "";
 

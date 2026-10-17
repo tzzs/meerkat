@@ -75,7 +75,7 @@ export const ipc = {
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
   quitApp: (key: string, force: boolean) => call<QuitResult>("quit_app", { key, force }),
   /**
-   * Writes a line to Pulse's own log. Never throws and never reports its own failure through
+   * Writes a line to Meerkat's own log. Never throws and never reports its own failure through
    * the error path it serves, so a broken bridge cannot turn one error into a loop.
    */
   logFrontend: (level: LogLevel, message: string) => {
@@ -85,10 +85,10 @@ export const ipc = {
       .catch(() => undefined);
   },
   /**
-   * Ends Pulse: the tray readouts and the sampling with it. Closing the window only hides it,
+   * Ends Meerkat: the tray readouts and the sampling with it. Closing the window only hides it,
    * so this is the one way out from the window itself.
    */
-  quitPulse: () => void call("quit_pulse"),
+  quitMeerkat: () => void call("quit_meerkat"),
   hidePanel: () => void call("hide_panel"),
   showWindow: (destination?: string) => void call("show_window", { destination: destination ?? null }),
   setPanelSize: (width: number, height: number) => void call("set_panel_size", { width, height }),

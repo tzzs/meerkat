@@ -1,10 +1,10 @@
-//! Pulse's own log.
+//! Meerkat's own log.
 //!
 //! A release build is a `windows`-subsystem program: it has no console, so every `eprintln!` went
 //! nowhere, "Copy report" promised a recent log that did not exist, and the first anyone heard of
 //! a settings file that could not be written or a mixer thread that never started was "it does
-//! not work". This writes those lines to `<app data>/logs/pulse.log`, keeps the file before it as
-//! `pulse.log.1` once it passes 512 KiB, and hands the tail of both to the report.
+//! not work". This writes those lines to `<app data>/logs/meerkat.log`, keeps the file before it as
+//! `meerkat.log.1` once it passes 512 KiB, and hands the tail of both to the report.
 //!
 //! What it promises its callers:
 //!
@@ -26,10 +26,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The size a log file may reach before it becomes `pulse.log.1`.
+/// The size a log file may reach before it becomes `meerkat.log.1`.
 pub const MAX_LOG_BYTES: u64 = 512 * 1024;
-const FILE_NAME: &str = "pulse.log";
-const OLDER_NAME: &str = "pulse.log.1";
+const FILE_NAME: &str = "meerkat.log";
+const OLDER_NAME: &str = "meerkat.log.1";
 /// Lines logged before the file exists are kept up to this many.
 const PENDING_LIMIT: usize = 200;
 /// A message that keeps repeating is summarised at least this often.
@@ -93,7 +93,7 @@ impl Logger {
         }
     }
 
-    /// Opens `<dir>/pulse.log` for appending (rotating a file that is already too big) and writes
+    /// Opens `<dir>/meerkat.log` for appending (rotating a file that is already too big) and writes
     /// what was logged while there was no file.
     fn open(&mut self, dir: &Path) {
         if self.dir.as_deref() == Some(dir) && self.file.is_some() {
@@ -515,7 +515,7 @@ mod tests {
     fn temp_dir(tag: &str) -> PathBuf {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("pulse-diag-{tag}-{}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meerkat-diag-{tag}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("a temp dir to test against");
         dir
@@ -536,8 +536,8 @@ mod tests {
 
     #[test]
     fn a_line_has_a_time_a_level_a_source_and_one_entry() {
-        let line = format_line(0, Level::Warn, "pulse-sampler", "tray tooltip: refused");
-        assert_eq!(line, "1970-01-01T00:00:00.000Z WARN  [pulse-sampler] tray tooltip: refused");
+        let line = format_line(0, Level::Warn, "meerkat-sampler", "tray tooltip: refused");
+        assert_eq!(line, "1970-01-01T00:00:00.000Z WARN  [meerkat-sampler] tray tooltip: refused");
         // A stack trace stays one entry: its continuation lines are indented, not timestamped.
         let multi = format_line(0, Level::Error, "ui", "Error: x\r\n  at a\n  at b");
         assert_eq!(multi.lines().count(), 3);
@@ -574,7 +574,7 @@ mod tests {
         }
         let current = read(&dir, FILE_NAME);
         let older = read(&dir, OLDER_NAME);
-        assert!(!older.is_empty(), "the full file became pulse.log.1");
+        assert!(!older.is_empty(), "the full file became meerkat.log.1");
         assert!(current.len() as u64 <= 300, "the new file stays within the limit: {}", current.len());
         assert!(current.contains("line number 11"), "the newest line is in the current file");
         // Together they hold a contiguous, ordered stretch ending at the newest line.
@@ -694,11 +694,11 @@ mod tests {
             ("DESKTOP-7QK2".to_string(), "<computer>"),
             ("tanzdev".to_string(), "<user>"),
         ];
-        let line = r"history: could not write c:\users\tanz dev\AppData\Roaming\com.tzz.pulse\history.json (desktop-7qk2, TanzDev)";
+        let line = r"history: could not write c:\users\tanz dev\AppData\Roaming\com.tzz.meerkat\history.json (desktop-7qk2, TanzDev)";
         let clean = redact(line, &needles);
         assert_eq!(
             clean,
-            r"history: could not write %USERPROFILE%\AppData\Roaming\com.tzz.pulse\history.json (<computer>, <user>)"
+            r"history: could not write %USERPROFILE%\AppData\Roaming\com.tzz.meerkat\history.json (<computer>, <user>)"
         );
         assert_eq!(redact("nothing personal here", &needles), "nothing personal here");
         // A non-ASCII line passes through whole.

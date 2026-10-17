@@ -1,15 +1,15 @@
-// Screenshots a running Pulse webview through the DevTools protocol, so design work is
+// Screenshots a running Meerkat webview through the DevTools protocol, so design work is
 // checked against the real window rather than against a description of it.
 //
 //   node scripts/ui-shot.mjs http://localhost:1420/?tab=cpu shots/browser.png
-//   PULSE_CDP=9334 node scripts/ui-shot.mjs same shots/app-cpu.png 2500 0 处理器
+//   MEERKAT_CDP=9334 node scripts/ui-shot.mjs same shots/app-cpu.png 2500 0 处理器
 //
 // Port 9333 is the plain-browser mirror started by scripts/open-probe.ps1; 9334 is the app's
 // own WebView2, which needs WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334
 // in the environment that launches `pnpm tauri dev`. Dev only: nothing ships with it.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PORT = process.env.PULSE_CDP ?? "9333";
+const PORT = process.env.MEERKAT_CDP ?? "9333";
 const url = process.argv[2] ?? "http://localhost:1420/";
 const out = process.argv[3] ?? "shots/shot.png";
 const settleMs = Number(process.argv[4] ?? 2500);

@@ -55,7 +55,7 @@ impl AppState {
     }
 }
 
-/// Which of Pulse's two windows somebody can look at right now.
+/// Which of Meerkat's two windows somebody can look at right now.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OnScreen {
     pub main: bool,
@@ -235,9 +235,9 @@ pub fn quit_app(state: State<'_, AppState>, key: String, force: bool) -> QuitRes
 }
 
 /// A clean exit for the window's own Quit: closing the window only hides it, so without this a
-/// Pulse whose tray icons are hidden by Windows could not be ended from where the user is.
+/// Meerkat whose tray icons are hidden by Windows could not be ended from where the user is.
 #[tauri::command]
-pub fn quit_pulse(app: AppHandle) {
+pub fn quit_meerkat(app: AppHandle) {
     app.exit(0);
 }
 
@@ -279,7 +279,7 @@ pub fn set_panel_size(app: AppHandle, state: State<'_, AppState>, width: u32, he
 const REPORT_LOG_LINES: usize = 40;
 
 /// The report Settings → About copies: version, the machine's OS build and CPU, a few figures,
-/// the settings, and the tail of Pulse's own log. No host name, no user name (paths in the log
+/// the settings, and the tail of Meerkat's own log. No host name, no user name (paths in the log
 /// are scrubbed), no app names.
 #[tauri::command(async)]
 pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
@@ -287,7 +287,7 @@ pub fn copy_report(state: State<'_, AppState>, app: AppHandle) -> String {
     let settings = state.settings.get();
     let build = if cfg!(debug_assertions) { "debug build" } else { "release build" };
     let mut lines = Vec::new();
-    lines.push(format!("Pulse {} ({build})", app.package_info().version));
+    lines.push(format!("Meerkat {} ({build})", app.package_info().version));
     if let Some(snapshot) = snapshot.as_ref() {
         lines.push(format!(
             "{} | {} | {} logical cores | {} bytes RAM",
@@ -367,7 +367,7 @@ pub async fn app_icon(exe_path: String, size: i32) -> Option<String> {
     png_data_url(&image)
 }
 
-/// Restarts Pulse with administrative rights, which is the only way to reach the ACPI thermal
+/// Restarts Meerkat with administrative rights, which is the only way to reach the ACPI thermal
 /// zone on Windows. The consent dialog is the user's decision: a declined one is reported and
 /// this instance keeps running, because quitting on their "No" would be worse than the missing
 /// sensor. Only after the elevated child is actually launched does this one exit, so the tray

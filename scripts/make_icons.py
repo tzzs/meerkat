@@ -1,4 +1,4 @@
-"""Generate Pulse app icons (png + ico) without external assets."""
+"""Generate Meerkat app icons (png + ico) without external assets."""
 from PIL import Image, ImageDraw
 import math, os
 
@@ -18,7 +18,7 @@ def rounded_mask(size, radius):
     return m
 
 
-def pulse_points(w, h, amp):
+def ecg_points(w, h, amp):
     """ECG-like waveform across the tile, normalised coordinates."""
     pts = [
         (0.05, 0.50),
@@ -46,8 +46,8 @@ def app_icon(size=512):
     body = Image.new("RGBA", (size, size), BG)
     d = ImageDraw.Draw(body)
     stroke = max(10, size // 26)
-    d.line(pulse_points(size, size, size * 0.62), fill=LINE, width=stroke, joint="curve")
-    for i, (x, y) in enumerate(pulse_points(size, size, size * 0.62)):
+    d.line(ecg_points(size, size, size * 0.62), fill=LINE, width=stroke, joint="curve")
+    for i, (x, y) in enumerate(ecg_points(size, size, size * 0.62)):
         if i in (4, 5):
             continue
         r = stroke / 2
@@ -61,7 +61,7 @@ def tray_icon(size=64):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     stroke = max(2, size // 12)
-    pts = pulse_points(size, size, size * 0.66)
+    pts = ecg_points(size, size, size * 0.66)
     d.line(pts, fill=(12, 14, 16, 220), width=stroke + 2, joint="curve")
     d.line(pts, fill=LINE, width=stroke, joint="curve")
     return img

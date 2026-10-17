@@ -1,7 +1,7 @@
-param([string]$Url = "http://localhost:1420/?tab=memory", [string]$Out = "E:\workspaces\Pulse\shots\tab.png", [int]$Wait = 6)
+param([string]$Url = "http://localhost:1420/?tab=memory", [string]$Out = (Join-Path (Split-Path $PSScriptRoot) "shots\tab.png"), [int]$Wait = 6)
 $edge = @("C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "C:\Program Files\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $edge) { Write-Output "edge not found"; exit 1 }
-$profile = Join-Path $env:TEMP "pulse-ui-profile"
+$profile = Join-Path $env:TEMP "meerkat-ui-profile"
 $proc = Start-Process -FilePath $edge -ArgumentList @("--app=$Url", "--window-size=$Win,$Hit", "--window-position=140,90", "--user-data-dir=$profile", "--no-first-run") -PassThru
 Start-Sleep -Seconds $Wait
 # The renderer lives in a child msedge process; capture every window the tree owns.
@@ -37,8 +37,8 @@ public class Grab {
   }
 }
 "@
-$found = [Grab]::Scan([uint32[]]$tree, "Pulse")
-if ($found.Count -eq 0) { Write-Output "no Pulse window (pids: $tree)"; Stop-Process -Id $proc.Id -Force; exit 1 }
+$found = [Grab]::Scan([uint32[]]$tree, "Meerkat")
+if ($found.Count -eq 0) { Write-Output "no Meerkat window (pids: $tree)"; Stop-Process -Id $proc.Id -Force; exit 1 }
 $h = $found[0]
 $r = New-Object 'Grab+RECT'
 [Grab]::GetWindowRect($h, [ref]$r) | Out-Null

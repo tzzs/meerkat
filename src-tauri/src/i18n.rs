@@ -1,4 +1,4 @@
-//! The few words Pulse says outside the webview: toasts, the tray menu and the tray tooltips.
+//! The few words Meerkat says outside the webview: toasts, the tray menu and the tray tooltips.
 //! The front end keeps its own catalogue (`src/i18n`); these strings follow its wording, and
 //! the unit formatting below mirrors `src/lib/format.ts` so a figure reads the same in a toast,
 //! a tooltip and the window.
@@ -34,11 +34,11 @@ pub fn from_lang_id(id: u16) -> Lang {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
-    OpenPulse,
+    OpenMeerkat,
     Settings,
-    QuitPulse,
+    QuitMeerkat,
     /// The product name, which is also the tray icon's tooltip when no readout is enabled.
-    Pulse,
+    AppName,
     /// After a share of memory: "38% available".
     Available,
     /// The disk tooltip's "Reading 12 MB/s, Writing 4 MB/s".
@@ -48,16 +48,16 @@ pub enum Text {
 
 pub fn text(lang: Lang, text: Text) -> &'static str {
     match (lang, text) {
-        (Lang::En, Text::OpenPulse) => "Open Pulse",
+        (Lang::En, Text::OpenMeerkat) => "Open Meerkat",
         (Lang::En, Text::Settings) => "Settings",
-        (Lang::En, Text::QuitPulse) => "Quit Pulse",
-        (Lang::En, Text::Pulse) | (Lang::ZhHans, Text::Pulse) => "Pulse",
+        (Lang::En, Text::QuitMeerkat) => "Quit Meerkat",
+        (Lang::En, Text::AppName) | (Lang::ZhHans, Text::AppName) => "Meerkat",
         (Lang::En, Text::Available) => "available",
         (Lang::En, Text::Reading) => "Reading",
         (Lang::En, Text::Writing) => "Writing",
-        (Lang::ZhHans, Text::OpenPulse) => "打开 Pulse",
+        (Lang::ZhHans, Text::OpenMeerkat) => "打开 Meerkat",
         (Lang::ZhHans, Text::Settings) => "设置",
-        (Lang::ZhHans, Text::QuitPulse) => "退出 Pulse",
+        (Lang::ZhHans, Text::QuitMeerkat) => "退出 Meerkat",
         (Lang::ZhHans, Text::Available) => "可用",
         (Lang::ZhHans, Text::Reading) => "读取",
         (Lang::ZhHans, Text::Writing) => "写入",
@@ -233,12 +233,12 @@ pub fn duration(seconds: u64, lang: Lang) -> String {
     }
 }
 
-/// The toast's headline is the application itself; Pulse's own name is already on the toast,
+/// The toast's headline is the application itself; Meerkat's own name is already on the toast,
 /// filed under its AppUserModelID.
 pub fn insight_title(insight: &Insight) -> String {
     let name = insight.app_name.trim();
     if name.is_empty() {
-        "Pulse".to_string()
+        "Meerkat".to_string()
     } else {
         name.to_string()
     }
@@ -338,13 +338,13 @@ mod tests {
                 assert!(!body.to_lowercase().contains("climbing"), "{body}");
                 assert!(!body.contains("仍在"), "{body}");
                 assert!(!body.contains("Visual Studio Code"), "{body}");
-                assert!(!body.contains("Pulse"), "{body}");
+                assert!(!body.contains("Meerkat"), "{body}");
             }
         }
         assert_eq!(insight_title(&all_kinds()[0]), "Visual Studio Code");
         let mut nameless = all_kinds().remove(0);
         nameless.app_name = "  ".into();
-        assert_eq!(insight_title(&nameless), "Pulse");
+        assert_eq!(insight_title(&nameless), "Meerkat");
     }
 
     #[test]

@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 
 const allow = createLimiter({ burst: 5, windowMs: 10_000, repeatMs: 60_000 });
 
-/** Sends one line to Pulse's log, unless the limiter has already heard enough of it. */
+/** Sends one line to Meerkat's log, unless the limiter has already heard enough of it. */
 export function reportFrontend(level: LogLevel, message: string): void {
   const text = clip(message);
   if (!allow(text, Date.now())) return;

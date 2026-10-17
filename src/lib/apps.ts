@@ -85,7 +85,7 @@ export function processName(app: Pick<AppInfo, "exePath" | "name">): string {
 }
 
 /**
- * Whether Pulse offers to close it. Windows' own processes are not something to end from a
+ * Whether Meerkat offers to close it. Windows' own processes are not something to end from a
  * monitor, and the unreadable row is a count, not an application.
  */
 export function canQuit(app: Pick<AppInfo, "key" | "kind">): boolean {

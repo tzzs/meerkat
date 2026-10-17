@@ -54,7 +54,7 @@ interface Item {
 }
 
 /**
- * The row menu: pin, the three copies, and Quit… for anything Pulse would offer to close. It
+ * The row menu: pin, the three copies, and Quit… for anything Meerkat would offer to close. It
  * replaces a right click that silently toggled the pin, which nobody could discover and which
  * did nothing visible on a row that was already near the top.
  *

@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 $chrome = "C:\Program Files\Google\Chrome\Application\chrome.exe"
 if (-not (Test-Path $chrome)) { Write-Output "chrome not found"; exit 1 }
-$profile = Join-Path $env:TEMP "pulse-probe-profile"
+$profile = Join-Path $env:TEMP "meerkat-probe-profile"
 $url = "http://localhost:1420/?tab=cpu"
 Start-Process -FilePath $chrome -ArgumentList @(
   "--app=$url",

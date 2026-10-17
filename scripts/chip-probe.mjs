@@ -2,14 +2,14 @@
 // picker on the app table, and the panel-tile picker in Settings. Reports what the group says
 // it is, what the chosen chip is wearing, and whether the keyboard can move the choice.
 //
-//   PULSE_CDP=9334 node scripts/chip-probe.mjs
+//   MEERKAT_CDP=9334 node scripts/chip-probe.mjs
 //
 // The page functions below are written as real functions and sent by source (`fn.toString()`),
 // because an expression assembled by string interpolation is a syntax error you can only find
 // in the browser.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PORT = process.env.PULSE_CDP ?? "9334";
+const PORT = process.env.MEERKAT_CDP ?? "9334";
 const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`)
   .then((r) => r.json())
   .catch(() => null);

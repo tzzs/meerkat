@@ -31,10 +31,10 @@ use crate::models::{Availability, MetricKind, Snapshot};
 use crate::settings::{NetworkUnit, Settings, StorageUnit, TemperatureUnit, TrayReadout, TrayStyle};
 use crate::tray_render::{self, Frame, Layout};
 
-/// The icon kept when no readout is enabled. Every way into Pulse (the panel, the window, the
+/// The icon kept when no readout is enabled. Every way into Meerkat (the panel, the window, the
 /// menu with its Quit) hangs off a tray icon, and the window may be hidden and out of the
 /// taskbar, so an app with none would be running and unreachable.
-pub const FALLBACK_ID: &str = "tray-pulse";
+pub const FALLBACK_ID: &str = "tray-meerkat";
 
 /// What a reading says when there is no reading. Never a zero: a machine without a battery is
 /// not at 0 %.
@@ -48,7 +48,7 @@ const DISK_FLOOR: f64 = 1_000_000.0;
 /// than any icon takes; it only has to end a wait on an event loop that has already stopped.
 const MAIN_THREAD_PATIENCE: Duration = Duration::from_secs(10);
 
-/// What Pulse has put in the notification area, and what each icon is known to be showing.
+/// What Meerkat has put in the notification area, and what each icon is known to be showing.
 ///
 /// Locked on the main thread only (see the module docs).
 pub struct TrayManager {
@@ -212,7 +212,7 @@ pub fn update(app: &AppHandle, snapshot: &Snapshot, settings: &Settings) {
 fn frames_for(snapshot: &Snapshot, settings: &Settings) -> Vec<IconFrame> {
     let lang = i18n::resolve(settings.language);
     let units = Units::of(settings);
-    // The taskbar's theme is Windows' own system theme: Pulse's theme setting is about its
+    // The taskbar's theme is Windows' own system theme: Meerkat's theme setting is about its
     // windows, and a dark default on a light bar is how the readout used to vanish.
     let light_bar = tray_render::taskbar_is_light();
     let size = tray_render::icon_size();
@@ -271,7 +271,7 @@ fn reconcile(app: &AppHandle, settings: &Settings) {
             for id in &wanted {
                 let tip = match readout_for(settings, id) {
                     Some(readout) => format!("{} {ABSENT}", i18n::metric(lang, readout.metric)),
-                    None => i18n::text(lang, Text::Pulse).to_string(),
+                    None => i18n::text(lang, Text::AppName).to_string(),
                 };
                 match build_icon(app, id, &tip, lang) {
                     Ok(()) => created.push(id.clone()),

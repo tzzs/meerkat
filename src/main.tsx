@@ -10,7 +10,7 @@ import "./styles/base.css";
 import "./styles/window.css";
 
 // Set before the first render rather than by App, so the page is marked even when App throws.
-document.documentElement.dataset.pulse = "window";
+document.documentElement.dataset.meerkat = "window";
 installErrorReporting("window");
 
 createRoot(document.getElementById("root")!).render(

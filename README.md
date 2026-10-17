@@ -1,4 +1,4 @@
-# Pulse
+# Meerkat
 
 An Activity-Monitor-style system monitor for Windows. It shows **applications, not a wall of
 processes**: every helper process is folded into the app that started it, and each app gets one
@@ -21,9 +21,9 @@ share the same live data, and a 30-day history says what happened while you were
 
 Nothing is faked: a reading Windows does not give an unprivileged process is shown as unavailable
 instead of as zero. Per-app network *bytes*, CPU package temperature and fan speed are not
-available without a kernel driver or elevation; Pulse shows connections and ports instead and says so.
+available without a kernel driver or elevation; Meerkat shows connections and ports instead and says so.
 
-Pulse has no account, no telemetry and makes no network requests.
+Meerkat has no account, no telemetry and makes no network requests.
 
 ## Requirements
 
@@ -43,8 +43,8 @@ Things worth knowing:
 - A debug build loads the Vite dev server, so it never registers itself to start at sign-in, and it
   removes a sign-in entry that points at itself (an older build used to leave one behind, which
   opened an empty "localhost refused to connect" window at every sign-in).
-- `PULSE_DEV_MIRROR=1 pnpm tauri dev` makes the debug backend mirror its state into
-  `%APPDATA%\com.tzz.pulse\dev`, so `pnpm dev` in a plain browser shows the same live figures.
+- `MEERKAT_DEV_MIRROR=1 pnpm tauri dev` makes the debug backend mirror its state into
+  `%APPDATA%\com.tzz.meerkat\dev`, so `pnpm dev` in a plain browser shows the same live figures.
 - If `cargo` fails once with `dlltool could not create import library … .dll_imports`, it is a
   parallel-build race in some MinGW distributions: re-run with `-j 2`.
 - The UI probes in `scripts/*.mjs` talk to the WebView2 debugging port; each file's header says how
@@ -63,12 +63,12 @@ node scripts/release-check.mjs   # runs the release binary and reads the CSP hea
 
 ```bash
 pnpm tauri build          # NSIS installer (per-user)
-pnpm package:portable     # zip with pulse.exe and WebView2Loader.dll
+pnpm package:portable     # zip with meerkat.exe and WebView2Loader.dll
 ```
 
 ## Where things live
 
-User data is in `%APPDATA%\com.tzz.pulse\`:
+User data is in `%APPDATA%\com.tzz.meerkat\`:
 
 | File | What |
 |---|---|
@@ -76,7 +76,7 @@ User data is in `%APPDATA%\com.tzz.pulse\`:
 | `history.json` | one-minute points for two hours, five-minute for a day, hourly for 30 days; the busiest apps per hour for 48 hours |
 | `insights.json` | the "worth a look" list |
 | `audio-volumes.json` | remembered per-app volumes |
-| `logs/pulse.log` | diagnostics (rotated at 512 KiB); the last lines are in Settings → About → Copy report |
+| `logs/meerkat.log` | diagnostics (rotated at 512 KiB); the last lines are in Settings → About → Copy report |
 
 Source layout:
 

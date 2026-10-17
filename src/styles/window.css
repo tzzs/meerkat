@@ -11,7 +11,7 @@
   color: var(--text);
   box-shadow: var(--shadow);
 }
-[data-pulse="window"] .crash {
+[data-meerkat="window"] .crash {
   margin: 12vh auto 0;
 }
 .crash-title {

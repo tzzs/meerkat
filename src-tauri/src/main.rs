@@ -32,12 +32,12 @@ use crate::settings::SettingsStore;
 use crate::tray::TrayManager;
 
 fn main() -> tauri::Result<()> {
-    // Before anything that can fail: this is a build with no console, and a Pulse that does not
+    // Before anything that can fail: this is a build with no console, and a Meerkat that does not
     // start (no WebView2 runtime is the usual reason) has nowhere else to say why.
     diag::init_early(toast::AUMID);
     let result = run();
     if let Err(error) = &result {
-        diag::error(format!("Pulse stopped: {error}"));
+        diag::error(format!("Meerkat stopped: {error}"));
     }
     result
 }
@@ -48,7 +48,7 @@ fn run() -> tauri::Result<()> {
         // inside this one's setup, before any other plugin, window, tray icon or sampler of its
         // own exists. The running instance gets the arguments instead.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // A login item firing while Pulse already runs has nothing to show.
+            // A login item firing while Meerkat already runs has nothing to show.
             if !args.iter().any(|a| a == autostart::FLAG) {
                 diag::info("a second launch: showing the window of the running instance");
                 menu::show_main(app, None);
@@ -69,7 +69,7 @@ fn run() -> tauri::Result<()> {
             ipc::insights,
             ipc::insight_dismiss,
             ipc::quit_app,
-            ipc::quit_pulse,
+            ipc::quit_meerkat,
             ipc::log_frontend,
             ipc::hide_panel,
             ipc::show_window,
@@ -89,7 +89,7 @@ fn run() -> tauri::Result<()> {
         .on_tray_icon_event(menu::on_tray_event)
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
-                // Closing the window keeps Pulse in the tray, like the Mac version.
+                // Closing the window keeps Meerkat in the tray, like the Mac version.
                 if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
@@ -122,7 +122,7 @@ fn run() -> tauri::Result<()> {
             // file is exactly what a report should carry.
             diag::init(&app_data);
             diag::info(format!(
-                "Pulse {} starting ({}, {})",
+                "Meerkat {} starting ({}, {})",
                 app.package_info().version,
                 if cfg!(debug_assertions) { "debug build" } else { "release build" },
                 if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
@@ -195,7 +195,7 @@ fn run() -> tauri::Result<()> {
 }
 
 /// The last thing that runs, on the main thread, once the event loop has stopped: every
-/// clean way out (the tray menu, `quit_pulse`, a relaunch) passes through here, because each of
+/// clean way out (the tray menu, `quit_meerkat`, a relaunch) passes through here, because each of
 /// them is `AppHandle::exit`, which ends the event loop and then reports `RunEvent::Exit`.
 ///
 /// The history is written out here. It is otherwise saved on a timer, so without this the minute
@@ -218,7 +218,7 @@ fn panel_pinned(window: &tauri::Window) -> bool {
 
 fn spawn_sampler(app: AppHandle) {
     std::thread::Builder::new()
-        .name("pulse-sampler".into())
+        .name("meerkat-sampler".into())
         .spawn(move || {
             let state = app.state::<AppState>();
             let _ = state.app.set(app.clone());
@@ -279,7 +279,7 @@ fn tick_ms(visible: bool, on_ac: bool) -> u64 {
 }
 
 /// Start at login. The registration itself is the `Run` value the autostart plugin writes
-/// (`HKCU\…\Run\Pulse = <exe> --autostart`); this module reads it back so Pulse can tell whose
+/// (`HKCU\…\Run\Meerkat = <exe> --autostart`); this module reads it back so Meerkat can tell whose
 /// registration it is before changing it.
 mod autostart {
     use tauri::AppHandle;
@@ -349,8 +349,8 @@ mod autostart {
 
     #[cfg(not(debug_assertions))]
     fn enable(app: &AppHandle) {
-        // The plugin writes HKLM whenever it is allowed to, and an elevated Pulse (the thermal
-        // sensor relaunch) is: that would start Pulse at every user's sign-in. The next normal
+        // The plugin writes HKLM whenever it is allowed to, and an elevated Meerkat (the thermal
+        // sensor relaunch) is: that would start Meerkat at every user's sign-in. The next normal
         // start writes the per-user value instead.
         if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
             crate::diag::info("running elevated; the login item is left to the next normal start");
@@ -377,7 +377,7 @@ mod autostart {
     /// The arguments of a `Run` command line when it launches exactly `exe`, `None` for any
     /// other program. Paths compare without regard to letter case, as Windows does. The plugin
     /// writes the path unquoted, so one with spaces is matched as a whole path followed by a
-    /// space or the end, never as a bare prefix (`pulse.exe.old` is somebody else).
+    /// space or the end, never as a bare prefix (`meerkat.exe.old` is somebody else).
     pub fn launches<'a>(command: &'a str, exe: &str) -> Option<&'a str> {
         let command = command.trim();
         if exe.is_empty() {
@@ -454,13 +454,13 @@ mod autostart {
     mod tests {
         use super::*;
 
-        const DEV: &str = r"E:\workspaces\Pulse\src-tauri\target\debug\pulse.exe";
+        const DEV: &str = r"E:\workspaces\Meerkat\src-tauri\target\debug\meerkat.exe";
 
-        // The value this machine actually had: a debug build, no arguments.
+        // The value an old debug build left: the bare path, no arguments.
         #[test]
         fn the_registration_an_old_debug_build_left_is_recognised() {
             assert_eq!(launches(DEV, DEV), Some(""));
-            assert_eq!(launches(r"e:\WORKSPACES\pulse\src-tauri\target\debug\PULSE.EXE", DEV), Some(""));
+            assert_eq!(launches(r"e:\WORKSPACES\meerkat\src-tauri\target\debug\MEERKAT.EXE", DEV), Some(""));
             assert_eq!(launches(&format!("{DEV} --autostart"), DEV), Some("--autostart"));
             assert_eq!(launches(&format!("\"{DEV}\" --autostart"), DEV), Some("--autostart"));
             assert_eq!(launches(&format!("  \"{DEV}\"  "), DEV), Some(""));
@@ -468,13 +468,13 @@ mod autostart {
 
         #[test]
         fn a_registration_for_any_other_program_is_not_ours() {
-            let release = r"C:\Users\me\AppData\Local\Pulse\pulse.exe";
+            let release = r"C:\Users\me\AppData\Local\Meerkat\meerkat.exe";
             assert_eq!(launches(release, DEV), None);
             assert_eq!(launches(&format!("{DEV}.old"), DEV), None, "a longer file name is another file");
             assert_eq!(launches(&format!("{DEV}x --autostart"), DEV), None);
             assert_eq!(launches(&format!("\"{DEV}.old\""), DEV), None);
             assert_eq!(launches(&format!("\"{DEV}"), DEV), None, "an unterminated quote is not a match");
-            assert_eq!(launches(r"E:\workspaces\Pulse\src-tauri\target\debug", DEV), None);
+            assert_eq!(launches(r"E:\workspaces\Meerkat\src-tauri\target\debug", DEV), None);
             assert_eq!(launches("", DEV), None);
             assert_eq!(launches(DEV, ""), None);
         }
@@ -483,9 +483,9 @@ mod autostart {
         // as a whole before the arguments start.
         #[test]
         fn an_unquoted_path_with_spaces_matches_as_a_whole() {
-            let installed = r"C:\Program Files\Pulse\pulse.exe";
+            let installed = r"C:\Program Files\Meerkat\meerkat.exe";
             assert_eq!(launches(&format!("{installed} --autostart"), installed), Some("--autostart"));
-            assert_eq!(launches(r"C:\Program Files\Pulse\pulse.exe.bak --autostart", installed), None);
+            assert_eq!(launches(r"C:\Program Files\Meerkat\meerkat.exe.bak --autostart", installed), None);
             assert_eq!(launches(r"C:\Program", installed), None);
         }
     }

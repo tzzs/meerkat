@@ -12,7 +12,7 @@ import { resolve } from "node:path";
 
 const PORT = process.argv[2] ?? "9335";
 const root = resolve(import.meta.dirname, "..");
-const exe = resolve(root, "src-tauri/target/release/pulse.exe");
+const exe = resolve(root, "src-tauri/target/release/meerkat.exe");
 const sandbox = resolve(root, "src-tauri/target/release/.sandbox-appdata");
 
 if (!existsSync(exe)) {
@@ -51,7 +51,7 @@ const fingerprint = (dir) =>
   existsSync(dir)
     ? readdirSync(dir).sort().map((f) => `${f}:${statSync(resolve(dir, f)).size}`).join(" ")
     : "(absent)";
-const real0 = resolve(process.env.APPDATA ?? "", "com.tzz.pulse");
+const real0 = resolve(process.env.APPDATA ?? "", "com.tzz.meerkat");
 const before = fingerprint(real0);
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -142,7 +142,7 @@ console.log(
 // APPDATA cannot be redirected for a Windows app: the known-folder API answers from the token,
 // not the environment. So instead of claiming isolation, measure whether this run touched the
 // real data directory at all.
-const real = resolve(process.env.APPDATA ?? "", "com.tzz.pulse");
+const real = resolve(process.env.APPDATA ?? "", "com.tzz.meerkat");
 const now = fingerprint(real);
 console.log(
   "real app data dir:",

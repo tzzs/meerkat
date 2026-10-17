@@ -15,7 +15,7 @@ use crate::i18n::{self, Lang, Text};
 use crate::ipc::AppState;
 
 pub fn tray_menu(app: &AppHandle, lang: Lang) -> Result<Menu<Wry>, String> {
-    let open: MenuItem<Wry> = MenuItem::with_id(app, "open", i18n::text(lang, Text::OpenPulse), true, None::<&str>)
+    let open: MenuItem<Wry> = MenuItem::with_id(app, "open", i18n::text(lang, Text::OpenMeerkat), true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let settings: MenuItem<Wry> =
         MenuItem::with_id(app, "settings", i18n::text(lang, Text::Settings), true, None::<&str>)
@@ -23,7 +23,7 @@ pub fn tray_menu(app: &AppHandle, lang: Lang) -> Result<Menu<Wry>, String> {
     let separator: PredefinedMenuItem<Wry> =
         PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
     let quit: MenuItem<Wry> =
-        MenuItem::with_id(app, "quit", i18n::text(lang, Text::QuitPulse), true, None::<&str>)
+        MenuItem::with_id(app, "quit", i18n::text(lang, Text::QuitMeerkat), true, None::<&str>)
             .map_err(|e| e.to_string())?;
     Menu::with_items(app, &[&open, &settings, &separator, &quit]).map_err(|e| e.to_string())
 }

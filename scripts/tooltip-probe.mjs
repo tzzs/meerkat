@@ -2,10 +2,10 @@
 // what it is wearing, and whether the row it hangs off still measures what the virtualizer
 // thinks it measures.
 //
-//   PULSE_CDP=9334 node scripts/tooltip-probe.mjs
+//   MEERKAT_CDP=9334 node scripts/tooltip-probe.mjs
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PORT = process.env.PULSE_CDP ?? "9334";
+const PORT = process.env.MEERKAT_CDP ?? "9334";
 
 async function connect(wantPanel) {
   const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((r) => r.json());

@@ -254,7 +254,7 @@ impl Sampler {
         }
     }
 
-    /// Today's totals are Pulse's own integral of the rate, because Windows has no
+    /// Today's totals are Meerkat's own integral of the rate, because Windows has no
     /// "bytes since midnight" counter.
     fn roll_day(&mut self, taken_at_ms: u64, elapsed: f64, disk: &DiskMetric, network: &NetworkMetric) {
         let key = day_key(taken_at_ms);
@@ -579,7 +579,7 @@ impl Sampler {
 
 /// How often WMI is asked again while it has not produced a single sensor. An unprivileged
 /// process is refused every time — measured at 3 ms of COM per call, on the sampler thread, once
-/// a second, for nothing — and the answer only changes when Pulse is restarted elevated.
+/// a second, for nothing — and the answer only changes when Meerkat is restarted elevated.
 const SENSOR_RETRY: Duration = Duration::from_secs(60);
 
 /// Sensors that exist are read every tick; none yet means a retry once per [`SENSOR_RETRY`].

@@ -74,7 +74,7 @@ fn one() -> u32 {
 pub struct StoredHour {
     /// Hour start, Unix seconds.
     pub at: u64,
-    /// Memory ranking: mean resident bytes over the part of the hour Pulse saw, top 40.
+    /// Memory ranking: mean resident bytes over the part of the hour Meerkat saw, top 40.
     pub apps: Vec<RankedApp>,
     /// CPU ranking: mean percent of the whole machine over the same span, top 10.
     #[serde(default)]
@@ -712,7 +712,7 @@ fn save_in_background(disk: &Arc<Disk>, generation: u64, bytes: Vec<u8>) {
 
     let worker = Arc::clone(disk);
     let spawned = std::thread::Builder::new()
-        .name("pulse-history-save".into())
+        .name("meerkat-history-save".into())
         .spawn(move || loop {
             let job = {
                 let mut queue = lock(&worker.queue);
@@ -771,7 +771,7 @@ mod tests {
     fn temp_dir(tag: &str) -> PathBuf {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("pulse-history-{tag}-{}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meerkat-history-{tag}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("a temp dir to test against");
         dir
@@ -1031,7 +1031,7 @@ mod tests {
         h.store.points = vec![
             weighted(HOUR0 + 600, 60, &[("cpu", 10.0)], &[("cpu", 30.0)]),
             weighted(HOUR0 + 660, 60, &[("cpu", 20.0)], &[("cpu", 25.0)]),
-            // Ten minutes in which Pulse was not running.
+            // Ten minutes in which Meerkat was not running.
             weighted(HOUR0 + 1_320, 30, &[("cpu", 40.0)], &[("cpu", 90.0)]),
         ];
 

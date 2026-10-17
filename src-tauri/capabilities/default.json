@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the Pulse window and tray panel",
+  "description": "Capabilities for the Meerkat window and tray panel",
   "windows": ["main", "panel"],
   "permissions": [
     "core:default",

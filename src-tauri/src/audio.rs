@@ -1119,7 +1119,7 @@ fn watch(state_path: PathBuf, mut seen: SeenSessions) {
 /// playing and returns the number of sessions adjusted; it also starts, once per process, a
 /// background thread that looks at the sessions every couple of seconds and applies the rules
 /// to the ones it has not met before. A session is only ever adjusted when it is first met, so
-/// a volume changed afterwards, in Pulse or in Windows, is left alone. Later calls only
+/// a volume changed afterwards, in Meerkat or in Windows, is left alone. Later calls only
 /// restore once more; they do not start another watcher, and the first call's `state_path` is
 /// the one it keeps reading.
 ///
@@ -1134,7 +1134,7 @@ pub fn apply_saved_volumes(state_path: &Path) -> Result<usize, String> {
     if WATCHER.set(()).is_ok() {
         let path = state_path.to_path_buf();
         let started = std::thread::Builder::new()
-            .name("pulse-audio-restore".into())
+            .name("meerkat-audio-restore".into())
             .spawn(move || watch(path, seen));
         if let Err(e) = started {
             crate::diag::error(format!("audio: the volume watcher could not start: {e}"));
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn store_roundtrip_and_upsert() {
-        let dir = std::env::temp_dir().join(format!("pulse-audio-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meerkat-audio-test-{}", std::process::id()));
         let path = dir.join("volumes.json");
         let _ = fs::remove_dir_all(&dir);
 
@@ -1229,7 +1229,7 @@ mod tests {
 
     #[test]
     fn missing_state_file_is_not_an_error() {
-        let path = std::env::temp_dir().join("pulse-audio-does-not-exist/none.json");
+        let path = std::env::temp_dir().join("meerkat-audio-does-not-exist/none.json");
         assert_eq!(load_store(&path).unwrap().rules.len(), 0);
     }
 

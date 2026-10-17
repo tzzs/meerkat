@@ -4,7 +4,7 @@
 #
 # Tauri has no zip target for Windows, and the GNU build's exe needs exactly one non-system
 # DLL beside it, so "portable" is those two files in a folder. Nothing is installed and nothing
-# is registered: the app writes its data to %APPDATA%\com.tzz.pulse on first run like any other
+# is registered: the app writes its data to %APPDATA%\com.tzz.meerkat on first run like any other
 # build.
 $ErrorActionPreference = "Stop"
 
@@ -15,18 +15,18 @@ $out = Join-Path $root "dist-portable"
 $conf = Get-Content (Join-Path $root "src-tauri/tauri.conf.json") -Raw | ConvertFrom-Json
 $version = $conf.version
 
-$exe = Join-Path $release "pulse.exe"
+$exe = Join-Path $release "meerkat.exe"
 $loader = Join-Path $release "WebView2Loader.dll"
 foreach ($f in @($exe, $loader)) {
   if (-not (Test-Path $f)) { throw "missing $f — run `pnpm tauri build` first" }
 }
 
-$stage = Join-Path $out "Pulse"
+$stage = Join-Path $out "Meerkat"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item $exe, $loader -Destination $stage
 
-$zip = Join-Path $out "Pulse-$version-portable-x64.zip"
+$zip = Join-Path $out "Meerkat-$version-portable-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 Compress-Archive -Path $stage -DestinationPath $zip

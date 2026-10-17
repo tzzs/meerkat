@@ -29,7 +29,7 @@ function bucketMilliseconds(bucketSeconds: number): number {
  * A history series placed on a real time axis, [fromMs, toMs].
  *
  * The chart used to be handed the values alone and spaced them by index, so every gap - the
- * machine asleep, Pulse not running - closed up: this machine's twelve hours had a 195-minute
+ * machine asleep, Meerkat not running - closed up: this machine's twelve hours had a 195-minute
  * hole drawn as a continuous line, and "last 7 days" was only as wide as the days that had
  * data. Points outside the window are dropped, and a run is broken wherever two neighbours
  * are more than GAP_BUCKETS buckets apart.

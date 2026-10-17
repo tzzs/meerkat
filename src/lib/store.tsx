@@ -72,7 +72,7 @@ interface StoreValue {
   lang: Lang;
   t: Translate;
   connected: boolean;
-  /** Vitals asks before anything is closed; so does Pulse. */
+  /** Vitals asks before anything is closed; so does Meerkat. */
   pendingQuit: QuitRequest | null;
   /** `preferForce` opens the dialog with force quit as the highlighted action. */
   requestQuit: (app: AppInfo, preferForce?: boolean) => void;
@@ -141,7 +141,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // The backend only pushes snapshots to a window that is on screen, so one that has just
     // been shown is up to a minute stale and catches up at once rather than at the next tick.
     // Its settings may be older still: the panel lives for the whole session and used to keep
-    // the language, theme and units it was started with until Pulse restarted.
+    // the language, theme and units it was started with until Meerkat restarted.
     const catchUp = () => {
       void loadSnapshot();
       void loadSettings();
@@ -184,7 +184,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       // Refused: say so, and put back what is really in effect instead of leaving a control
-      // showing a value Pulse is not using.
+      // showing a value Meerkat is not using.
       setSettingsError(result.error);
       const current = await ipc.settingsGet();
       if (seq !== saveSeq.current || savesInFlight.current > 0) return;

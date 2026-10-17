@@ -1,7 +1,7 @@
 import { TAB_ORDER, type TabConfig } from "./types";
 
 /** Where the window remembers the tab it was last left on, for "open on the last tab". */
-export const LAST_TAB_KEY = "pulse.lastTab";
+export const LAST_TAB_KEY = "meerkat.lastTab";
 
 type Reader = Pick<Storage, "getItem">;
 type Writer = Pick<Storage, "setItem">;

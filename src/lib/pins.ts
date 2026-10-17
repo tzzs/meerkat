@@ -6,7 +6,7 @@ import { useCallback, useSyncExternalStore } from "react";
  * launch. localStorage is shared by both webviews (same origin), and its `storage` event tells
  * one window when the other changed it.
  */
-export const PINS_KEY = "pulse.pins";
+export const PINS_KEY = "meerkat.pins";
 
 /** Far more than anyone pins; it only bounds what a corrupted value can make the list do. */
 export const MAX_PINS = 200;

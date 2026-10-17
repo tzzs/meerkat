@@ -718,7 +718,7 @@ function About() {
         body={t("quit.body")}
         confirmLabel={t("action.quit")}
         danger
-        onConfirm={() => ipc.quitPulse()}
+        onConfirm={() => ipc.quitMeerkat()}
       />
     </div>
   );

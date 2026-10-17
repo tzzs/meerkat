@@ -104,7 +104,7 @@ fn taskbar_dpi() -> u32 {
 const PERSONALIZE_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
 
 /// Whether the taskbar is light. That is the Windows SYSTEM theme (the apps theme is another
-/// value, and Pulse's own theme setting is neither). A missing value, which is every Windows
+/// value, and Meerkat's own theme setting is neither). A missing value, which is every Windows
 /// before 1903, means dark. Read at most every 5 seconds.
 pub fn taskbar_is_light() -> bool {
     static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
@@ -721,7 +721,7 @@ mod tests {
                 let _ = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(key.as_ptr())) };
             }
         }
-        let scratch = Scratch(format!(r"Software\Classes\AppUserModelId\pulse-test-{}", std::process::id()));
+        let scratch = Scratch(format!(r"Software\Classes\AppUserModelId\meerkat-test-{}", std::process::id()));
         assert_eq!(read_dword(&scratch.0, "SystemUsesLightTheme"), None);
 
         let write = |value: u32| {
@@ -818,7 +818,7 @@ mod tests {
                 row += 1;
             }
         }
-        let path = std::env::temp_dir().join("pulse-tray-samples.png");
+        let path = std::env::temp_dir().join("meerkat-tray-samples.png");
         sheet.save(&path).expect("the temp directory is writable");
         println!("tray samples: {}", path.display());
     }

@@ -427,7 +427,7 @@ mod tests {
     /// Scratch config dir per test: the process id plus the test name keeps parallel tests from
     /// colliding, and nothing here ever touches the real profile directory.
     fn temp_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("pulse-alerts-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!("meerkat-alerts-{name}-{}", std::process::id()))
     }
 
     /// A single-app snapshot; every figure but CPU sits well below any threshold.

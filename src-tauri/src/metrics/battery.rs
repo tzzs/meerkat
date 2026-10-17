@@ -90,7 +90,7 @@ impl HealthReader {
             slot.in_flight = true;
             let shared = Arc::clone(&self.slot);
             let spawned = std::thread::Builder::new()
-                .name("pulse-battery-report".into())
+                .name("meerkat-battery-report".into())
                 .spawn(move || {
                     let (health, availability) = read_health();
                     let mut slot = lock(&shared);
@@ -130,7 +130,7 @@ fn read_is_due(has_battery: bool, in_flight: bool, since_last: Option<Duration>)
 /// read but holds nothing usable (a desktop, or a battery that reports no capacities).
 pub fn read_health() -> (Health, Availability) {
     let path: PathBuf = std::env::temp_dir().join(format!(
-        "pulse-battery-{}-{}.xml",
+        "meerkat-battery-{}-{}.xml",
         std::process::id(),
         chrono_free_stamp()
     ));

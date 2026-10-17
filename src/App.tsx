@@ -153,7 +153,7 @@ export default function App() {
       >
         <span className="brand">
           <span className="brand-dot" />
-          Pulse
+          Meerkat
         </span>
         <span className="machine" data-tauri-drag-region>
           {summary}
@@ -205,7 +205,7 @@ export default function App() {
                 ▢
               </button>
             </Hint>
-            {/* Closing hides the window; Pulse keeps watching from the tray. The button says
+            {/* Closing hides the window; Meerkat keeps watching from the tray. The button says
                 so rather than implying it ends the program. */}
             <Hint label={t("action.hideToTray")}>
               <button

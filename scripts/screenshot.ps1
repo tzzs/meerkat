@@ -1,4 +1,4 @@
-param([string]$Path = "E:\workspaces\Pulse\shots\screen.png")
+param([string]$Path = (Join-Path (Split-Path $PSScriptRoot) "shots\screen.png"))
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)

@@ -1,14 +1,14 @@
 // Walks every tab in the running window and reports what a regression would show: a blank
 // panel, a thrown error, a list that stopped measuring itself, a card count that changed.
 //
-//   PULSE_CDP=9334 node scripts/tab-sweep.mjs
-//   PULSE_CDP=9334 node scripts/tab-sweep.mjs "概览 处理器 内存"
+//   MEERKAT_CDP=9334 node scripts/tab-sweep.mjs
+//   MEERKAT_CDP=9334 node scripts/tab-sweep.mjs "概览 处理器 内存"
 //
 // Screenshots land in shots/sweep-<tab>.png. It only ever clicks tabs and reads, so it is safe
 // to run against the window you are looking at.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PORT = process.env.PULSE_CDP ?? "9334";
+const PORT = process.env.MEERKAT_CDP ?? "9334";
 const only = (process.argv[2] ?? "").split(" ").filter(Boolean);
 
 const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`)

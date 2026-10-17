@@ -6,8 +6,8 @@
 //!
 //! Three things are guarded, each of which used to be possible from the app list:
 //!
-//! * Ending something Windows depends on, or Pulse itself (and with it the tray and the sampler),
-//!   or the WebView2 processes that draw Pulse's windows.
+//! * Ending something Windows depends on, or Meerkat itself (and with it the tray and the sampler),
+//!   or the WebView2 processes that draw Meerkat's windows.
 //! * Ending the wrong process. The ids come from a snapshot up to two seconds old, and Windows
 //!   reuses an id as soon as its process is gone, so every id is checked against the live process
 //!   (when it was created, and where its image is) *through the handle that then ends it*.
@@ -42,11 +42,11 @@ pub enum QuitError {
     Gone,
     /// The row is a count of processes this user cannot open, not a program.
     NotAnApplication,
-    /// Ending it would take Windows, or Pulse, down with it.
+    /// Ending it would take Windows, or Meerkat, down with it.
     Protected,
     /// A graceful quit found no visible window to ask.
     NoWindow,
-    /// Windows refused: the process is more privileged than Pulse.
+    /// Windows refused: the process is more privileged than Meerkat.
     Denied,
 }
 
@@ -127,7 +127,7 @@ pub fn is_denied_image(path: &str) -> bool {
     DENIED_IMAGES.contains(&image_stem(path).as_str())
 }
 
-/// What may be done to `app`. `own_family` is Pulse's own process and everything that descends
+/// What may be done to `app`. `own_family` is Meerkat's own process and everything that descends
 /// from it (the WebView2 host and its renderers), as `family_of` computes it.
 pub fn quit_policy(app: &AppInfo, own_family: &HashSet<u32>) -> Policy {
     if app.key == UNREADABLE_KEY {
@@ -169,7 +169,7 @@ pub fn family_of(root: u32, parent_of: &HashMap<u32, u32>) -> HashSet<u32> {
     }
 }
 
-/// Pulse's own process and all of its descendants, as they are right now.
+/// Meerkat's own process and all of its descendants, as they are right now.
 pub fn own_family() -> HashSet<u32> {
     family_of(std::process::id(), &os::parent_table())
 }
@@ -384,7 +384,7 @@ mod os {
         let hwnd = HWND(hwnd as *mut core::ffi::c_void);
         match unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) } {
             Ok(()) => Posted::Yes,
-            // User interface privilege isolation: Pulse is not elevated and the window is.
+            // User interface privilege isolation: Meerkat is not elevated and the window is.
             Err(error) if error.code() == HRESULT::from_win32(ERROR_ACCESS_DENIED.0) => Posted::Refused,
             Err(_) => Posted::Gone,
         }
@@ -458,12 +458,12 @@ mod tests {
     }
 
     #[test]
-    fn pulse_itself_and_everything_that_descends_from_it_is_protected() {
+    fn meerkat_itself_and_everything_that_descends_from_it_is_protected() {
         let own = HashSet::from([900, 901, 902]);
-        // Pulse's own row.
-        let pulse = app(r"c:\pulse\pulse.exe", r"C:\Pulse\pulse.exe", AppKind::App, &[900]);
-        assert_eq!(quit_policy(&pulse, &own), Policy::Refuse(QuitError::Protected));
-        // The WebView2 host is another executable in another folder, but it is Pulse's.
+        // Meerkat's own row.
+        let meerkat = app(r"c:\meerkat\meerkat.exe", r"C:\Meerkat\meerkat.exe", AppKind::App, &[900]);
+        assert_eq!(quit_policy(&meerkat, &own), Policy::Refuse(QuitError::Protected));
+        // The WebView2 host is another executable in another folder, but it is Meerkat's.
         let webview = app(
             r"c:\program files (x86)\microsoft\edgewebview\application\msedgewebview2.exe",
             r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application\msedgewebview2.exe",
@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn the_family_is_the_process_and_all_it_started() {
-        // 100 (pulse) -> 101 (webview host) -> 102, 103 (renderers); 200 is unrelated.
+        // 100 (meerkat) -> 101 (webview host) -> 102, 103 (renderers); 200 is unrelated.
         let parents = HashMap::from([(100, 1), (101, 100), (102, 101), (103, 101), (200, 1), (201, 200), (1, 0)]);
         assert_eq!(family_of(100, &parents), HashSet::from([100, 101, 102, 103]));
         assert_eq!(family_of(200, &parents), HashSet::from([200, 201]));
@@ -640,7 +640,7 @@ mod tests {
         assert_eq!(close_result(1, 1).error, None);
     }
 
-    // The real thing, against this test process: Pulse's own family contains it, so the policy
+    // The real thing, against this test process: Meerkat's own family contains it, so the policy
     // would refuse a row holding it, and an application row that lists it is never ended.
     #[test]
     fn this_process_is_in_its_own_family_and_cannot_be_ended_through_a_row() {

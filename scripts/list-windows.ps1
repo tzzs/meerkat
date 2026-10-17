@@ -29,9 +29,9 @@ public class WinEnum {
   }
 }
 "@
-$procs = Get-Process -Name pulse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id
-if (-not $procs) { Write-Output "no pulse process" }
+$procs = Get-Process -Name meerkat -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id
+if (-not $procs) { Write-Output "no meerkat process" }
 foreach ($p in $procs) {
-  Write-Output "--- pulse pid $p ---"
+  Write-Output "--- meerkat pid $p ---"
   [WinEnum]::Collect($p) | ForEach-Object { Write-Output $_ }
 }

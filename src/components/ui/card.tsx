@@ -2,7 +2,7 @@ import { type HTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * shadcn's Card shape, styled against Pulse's tokens rather than shadcn's palette, so a
+ * shadcn's Card shape, styled against Meerkat's tokens rather than shadcn's palette, so a
  * component copied from the registry can sit next to one we wrote without introducing a
  * second set of colours.
  *

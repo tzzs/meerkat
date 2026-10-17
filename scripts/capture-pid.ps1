@@ -1,4 +1,4 @@
-param([string]$ProcessName = "pulse", [string]$Out = "E:\workspaces\Pulse\shots\win.png")
+param([string]$ProcessName = "meerkat", [string]$Out = (Join-Path (Split-Path $PSScriptRoot) "shots\win.png"))
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;

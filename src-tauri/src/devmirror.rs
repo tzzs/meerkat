@@ -1,9 +1,9 @@
-//! Dev-only (debug builds): mirror Pulse's live state to `<app data>/dev`, so `pnpm dev` in a plain
+//! Dev-only (debug builds): mirror Meerkat's live state to `<app data>/dev`, so `pnpm dev` in a plain
 //! browser shows the same real figures as the app window (`vite.config.ts` serves the folder as
 //! `/fixtures`).
 //!
-//! **Opt-in.** Nothing is written unless the app was started with `PULSE_DEV_MIRROR=1` in its
-//! environment (`PULSE_DEV_MIRROR=1 pnpm tauri dev`). The mirror used to be on in every debug
+//! **Opt-in.** Nothing is written unless the app was started with `MEERKAT_DEV_MIRROR=1` in its
+//! environment (`MEERKAT_DEV_MIRROR=1 pnpm tauri dev`). The mirror used to be on in every debug
 //! build, and the debug build is the one this machine runs all day: it rewrote ~125 KB of JSON
 //! every second, about 10 GB a day.
 //!
@@ -35,9 +35,9 @@ const METRICS: [&str; 7] = ["cpu", "memory", "diskWrite", "download", "gpu", "ba
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        let on = std::env::var("PULSE_DEV_MIRROR").map(|value| is_on(&value)).unwrap_or(false);
+        let on = std::env::var("MEERKAT_DEV_MIRROR").map(|value| is_on(&value)).unwrap_or(false);
         if on {
-            crate::diag::info("dev mirror: on (PULSE_DEV_MIRROR=1), writing to the app data folder's dev directory");
+            crate::diag::info("dev mirror: on (MEERKAT_DEV_MIRROR=1), writing to the app data folder's dev directory");
         }
         on
     })

@@ -144,7 +144,7 @@ export function PanelApp() {
       <header className="panel-head">
         <span className="brand">
           <span className="brand-dot" />
-          Pulse
+          Meerkat
         </span>
         <span className="panel-machine">
           {snapshot ? (

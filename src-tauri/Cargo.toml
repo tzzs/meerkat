@@ -1,20 +1,20 @@
 [package]
-name = "pulse"
+name = "meerkat"
 version = "0.1.0"
-description = "Pulse — an Activity Monitor alternative for Windows"
+description = "Meerkat — an Activity Monitor alternative for Windows"
 authors = ["TZZ"]
 edition = "2021"
 rust-version = "1.85"
 
 [dependencies]
 tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
-# Toasts are sent straight to WinRT under Pulse's own AppUserModelID (src/toast.rs). The
+# Toasts are sent straight to WinRT under Meerkat's own AppUserModelID (src/toast.rs). The
 # notification plugin only knew that ID outside target/debug and target/release and headed
 # every other toast "Windows PowerShell"; this is the crate it wraps, at the version already
 # locked.
 tauri-winrt-notification = "0.8"
 tauri-plugin-autostart = "2.7"
-# A second launch (a Start-menu click while Pulse sits in the tray) must surface the running
+# A second launch (a Start-menu click while Meerkat sits in the tray) must surface the running
 # instance instead of starting another sampler and another set of tray icons.
 tauri-plugin-single-instance = "2.4"
 serde = { version = "1", features = ["derive"] }

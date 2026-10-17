@@ -2,7 +2,7 @@
 // closes it, and — the thing Radix's scroll lock could plausibly break in a window whose
 // scroller is not the body — the page is still interactive afterwards.
 // Nothing here confirms a quit; the last click is always Cancel.
-const targets = await fetch(`http://127.0.0.1:${process.env.PULSE_CDP ?? 9334}/json/list`).then((r) => r.json());
+const targets = await fetch(`http://127.0.0.1:${process.env.MEERKAT_CDP ?? 9334}/json/list`).then((r) => r.json());
 const page = targets.find((t) => t.type === "page" && !t.url.includes("panel"));
 const socket = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => socket.addEventListener("open", r));

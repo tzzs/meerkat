@@ -2,12 +2,12 @@
 // the list is wearing (the whole reason for the change — an OS popup cannot take the app's
 // theme), and whether a choice made with the keyboard actually reaches the settings store.
 //
-//   PULSE_CDP=9334 node scripts/select-probe.mjs
+//   MEERKAT_CDP=9334 node scripts/select-probe.mjs
 //
 // It changes the theme twice and puts it back, so run it against the dev window only.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const PORT = process.env.PULSE_CDP ?? "9334";
+const PORT = process.env.MEERKAT_CDP ?? "9334";
 const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`)
   .then((r) => r.json())
   .catch(() => null);

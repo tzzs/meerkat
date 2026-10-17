@@ -1,6 +1,6 @@
 // Opens the quit dialog, screenshots it, then cancels — nothing is ever confirmed here.
 import { writeFileSync } from "node:fs";
-const PORT = process.env.PULSE_CDP ?? "9334";
+const PORT = process.env.MEERKAT_CDP ?? "9334";
 const targets = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((r) => r.json());
 const page = targets.find((t) => t.type === "page" && !t.url.includes("panel"));
 const socket = new WebSocket(page.webSocketDebuggerUrl);

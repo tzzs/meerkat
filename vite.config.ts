@@ -12,15 +12,15 @@ const host = process.env.TAURI_DEV_HOST;
  * means `pnpm dev` in a plain browser shows the same real figures as the app window.
  *
  * The mirror is opt-in: the debug backend writes it only when it was started with
- * `PULSE_DEV_MIRROR=1` in its environment. Without that nothing is written, every route below
+ * `MEERKAT_DEV_MIRROR=1` in its environment. Without that nothing is written, every route below
  * answers 404 with `{}`, and a plain browser shows the empty state ("No data yet") instead of
  * figures - which is the right answer for a backend that was not asked to share them. Set the
- * variable for the backend (`PULSE_DEV_MIRROR=1 pnpm tauri dev`) when the browser view is wanted.
+ * variable for the backend (`MEERKAT_DEV_MIRROR=1 pnpm tauri dev`) when the browser view is wanted.
  */
-function pulseFixtures(): Plugin {
-  const dir = join(process.env.APPDATA ?? "", "com.tzz.pulse", "dev");
+function meerkatFixtures(): Plugin {
+  const dir = join(process.env.APPDATA ?? "", "com.tzz.meerkat", "dev");
   return {
-    name: "pulse-fixtures",
+    name: "meerkat-fixtures",
     configureServer(server) {
       server.middlewares.use("/fixtures", (req, res) => {
         const name = basename(decodeURIComponent((req.url ?? "").replace(/^\/fixtures\/?/, "")));
@@ -40,7 +40,7 @@ function pulseFixtures(): Plugin {
 
 export default defineConfig({
   base: "./",
-  plugins: [tailwindcss(), react(), pulseFixtures()],
+  plugins: [tailwindcss(), react(), meerkatFixtures()],
   resolve: {
     alias: { "@": resolve(__dirname, "src") },
   },

@@ -1,10 +1,10 @@
-//! Toasts under Pulse's own name.
+//! Toasts under Meerkat's own name.
 //!
 //! Windows files a toast under an AppUserModelID and heads it with the name registered for
 //! that ID. The notification plugin only set one when the executable did not live in a
 //! `target\debug` or `target\release` directory, and otherwise fell back to PowerShell's, so
 //! every toast from a build directory (dev, release check, an unpacked portable zip) arrived as
-//! "Windows PowerShell". Pulse now registers its own ID per user and always shows toasts with it.
+//! "Windows PowerShell". Meerkat now registers its own ID per user and always shows toasts with it.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
@@ -16,7 +16,7 @@ use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
 
 /// The Tauri identifier doubles as the AppUserModelID; the installer's shortcut uses it too.
-pub const AUMID: &str = "com.tzz.pulse";
+pub const AUMID: &str = "com.tzz.meerkat";
 
 const ICON: &[u8] = include_bytes!("../icons/icon.png");
 
@@ -34,7 +34,7 @@ pub struct Toaster {
 impl Toaster {
     pub fn start(app: AppHandle) -> Self {
         let (queue, notes) = channel::<Note>();
-        let spawned = std::thread::Builder::new().name("pulse-toast".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("meerkat-toast".into()).spawn(move || {
             for note in notes {
                 show(&app, &note);
             }
@@ -70,7 +70,7 @@ fn show(app: &AppHandle, note: &Note) {
     }
 }
 
-/// Registers Pulse's name and icon for its AppUserModelID under HKCU, which needs no rights and
+/// Registers Meerkat's name and icon for its AppUserModelID under HKCU, which needs no rights and
 /// is rewritten on every start, so a moved or reinstalled copy fixes itself.
 pub fn register(app_data: &Path) {
     let icon = match write_icon(app_data) {
@@ -80,7 +80,7 @@ pub fn register(app_data: &Path) {
             None
         }
     };
-    if let Err(error) = write_identity(&identity_key(AUMID), "Pulse", icon.as_deref()) {
+    if let Err(error) = write_identity(&identity_key(AUMID), "Meerkat", icon.as_deref()) {
         crate::diag::warn(format!("toast identity: {error}"));
     }
 }
@@ -92,7 +92,7 @@ fn identity_key(aumid: &str) -> String {
 /// The shell reads the icon from a file path, so the embedded one is written out once.
 fn write_icon(app_data: &Path) -> Result<PathBuf, String> {
     let dir = app_data.join("icons");
-    let path = dir.join("pulse.png");
+    let path = dir.join("meerkat.png");
     let current = std::fs::metadata(&path).map(|m| m.len() == ICON.len() as u64).unwrap_or(false);
     if !current {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -174,12 +174,12 @@ mod tests {
 
     #[test]
     fn the_identity_is_written_where_the_shell_reads_it_and_rewriting_is_harmless() {
-        let scratch = Scratch(identity_key(&format!("pulse-test-{}", std::process::id())));
-        let icon = std::env::temp_dir().join("pulse-test-icon.png");
+        let scratch = Scratch(identity_key(&format!("meerkat-test-{}", std::process::id())));
+        let icon = std::env::temp_dir().join("meerkat-test-icon.png");
 
-        write_identity(&scratch.0, "Pulse", Some(&icon)).expect("HKCU is writable without rights");
-        write_identity(&scratch.0, "Pulse", Some(&icon)).expect("a second start writes the same values");
-        assert_eq!(read(&scratch.0, "DisplayName").as_deref(), Some("Pulse"));
+        write_identity(&scratch.0, "Meerkat", Some(&icon)).expect("HKCU is writable without rights");
+        write_identity(&scratch.0, "Meerkat", Some(&icon)).expect("a second start writes the same values");
+        assert_eq!(read(&scratch.0, "DisplayName").as_deref(), Some("Meerkat"));
         assert_eq!(read(&scratch.0, "IconUri"), Some(icon.display().to_string()));
 
         let key = scratch.0.clone();
@@ -187,14 +187,19 @@ mod tests {
         assert_eq!(read(&key, "DisplayName"), None, "the throw-away key is gone afterwards");
     }
 
+    // The ID is spelled out in AUMID because the log needs it before Tauri has read its config.
+    // A rename that changed the identifier and missed this would file every toast under the
+    // old name, which nothing else would notice.
     #[test]
-    fn the_real_identity_is_pulses_tauri_identifier() {
-        assert_eq!(identity_key(AUMID), r"Software\Classes\AppUserModelId\com.tzz.pulse");
+    fn the_aumid_is_the_tauri_identifier() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], AUMID);
+        assert_eq!(identity_key(AUMID), r"Software\Classes\AppUserModelId\com.tzz.meerkat");
     }
 
     #[test]
     fn the_icon_is_written_once_and_kept() {
-        let dir = std::env::temp_dir().join(format!("pulse-toast-icon-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meerkat-toast-icon-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = write_icon(&dir).expect("a temp dir to write into");
         assert_eq!(std::fs::read(&path).unwrap(), ICON);
