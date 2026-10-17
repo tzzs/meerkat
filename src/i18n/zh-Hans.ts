@@ -369,6 +369,8 @@ const zh: Record<Key, string> = {
   "settings.openWindowLast": "上次使用的标签页",
   "settings.startAtLogin": "登录时启动",
   "settings.showInTaskbar": "显示在任务栏",
+  "settings.keepAwake": "阻止电脑睡眠",
+  "settings.keepAwakeHelp": "开启后，Meerkat 会请求 Windows 不要进入睡眠，这样编译、渲染或下载就不会因为你离开而中断。如果 Windows 不允许，这一项会自动关掉。",
   "settings.alerts": "异常应用提醒",
   "settings.alertsEnabled": "应用异常时通知我",
   "settings.alertCpuMachine": "处理器高于（占整机的百分比）",

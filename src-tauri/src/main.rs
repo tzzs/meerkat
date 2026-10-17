@@ -13,6 +13,7 @@ mod history;
 mod i18n;
 mod icons;
 mod ipc;
+mod keepawake;
 mod mcp;
 mod menu;
 mod metrics;
@@ -239,6 +240,7 @@ fn run() -> tauri::Result<()> {
 /// The history is written out here. It is otherwise saved on a timer, so without this the minute
 /// and the hour in progress, and everything since the last save, went with the process.
 fn on_exit(app: &AppHandle) {
+    keepawake::release();
     if let Some(state) = app.try_state::<AppState>() {
         // A poisoned lock is still the data: losing the history because a thread panicked
         // while it held it would be the worse outcome.
@@ -339,6 +341,20 @@ fn spawn_sampler(app: AppHandle) {
                 // Read after the sampling, which takes a while, so a setting that was saved in
                 // the meantime already counts for this tick.
                 let settings = state.settings.get();
+                // The keep-awake request is thread-affine, so this thread owns it and re-asserts
+                // it here as the setting changes.
+                let accepted = keepawake::set(settings.keep_awake);
+                if settings.keep_awake && !accepted {
+                    // Windows did not take the request; write the real state back so the switch
+                    // does not claim a hold the system never granted.
+                    diag::warn("keep awake: Windows did not accept the request");
+                    let mut corrected = settings.clone();
+                    corrected.keep_awake = false;
+                    if let Err(error) = state.settings.set(corrected) {
+                        diag::warn(format!("keep awake: could not record the refusal: {error}"));
+                    }
+                    let _ = app.emit("settings-changed", ());
+                }
                 // The rules remember how each app should run and apply it to every process the
                 // app starts; `muted` is what the watcher should not raise alerts about.
                 let muted = {

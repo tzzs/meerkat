@@ -282,6 +282,9 @@ function General({ settings, save }: { settings: Settings; save: (s: Settings) =
       </Row>
       <Row label={t("settings.startAtLogin")}>{toggle(settings.startAtLogin, (v) => set("startAtLogin", v))}</Row>
       <Row label={t("settings.showInTaskbar")}>{toggle(settings.showInTaskbar, (v) => set("showInTaskbar", v))}</Row>
+      <Row label={t("settings.keepAwake")} hint={t("settings.keepAwakeHelp")}>
+        {toggle(settings.keepAwake, (v) => set("keepAwake", v))}
+      </Row>
 
       <h4 className="section-title">{t("settings.alerts")}</h4>
       <Row label={t("settings.alertsEnabled")}>
