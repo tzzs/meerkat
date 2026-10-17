@@ -4,9 +4,9 @@
 //
 //   node scripts/release-check.mjs [port]
 //
-// It launches the exe with APPDATA pointed at a throwaway directory so the real settings and
-// history are untouched, and stops only the process it started.
-import { spawn } from "node:child_process";
+// It stops only the process it started, and puts back the one thing a start cannot be kept from
+// touching: the login item. See `loginItem` below.
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -46,6 +46,35 @@ let exited = null;
 child.on("exit", (code) => {
   exited = code;
 });
+
+const PRODUCT = "Meerkat";
+const RUN_KEY = String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`;
+
+/**
+ * A release build's login item, read and restored around the run.
+ *
+ * Start-at-login is on by default, so the first thing a release instance does is write
+ * `Run\Meerkat`, and APPDATA cannot keep it out of the real registry the way it is meant to keep
+ * the files out: Windows answers both the known-folder lookup and HKCU from the token, not from
+ * the environment. A check whose only isolation is a directory therefore leaves the user's machine
+ * with a login item pointing at `target\release\meerkat.exe` — an executable that a later
+ * `cargo clean` deletes, after which Windows runs a failing program at every sign-in. So the value
+ * is captured before, and written back after, whatever the run did to it.
+ */
+const loginItem = {
+  read() {
+    const result = spawnSync("reg", ["query", RUN_KEY, "/v", PRODUCT], { encoding: "utf8" });
+    if (result.status !== 0) return null;
+    const line = result.stdout.split(/\r?\n/).find((l) => l.trim().startsWith(PRODUCT));
+    const value = line?.slice(line.indexOf("REG_SZ") + 6)?.trim();
+    return value ? value : null;
+  },
+  write(value) {
+    if (value === null) spawnSync("reg", ["delete", RUN_KEY, "/v", PRODUCT, "/f"], { encoding: "utf8" });
+    else spawnSync("reg", ["add", RUN_KEY, "/v", PRODUCT, "/t", "REG_SZ", "/d", value, "/f"], { encoding: "utf8" });
+  },
+};
+const loginBefore = loginItem.read();
 
 const fingerprint = (dir) =>
   existsSync(dir)
@@ -141,7 +170,8 @@ console.log(
 );
 // APPDATA cannot be redirected for a Windows app: the known-folder API answers from the token,
 // not the environment. So instead of claiming isolation, measure whether this run touched the
-// real data directory at all.
+// real data directory at all, and say so: a fingerprint that changes is a run that wrote into the
+// user's own settings, history and per-app timeline.
 const real = resolve(process.env.APPDATA ?? "", "com.tzz.meerkat");
 const now = fingerprint(real);
 console.log(
@@ -152,5 +182,14 @@ console.log(
 stop();
 await wait(500);
 rmSync(sandbox, { recursive: true, force: true });
+
+// The process is gone; the login item it wrote is not, so put the registry back the way it was.
+const loginAfter = loginItem.read();
+if (loginAfter !== loginBefore) {
+  loginItem.write(loginBefore);
+  console.log(`login item: restored to ${JSON.stringify(loginBefore ?? "(absent)")}`);
+} else {
+  console.log("login item: untouched by this run ✓");
+}
 console.log("stopped the release instance and removed the sandbox");
 process.exit(0);
