@@ -397,6 +397,8 @@ const en = {
   "settings.hide": "Hide",
   "settings.aboutVersion": "Version",
   "settings.aboutSampler": "Sampling cost",
+  "settings.shareSave": "Save share card",
+  "settings.shareAlt": "A card of this machine’s current CPU, memory, disk and network figures",
   "settings.aboutCopyReport": "Copy report",
   "settings.aboutReportHelp": "Machine model, Meerkat settings and the recent log. It names none of your apps or files.",
   "settings.privacy": "Meerkat reads this machine locally and sends nothing. No account, no analytics.",

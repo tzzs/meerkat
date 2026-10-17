@@ -398,6 +398,8 @@ const zh: Record<Key, string> = {
   "settings.hide": "隐藏",
   "settings.aboutVersion": "版本",
   "settings.aboutSampler": "采样开销",
+  "settings.shareSave": "保存分享卡片",
+  "settings.shareAlt": "这台机器当前的 CPU、内存、磁盘和网络数字卡片",
   "settings.aboutCopyReport": "复制诊断报告",
   "settings.aboutReportHelp": "包含机器型号、Meerkat 设置和近期日志，不含任何应用名或文件路径。",
   "settings.privacy": "Meerkat 只在本地读取这台机器，不发送任何数据。无账号、无统计。",

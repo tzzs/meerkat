@@ -1218,3 +1218,22 @@
   flex-direction: column;
   min-width: 0;
 }
+
+/* ---------- share card ---------- */
+
+/* Drawn at its real 1200x630 and scaled down here, so the PNG that goes out is the full card
+   while what is on screen is a preview of it, not a smaller drawing. */
+.share-card-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-4);
+}
+.share-card {
+  width: 100%;
+  max-width: 380px;
+  height: auto;
+  border-radius: var(--r-card);
+  box-shadow: var(--card-shadow);
+}

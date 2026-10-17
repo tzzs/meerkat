@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { ipc } from "../lib/ipc";
 import { useStore, fallbackSettings } from "../lib/store";
 import { formatBytes, formatRate, formatTemp } from "../lib/format";
+import { ShareCardButton } from "./share-card";
 import { nudge, parseNumberInput, type NumberProblem, type NumberRule } from "../lib/number-input";
 import { effectiveSections, moveWithin, sectionLabelKey, withTabSections } from "../lib/sections";
 import { alertFieldSpec, coresForPercent, toShown, toStored, type AlertField } from "../lib/thresholds";
@@ -709,6 +710,8 @@ function About() {
         {copied ? t("action.done") : t("settings.aboutCopyReport")}
       </Button>
       <p className="hint faint">{t("settings.aboutReportHelp")}</p>
+
+      <ShareCardButton />
 
       {/* Closing the window only hides it, so without this the way out was the tray menu. */}
       <Button variant="danger" className="mt-[var(--sp-4)] self-start" onClick={() => setConfirmQuit(true)}>
