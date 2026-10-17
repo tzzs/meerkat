@@ -256,12 +256,52 @@ fn on_exit(app: &AppHandle) {
 /// `MEERKAT_DATA_DIR`, so a test instance can run beside the one in daily use without writing
 /// over its settings or history. Nothing else can redirect it: Windows answers the known-folder
 /// lookup from the user's token, not from APPDATA.
+///
+/// The first launch after the old build (which was called Pulse, and kept its files under
+/// `com.tzz.pulse`) adopts what that one left behind. The folder is part of the app's identity,
+/// so a rename alone would have started a user with default settings, an empty history and no
+/// remembered volumes, and nothing on screen to say where they went.
 fn data_dir(app: &tauri::App) -> tauri::Result<std::path::PathBuf> {
     #[cfg(debug_assertions)]
     if let Some(dir) = std::env::var_os("MEERKAT_DATA_DIR") {
         return Ok(std::path::PathBuf::from(dir));
     }
-    app.path().app_data_dir()
+    let dir = app.path().app_data_dir()?;
+    adopt_former_data(&dir);
+    Ok(dir)
+}
+
+/// The identifier the app had before it was renamed.
+const FORMER_IDENTIFIER: &str = "com.tzz.pulse";
+
+/// Copies what a build under the former identifier left beside this one's folder, for any file
+/// this one does not have yet. It never overwrites: a settings file written by this build is
+/// newer and truer than one adopted, and an install that was started, stopped and restarted must
+/// not have its own choices quietly replaced on the third start.
+///
+/// The former folder is left where it is. Deleting someone's data because a program that used to
+/// own it was renamed is not this program's call to make.
+fn adopt_former_data(dir: &std::path::Path) {
+    let Some(parent) = dir.parent() else { return };
+    let former = parent.join(FORMER_IDENTIFIER);
+    if former == dir || !former.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&former) else { return };
+    let mut adopted = Vec::new();
+    for entry in entries.flatten() {
+        let from = entry.path();
+        let to = dir.join(entry.file_name());
+        if !from.is_file() || to.exists() {
+            continue;
+        }
+        if std::fs::copy(&from, &to).is_ok() {
+            adopted.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    if !adopted.is_empty() {
+        crate::diag::info(format!("adopted from the previous install: {}", adopted.join(", ")));
+    }
 }
 
 fn panel_pinned(window: &tauri::Window) -> bool {
@@ -406,6 +446,10 @@ mod autostart {
     #[cfg(not(debug_assertions))]
     pub fn reconcile(app: &AppHandle, wanted: bool) {
         let name = &app.package_info().name;
+        // An older build registered itself under the name it had then. That entry survives the
+        // rename and fires at every sign-in, so the user gets two programs, two sets of tray
+        // icons, and one of them quietly working with a folder this build no longer reads.
+        drop_former_registration(name);
         let registered = read_run_value(name);
         if wanted {
             let current = match (&registered, current_exe()) {
@@ -487,6 +531,50 @@ mod autostart {
         Some(rest.as_str())
     }
 
+    /// The name the login item was written under before the app was renamed, and the executable
+    /// name that goes with it.
+    const FORMER_NAME: &str = "Pulse";
+    const FORMER_EXE: &str = "pulse.exe";
+
+    /// Whether a `Run` command line points at a file called `pulse.exe`, quoted or not, with or
+    /// without arguments after it.
+    ///
+    /// `launches` compares whole paths and so cannot tell an old registration for *this* program
+    /// from one for a different program that happens to be called Pulse. This is deliberately
+    /// narrower than "the key is named Pulse": the entry is only ours to remove when the file it
+    /// launches is the one the former build was called.
+    fn names_former_app(command: &str) -> bool {
+        let command = command.trim();
+        let head = match command.strip_prefix('"') {
+            Some(quoted) => quoted.split_once('"').map_or(quoted, |(head, _)| head),
+            None => command.split_whitespace().next().unwrap_or(command),
+        };
+        head
+            .rsplit(['\\', '/'])
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(FORMER_EXE))
+    }
+
+    /// Removes the registration the former build left, when it is recognisably the former build's.
+    #[cfg(not(debug_assertions))]
+    fn drop_former_registration(current_name: &str) {
+        if current_name.eq_ignore_ascii_case(FORMER_NAME) {
+            return;
+        }
+        let Some(command) = read_run_value(FORMER_NAME) else { return };
+        if !names_former_app(&command) {
+            return;
+        }
+        match delete_run_value(FORMER_NAME) {
+            Ok(()) => {
+                crate::diag::info(format!("removed the login item the previous build registered: {command}"))
+            }
+            Err(error) => {
+                crate::diag::warn(format!("could not remove the previous build's login item: {error}"))
+            }
+        }
+    }
+
     fn wide(value: &str) -> Vec<u16> {
         value.encode_utf16().chain(std::iter::once(0)).collect()
     }
@@ -522,7 +610,6 @@ mod autostart {
         Some(String::from_utf16_lossy(&buffer[..end]))
     }
 
-    #[cfg(debug_assertions)]
     fn delete_run_value(name: &str) -> Result<(), String> {
         use windows::Win32::System::Registry::RegDeleteKeyValueW;
         let key = wide(RUN_KEY);
