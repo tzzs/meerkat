@@ -22,6 +22,7 @@ mod nvml;
 mod quit;
 mod rules;
 mod settings;
+mod stormap;
 mod toast;
 mod tray;
 mod tray_render;
@@ -112,7 +113,9 @@ fn run() -> tauri::Result<()> {
             ipc::open_project,
             ipc::mcp_command,
             ipc::wsl_memory,
-            ipc::daily_totals
+            ipc::daily_totals,
+            stormap::storage_map_scan,
+            stormap::storage_map_cancel
         ])
         // One listener for every tray icon, however often the icons are rebuilt: a handler set
         // on each icon builder was registered again with every rebuild.

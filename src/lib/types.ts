@@ -548,3 +548,41 @@ export interface WslMemory {
   cacheBytes: number;
   freeBytes: number;
 }
+
+/** One box of a storage map: a directory's share of the volume, or the free or unknown region. */
+export interface StorageMapBox {
+  /** The last path component, for the label; empty for the free and unknown regions. */
+  name: string;
+  path: string;
+  bytes: number;
+  /** Share of the whole volume, `bytes / totalBytes`. */
+  share: number;
+  /** Space the walk could not read; drawn apart from the named directories. */
+  unknown: boolean;
+  /** The volume's free space; drawn unfilled. */
+  free: boolean;
+}
+
+/** A whole volume drawn as boxes: what is using the space, what is free, and what could not be read. */
+export interface StorageMap {
+  volumeId: string;
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  /** The bytes the walk actually measured, before the boxes were cut to the top N. */
+  measuredBytes: number;
+  /** Directories that could not be opened; their sizes are part of the unknown region. */
+  unreadable: number;
+  scannedFiles: number;
+  /** A newer scan or a cancel took over before this one finished. */
+  cancelled: boolean;
+  boxes: StorageMapBox[];
+}
+
+/** One progress update from a storage-map walk in flight. */
+export interface StorageMapProgress {
+  volumeId: string;
+  files: number;
+  bytes: number;
+  unreadable: number;
+}

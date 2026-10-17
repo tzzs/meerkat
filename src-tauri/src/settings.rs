@@ -266,7 +266,7 @@ pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
         "history" => vec!["timeline", "ranking", "events"],
         "cpu" => vec!["load", "perCore", "userSystem", "history", "apps"],
         "memory" => vec!["breakdown", "pressure", "commit", "history", "apps"],
-        "disk" => vec!["rate", "volumes", "today", "history", "apps"],
+        "disk" => vec!["rate", "volumes", "storageMap", "today", "history", "apps"],
         "network" => vec!["rate", "adapters", "totals", "ports", "history", "connections"],
         "gpu" => vec!["utilisation", "adapters", "memory", "history", "apps"],
         "battery" => vec!["charge", "health", "power", "history"],

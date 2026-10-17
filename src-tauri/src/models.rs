@@ -404,3 +404,39 @@ impl MetricKind {
         }
     }
 }
+
+/// One box of a storage map: a directory's share of the volume, or the free region, or the part
+/// of used space the walk could not account for.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageMapBox {
+    /// The last path component, for the label; empty for the free and unknown regions.
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+    /// Share of the whole volume, `bytes / totalBytes`.
+    pub share: f64,
+    /// Space the walk could not read; drawn apart from the named directories.
+    pub unknown: bool,
+    /// The volume's free space; drawn unfilled.
+    pub free: bool,
+}
+
+/// A whole volume drawn as boxes: what is using the space, what is free, and what could not be
+/// read.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageMap {
+    pub volume_id: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub free_bytes: u64,
+    /// The bytes the walk actually measured, before the `boxes` were cut to the top N.
+    pub measured_bytes: u64,
+    /// Directories that could not be opened; their sizes are part of the unknown region.
+    pub unreadable: u64,
+    pub scanned_files: u64,
+    /// A newer scan or a cancel took over before this one finished.
+    pub cancelled: bool,
+    pub boxes: Vec<StorageMapBox>,
+}

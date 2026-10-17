@@ -491,6 +491,64 @@
   padding: 6px 0;
 }
 
+/* ---------- storage map ---------- */
+
+.storage-map-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.storage-map {
+  position: relative;
+  height: 240px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.map-box {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+  color: var(--text);
+}
+.map-box.named {
+  background: color-mix(in srgb, var(--m-disk) 58%, var(--surface-2));
+}
+.map-box.free {
+  background: transparent;
+  border: 1px dashed var(--text-3);
+  color: var(--text-3);
+}
+.map-box.unknown {
+  background: repeating-linear-gradient(45deg, var(--surface-3) 0 6px, var(--surface-2) 6px 12px);
+  color: var(--text-2);
+}
+.map-box-name {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.map-box-size {
+  font-size: 10px;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.storage-map-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
 /* ---------- app table ---------- */
 
 .table-tools {

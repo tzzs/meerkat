@@ -13,7 +13,7 @@ export const TAB_SECTIONS: Readonly<Record<string, readonly string[]>> = {
   overview: ["charts", "topApps", "worthALook", "storage", "byHour"],
   cpu: ["perCore", "history", "apps"],
   memory: ["breakdown", "history", "apps"],
-  disk: ["volumes", "history", "apps"],
+  disk: ["volumes", "storageMap", "history", "apps"],
   network: ["adapters", "history", "connections"],
   gpu: ["apps", "history"],
   battery: ["power", "history"],

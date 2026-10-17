@@ -13,6 +13,7 @@ import type {
   RankingRow,
   Settings,
   Snapshot,
+  StorageMap,
   SystemEvent,
   WslMemory,
 } from "./types";
@@ -122,6 +123,13 @@ export const ipc = {
   mcpCommand: async () => (await call<string>("mcp_command")) ?? "",
   /** The WSL virtual machine's memory as Linux sees it; null without WSL running. */
   wslMemory: () => call<WslMemory>("wsl_memory"),
+  /**
+   * Maps what is taking the space on one volume. The walk can take minutes on a full drive, so
+   * it runs only when asked and answers with the result (or the reason it could not).
+   */
+  storageMapScan: (volumeId: string) => attempt<StorageMap>("storage_map_scan", { volumeId }),
+  /** Abandons the storage-map scan in flight. */
+  storageMapCancel: () => void call("storage_map_cancel"),
   /** Bytes per local day, oldest first, zero for days Meerkat was not running. */
   dailyTotals: async (days: number) => (await call<DailyTotal[]>("daily_totals", { days })) ?? [],
   insights: async () => (await call<Insight[]>("insights")) ?? [],

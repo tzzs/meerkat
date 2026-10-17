@@ -10,13 +10,15 @@ import {
   type UnitPrefs,
 } from "../lib/format";
 import { appLabel, forLists } from "../lib/apps";
-import { ipc } from "../lib/ipc";
+import { ipc, listenEvent } from "../lib/ipc";
 import { formatHourLabel, iconPathForKey, rankingByHour, type RankingMetric } from "../lib/ranking";
 import { buildSeries, formatAxisTime, formatHistoryValue, historyCeiling, historyUnit } from "../lib/series";
 import { SPARK_CEILING } from "../lib/spark";
 import { sectionShown, visibleSections } from "../lib/sections";
+import { squarify } from "../lib/storage";
+import { subscribe } from "../lib/subscribe";
 import { useStore } from "../lib/store";
-import type { AppInfo, DailyTotal, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow } from "../lib/types";
+import type { AppInfo, DailyTotal, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow, StorageMap, StorageMapProgress } from "../lib/types";
 import { capacityTrend, sumDays } from "../lib/totals";
 import { portMatches, portRows } from "../lib/ports";
 import { useLoaded } from "../lib/use-loaded";
@@ -798,6 +800,11 @@ export function DiskTab() {
               <VolumeList />
             </Card>
           ),
+          storageMap: (
+            <Card title={t("section.disk.storageMap")}>
+              <StorageMapCard />
+            </Card>
+          ),
           history: (
             <HistoryCard
               range={range}
@@ -1228,6 +1235,162 @@ function VolumeList() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A treemap of what is taking the space on one volume, laid out by `squarify` and drawn as plain
+ * absolutely-positioned divs. The walk is the expensive part and is only started by the button;
+ * the boxes themselves never move on their own, so nothing here runs on the sampler's tick.
+ */
+function StorageMapCard() {
+  const { snapshot, units, t } = useStore();
+  const volumes = snapshot?.disk.volumes ?? [];
+  const [volumeId, setVolumeId] = useTabState<string>("disk", "storageMapVolume", volumes[0]?.id ?? "");
+  const [result, setResult] = useState<StorageMap | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [progress, setProgress] = useState<StorageMapProgress | null>(null);
+
+  // A drive can be unplugged between visits; fall back to the first volume that is still there.
+  const activeId = volumes.some((v) => v.id === volumeId) ? volumeId : volumes[0]?.id ?? "";
+
+  useEffect(() => {
+    // Progress arrives by event; only a walk of the volume being mapped counts. `subscribe`
+    // because `listen` resolves its unlisten after a round trip, which outlives the effect.
+    return subscribe(() =>
+      listenEvent<StorageMapProgress>("storage-map-progress", (event) => {
+        setProgress((current) => (event.volumeId === activeId ? event : current));
+      }),
+    );
+  }, [activeId]);
+
+  // A different volume is a different answer, not the old one shown under a new label.
+  useEffect(() => {
+    setResult(null);
+    setFailed(false);
+    setProgress(null);
+    setScanning(false);
+  }, [activeId]);
+
+  const rects = useMemo(() => (result ? squarify(result.boxes.map((box) => box.bytes)) : []), [result]);
+
+  if (volumes.length === 0) return <p className="empty">{t("storageMap.empty")}</p>;
+
+  const scan = () => {
+    setScanning(true);
+    setFailed(false);
+    setResult(null);
+    setProgress(null);
+    void ipc.storageMapScan(activeId).then((outcome) => {
+      setScanning(false);
+      if (outcome.ok && outcome.value) setResult(outcome.value);
+      else setFailed(true);
+    });
+  };
+
+  const cancel = () => {
+    void ipc.storageMapCancel();
+  };
+
+  return (
+    <div className="storage-map-card">
+      {volumes.length > 1 && (
+        <ToggleGroup
+          type="single"
+          value={activeId}
+          onValueChange={(next) => {
+            if (next) setVolumeId(next);
+          }}
+          aria-label={t("section.disk.storageMap")}
+        >
+          {volumes.map((v) => (
+            <ToggleChip key={v.id} value={v.id}>
+              {v.mountPoint}
+            </ToggleChip>
+          ))}
+        </ToggleGroup>
+      )}
+
+      {scanning ? (
+        <div className="storage-map-progress">
+          <span className="hint faint">
+            {t("storageMap.scanning", {
+              files: progress?.files ?? 0,
+              bytes: formatBytes(progress?.bytes ?? 0, units),
+            })}
+          </span>
+          <Button variant="chip" onClick={cancel}>
+            {t("action.cancel")}
+          </Button>
+        </div>
+      ) : failed ? (
+        <>
+          <p className="empty">{t("storageMap.failed")}</p>
+          <Button variant="chip" onClick={scan}>
+            {t("storageMap.scan")}
+          </Button>
+        </>
+      ) : result?.cancelled ? (
+        <>
+          <p className="hint faint">{t("storageMap.cancelled")}</p>
+          <Button variant="chip" onClick={scan}>
+            {t("storageMap.scan")}
+          </Button>
+        </>
+      ) : result ? (
+        <>
+          <div className="storage-map">
+            {result.boxes.map((box, i) => {
+              const rect = rects[i];
+              if (!rect || rect.w <= 0 || rect.h <= 0) return null;
+              const label = box.free ? t("label.free") : box.unknown ? t("storageMap.other") : box.name || box.path;
+              const kind = box.free ? "free" : box.unknown ? "unknown" : "named";
+              return (
+                <div
+                  key={`${i}:${box.path}:${kind}`}
+                  className={`map-box ${kind}`}
+                  style={{
+                    left: `${rect.x * 100}%`,
+                    top: `${rect.y * 100}%`,
+                    width: `${rect.w * 100}%`,
+                    height: `${rect.h * 100}%`,
+                  }}
+                  title={`${label} · ${formatBytes(box.bytes, units)}`}
+                >
+                  {rect.w > 0.14 && rect.h > 0.14 && (
+                    <>
+                      <span className="map-box-name">{label}</span>
+                      <span className="map-box-size num">{formatBytes(box.bytes, units)}</span>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="hint faint">
+            {t("storageMap.reconciled", {
+              measured: formatBytes(result.measuredBytes, units),
+              used: formatBytes(result.usedBytes, units),
+              unreadable: formatBytes(Math.max(0, result.usedBytes - result.measuredBytes), units),
+            })}
+          </p>
+          {result.unreadable > 0 && (
+            <p className="hint faint">{t("storageMap.unreadableFolders", { count: result.unreadable })}</p>
+          )}
+          <Button variant="chip" onClick={scan}>
+            {t("storageMap.scan")}
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="hint faint">{t("storageMap.help")}</p>
+          <Button variant="chip" onClick={scan}>
+            {t("storageMap.scan")}
+          </Button>
+        </>
+      )}
     </div>
   );
 }
