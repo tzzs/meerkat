@@ -42,7 +42,7 @@ describe("tabForShortcut", () => {
   });
 
   it("has nothing for a place the bar does not have, or a key that is not a digit", () => {
-    expect(tabForShortcut("9", shown)).toBeNull();
+    expect(tabForShortcut("10", shown)).toBeNull();
     expect(tabForShortcut("0", TAB_ORDER)).toBeNull();
     expect(tabForShortcut("", TAB_ORDER)).toBeNull();
     expect(tabForShortcut("Control", TAB_ORDER)).toBeNull();

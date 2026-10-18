@@ -523,6 +523,13 @@ mod tests {
         assert!(!is_on_screen(false, true));
     }
 }
+/// The connected Bluetooth devices and what their batteries can honestly say. Read on demand: a
+/// GATT read can take seconds per device, so it never runs on a sampler tick.
+#[tauri::command]
+pub async fn bluetooth_devices() -> Vec<crate::bluetooth::Device> {
+    tauri::async_runtime::spawn_blocking(crate::bluetooth::scan).await.unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn wsl_memory() -> Option<crate::wsl::WslMemory> {
     tauri::async_runtime::spawn_blocking(crate::wsl::memory).await.ok().flatten()

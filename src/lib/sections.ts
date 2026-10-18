@@ -18,6 +18,7 @@ export const TAB_SECTIONS: Readonly<Record<string, readonly string[]>> = {
   gpu: ["apps", "history"],
   battery: ["power", "history"],
   sound: ["output", "apps", "input"],
+  bluetooth: ["devices"],
 };
 
 function defaultOrder(tab: string): readonly string[] {

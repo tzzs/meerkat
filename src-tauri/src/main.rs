@@ -3,6 +3,7 @@
 mod alerts;
 mod apphistory;
 mod audio;
+mod bluetooth;
 mod control;
 mod daily;
 #[cfg(debug_assertions)]
@@ -116,6 +117,7 @@ fn run() -> tauri::Result<()> {
             ipc::open_project,
             ipc::mcp_command,
             ipc::wsl_memory,
+            ipc::bluetooth_devices,
             ipc::daily_totals,
             stormap::storage_map_scan,
             stormap::storage_map_cancel

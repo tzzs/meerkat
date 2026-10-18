@@ -344,6 +344,27 @@ export interface SystemEvent {
   detail: string;
 }
 
+/** Whether a Bluetooth device talks the modern low-energy protocol or the older classic one. */
+export type BluetoothKind = "le" | "classic";
+
+/**
+ * What a device's battery can say. `percent` is the one case with a number; the rest are the
+ * honest reasons there is none, and they are different reasons: no service to read, a service that
+ * answered with nothing usable, and a device that never answered at all.
+ */
+export type BluetoothBattery =
+  | { state: "percent"; percent: number }
+  | { state: "noService" }
+  | { state: "unreadable" }
+  | { state: "noAnswer" };
+
+export interface BluetoothDevice {
+  name: string;
+  kind: BluetoothKind;
+  connected: boolean;
+  battery: BluetoothBattery;
+}
+
 export type InsightKind = "highCpu" | "growingMemory" | "heavyDisk" | "heavyNetwork" | "heat";
 
 export interface Insight {
@@ -448,7 +469,9 @@ export const METRIC_ORDER: MetricKind[] = [
   "temperature",
 ];
 
-export const TAB_ORDER = ["overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound"] as const;
+export const TAB_ORDER = [
+  "overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound", "bluetooth",
+] as const;
 export type TabId = (typeof TAB_ORDER)[number];
 
 /**

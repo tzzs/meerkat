@@ -3,6 +3,7 @@ import type {
   AppPoint,
   AppRule,
   AppUsage,
+  BluetoothDevice,
   AudioState,
   DailyTotal,
   HistorySeries,
@@ -124,6 +125,8 @@ export const ipc = {
   mcpCommand: async () => (await call<string>("mcp_command")) ?? "",
   /** The WSL virtual machine's memory as Linux sees it; null without WSL running. */
   wslMemory: () => call<WslMemory>("wsl_memory"),
+  /** Connected Bluetooth devices and their batteries; a slow radio read, so asked on demand. */
+  bluetoothDevices: async () => (await call<BluetoothDevice[]>("bluetooth_devices")) ?? [],
   /**
    * Maps what is taking the space on one volume. The walk can take minutes on a full drive, so
    * it runs only when asked and answers with the result (or the reason it could not).

@@ -535,6 +535,21 @@
   background: color-mix(in srgb, var(--m-disk) 26%, var(--surface-2));
   color: var(--text-2);
 }
+/* One Bluetooth row: the protocol badge where the app icon sits, so the columns line up with
+   every other list in the window. */
+.bt-row {
+  grid-template-columns: 30px minmax(120px, 1fr) minmax(60px, 1fr) 84px 22px;
+}
+.bt-kind {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--m-bluetooth);
+  background: color-mix(in srgb, var(--m-bluetooth) 14%, transparent);
+  border-radius: var(--r-xs);
+  padding: 2px 0;
+  text-align: center;
+}
 .map-box-name {
   font-size: 11px;
   font-weight: 600;

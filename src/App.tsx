@@ -13,6 +13,7 @@ import { BatteryTab, CpuTab, DiskTab, GpuTab, MemoryTab, NetworkTab, OverviewTab
 import { QuitDialog, Toaster } from "./components/ui";
 import { SettingsPages } from "./components/settings";
 import { SoundTab } from "./components/sound";
+import { BluetoothTab } from "./components/bluetooth";
 import { AppDetailSheet } from "./components/app-detail";
 import { HistoryTab } from "./components/history";
 
@@ -27,6 +28,7 @@ const TAB_TONE: Record<string, string> = {
   gpu: "var(--m-gpu)",
   battery: "var(--m-battery)",
   sound: "var(--m-gpu)",
+  bluetooth: "var(--m-network)",
 };
 
 /** `?tab=` lets a probe open the window on a given tab; it outranks the setting. */
@@ -306,6 +308,9 @@ export default function App() {
             </TabsContent>
             <TabsContent value="sound">
               <SoundTab />
+            </TabsContent>
+            <TabsContent value="bluetooth">
+              <BluetoothTab />
             </TabsContent>
           </>
         )}

@@ -53,6 +53,7 @@
   --m-memory: #9085e9;
   --m-disk: #c98500;
   --m-network: #199e70;
+  --m-bluetooth: #22a8cc;
   --m-gpu: #d55181;
   --m-battery: #2fa83a;
   --m-temp: #c98500;
@@ -101,6 +102,7 @@
   --m-memory: #4a3aa7;
   --m-disk: #eda100;
   --m-network: #1baf7a;
+  --m-bluetooth: #0891b2;
   --m-gpu: #e87ba4;
   --m-battery: #008300;
   --m-temp: #c07800;
@@ -127,6 +129,7 @@
     --m-memory: #4a3aa7;
     --m-disk: #eda100;
     --m-network: #1baf7a;
+  --m-bluetooth: #0891b2;
     --m-gpu: #e87ba4;
     --m-battery: #008300;
     --m-temp: #c07800;

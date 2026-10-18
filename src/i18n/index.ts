@@ -103,6 +103,7 @@ export const TAB_LABEL: Record<string, Key> = {
   gpu: "tab.gpu",
   battery: "tab.battery",
   sound: "tab.sound",
+  bluetooth: "tab.bluetooth",
 };
 
 export type Translate = (key: Key, params?: Params) => string;
