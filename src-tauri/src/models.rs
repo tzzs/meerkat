@@ -371,6 +371,31 @@ pub struct Insight {
     pub resolved: bool,
 }
 
+/// Why the watchdog called an app runaway. Every variant carries the reading that justified it,
+/// so a verdict cannot be constructed without its evidence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "camelCase")]
+pub enum RunawayReason {
+    /// A runtime pinned a whole core this long.
+    #[serde(rename_all = "camelCase")]
+    CpuSustained { sustained_seconds: u64 },
+    /// A runtime still holds a listening port whose project folder no longer exists.
+    ProjectGone { project: String },
+    /// A runtime has grown past the memory ceiling and is still growing.
+    #[serde(rename_all = "camelCase")]
+    MemoryCeiling { memory_bytes: u64, ceiling_bytes: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunawayVerdict {
+    /// `runaway:{app_key}:{day}` — dismissal scoped to one app for the rest of the day.
+    pub id: String,
+    pub app_key: String,
+    pub app_name: String,
+    pub reason: RunawayReason,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuitResult {

@@ -359,6 +359,20 @@ export interface Insight {
   resolved: boolean;
 }
 
+/** Why the watchdog called an app runaway; each variant carries the reading that justified it. */
+export type RunawayReason =
+  | { reason: "cpuSustained"; sustainedSeconds: number }
+  | { reason: "projectGone"; project: string }
+  | { reason: "memoryCeiling"; memoryBytes: number; ceilingBytes: number };
+
+export interface RunawayVerdict {
+  /** `runaway:{appKey}:{day}` — dismissal scoped to one app for the rest of the day. */
+  id: string;
+  appKey: string;
+  appName: string;
+  reason: RunawayReason;
+}
+
 /**
  * The answer to quit_app. `error` is a code - "no-reading", "gone", "not-an-application",
  * "protected", "no-window", "denied" - or null; the UI owns the words.

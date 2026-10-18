@@ -262,7 +262,7 @@ pub const PANEL_METRICS: [MetricKind; 6] = [
 
 pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
     let ids: Vec<&str> = match tab {
-        "overview" => vec!["summary", "charts", "topApps", "worthALook", "storage", "insights", "byHour"],
+        "overview" => vec!["summary", "charts", "topApps", "worthALook", "runaway", "storage", "insights", "byHour"],
         "history" => vec!["timeline", "ranking", "events"],
         "cpu" => vec!["load", "perCore", "userSystem", "history", "apps"],
         "memory" => vec!["breakdown", "pressure", "commit", "history", "apps"],
@@ -758,7 +758,7 @@ mod tests {
         );
         assert_eq!(
             ids(&tab(&settings, "overview").sections),
-            vec!["summary", "charts", "topApps", "worthALook", "storage", "insights", "byHour"],
+            vec!["summary", "charts", "topApps", "worthALook", "storage", "runaway", "insights", "byHour"],
             "a section added since is appended"
         );
         let cpu = tab(&settings, "cpu");

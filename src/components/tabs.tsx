@@ -18,7 +18,7 @@ import { sectionShown, visibleSections } from "../lib/sections";
 import { squarify } from "../lib/storage";
 import { subscribe } from "../lib/subscribe";
 import { useStore } from "../lib/store";
-import type { AppInfo, DailyTotal, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow, StorageMap, StorageMapProgress } from "../lib/types";
+import type { AppInfo, DailyTotal, HistoryPoint, Insight, MetricKind, RankedApp, RankingRow, RunawayReason, RunawayVerdict, StorageMap, StorageMapProgress } from "../lib/types";
 import { capacityTrend, sumDays } from "../lib/totals";
 import { portMatches, portRows } from "../lib/ports";
 import { useLoaded } from "../lib/use-loaded";
@@ -319,6 +319,34 @@ function useInsights(): Insight[] {
   return list;
 }
 
+/**
+ * The watchdog's findings: fetched once, refreshed whenever the window is shown again (a hidden
+ * window misses the `runaway` events the sampler sends), and updated live by those events.
+ */
+function useRunaways(): RunawayVerdict[] {
+  const [list, setList] = useState<RunawayVerdict[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => void ipc.runaway().then((next) => alive && setList(next));
+    load();
+    const stop = subscribe(() =>
+      listenEvent<RunawayVerdict[]>("runaway", (next) => {
+        if (alive) setList(next);
+      }),
+    );
+    const onShow = () => {
+      if (document.visibilityState !== "hidden") load();
+    };
+    document.addEventListener("visibilitychange", onShow);
+    return () => {
+      alive = false;
+      stop();
+      document.removeEventListener("visibilitychange", onShow);
+    };
+  }, []);
+  return list;
+}
+
 export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void }) {
   const { snapshot, settings, units, t } = useStore();
   const order = visibleSections(settings, "overview");
@@ -326,6 +354,7 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
   const [metric, setMetric] = useTabState<AppMetric>("overview", "metric", "memory");
   const apps = useApps();
   const insights = useInsights().filter((i) => !i.resolved);
+  const runaways = useRunaways();
   if (!snapshot) return <Missing />;
 
   const cards: { metric: MetricKind; label: string; value: string; sub: string; open: string }[] = [
@@ -468,6 +497,7 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
               )}
             </Card>
           ),
+          runaway: <RunawayCard runaways={runaways} />,
           storage: (
             <Card title={t("overview.volumes")}>
               <VolumeList />
@@ -1413,6 +1443,71 @@ function ago(atMs: number, t: Translate): string {
   if (seconds < 3600) return t("time.minutesAgo", { count: Math.floor(seconds / 60) });
   if (seconds < 86400) return t("time.hoursAgo", { count: Math.floor(seconds / 3600) });
   return t("time.daysAgo", { count: Math.floor(seconds / 86400) });
+}
+
+/** One short sentence for why a process was flagged, from the reading the verdict carries. */
+function runawayReason(reason: RunawayReason, t: Translate, units: UnitPrefs): string {
+  switch (reason.reason) {
+    case "cpuSustained":
+      return t("runaway.cpuSustained", {
+        duration: formatDuration(reason.sustainedSeconds, units.locale, { short: true }),
+      });
+    case "projectGone":
+      return t("runaway.projectGone");
+    case "memoryCeiling":
+      return t("runaway.memoryCeiling", { value: formatBytes(reason.memoryBytes, units) });
+  }
+}
+
+/**
+ * The runaway list: one row per dev runtime the watchdog has called stuck, naming it and why.
+ * A click opens its detail, where the existing quit path takes over — the watchdog itself never
+ * ends anything, and a dismiss keeps the app quiet for the rest of the day.
+ */
+function RunawayCard({ runaways }: { runaways: RunawayVerdict[] }) {
+  const { snapshot, t, units, openDetail } = useStore();
+  return (
+    <Card title={t("overview.runaway")} right={runaways.length > 0 ? <Pill tone="danger">{runaways.length}</Pill> : undefined}>
+      <p className="hint faint">{t("overview.runawayHelp")}</p>
+      {runaways.length === 0 ? (
+        <p className="empty">{t("overview.runawayEmpty")}</p>
+      ) : (
+        <div className="rows">
+          {runaways.map((verdict) => {
+            const live = snapshot?.apps.find((a) => a.key === verdict.appKey) ?? null;
+            const label = live?.name.trim() || verdict.appName.trim() || verdict.appKey;
+            const seed = live ? { key: live.key, name: live.name, exePath: live.exePath, kind: live.kind } : undefined;
+            return (
+              <div
+                key={verdict.id}
+                className="row clickable"
+                role="button"
+                tabIndex={0}
+                onClick={() => openDetail(verdict.appKey, seed)}
+                onKeyDown={(event) => event.key === "Enter" && openDetail(verdict.appKey, seed)}
+              >
+                <AppIcon name={label} seed={verdict.appKey} exePath={live?.exePath || undefined} />
+                <div className="row-main">
+                  <span className="row-name">{label}</span>
+                  <span className="row-sub">{runawayReason(verdict.reason, t, units)}</span>
+                </div>
+                <button
+                  className="row-quit"
+                  aria-label={t("action.dismiss")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    ipc.dismissRunaway(verdict.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function InsightRows({ insights }: { insights: Insight[] }) {

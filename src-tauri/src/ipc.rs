@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::alerts::Watcher;
 use crate::history::History;
 use crate::menu::{self, PanelAnchor};
-use crate::models::{Insight, QuitResult, Snapshot};
+use crate::models::{Insight, QuitResult, RunawayVerdict, Snapshot};
 use crate::settings::{Settings, SettingsStore};
 use crate::tray::TrayManager;
 
@@ -30,6 +30,8 @@ pub struct AppState {
     pub app_history: Mutex<crate::apphistory::AppHistory>,
     /// How each app should run, and which of them are paused.
     pub rules: Mutex<crate::rules::Rules>,
+    /// The runaway dev-process watchdog: its live list and the day's dismissals.
+    pub watchdog: Mutex<crate::watchdog::Watchdog>,
     /// The last event-log reading, when it was taken and how far back it reached.
     pub events: Mutex<Option<(std::time::Instant, u64, Vec<crate::events::SystemEvent>)>>,
     pub watcher: Mutex<Watcher>,
@@ -208,6 +210,18 @@ pub fn insights(state: State<'_, AppState>) -> Vec<Insight> {
 #[tauri::command(async)]
 pub fn insight_dismiss(state: State<'_, AppState>, id: String) {
     state.watcher.lock().unwrap_or_else(|p| p.into_inner()).dismiss(&id);
+}
+
+/// The watchdog's current findings. Asked when a hidden window is shown again, which cannot have
+/// kept up with the `runaway` events sent while nobody was looking.
+#[tauri::command(async)]
+pub fn runaway(state: State<'_, AppState>) -> Vec<RunawayVerdict> {
+    state.watchdog.lock().unwrap_or_else(|p| p.into_inner()).list()
+}
+
+#[tauri::command(async)]
+pub fn runaway_dismiss(state: State<'_, AppState>, id: String) {
+    state.watchdog.lock().unwrap_or_else(|p| p.into_inner()).dismiss(&id);
 }
 
 /// Closes an application's windows, or ends its processes. What may be touched, and how a process

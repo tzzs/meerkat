@@ -26,6 +26,7 @@ mod stormap;
 mod toast;
 mod tray;
 mod tray_render;
+mod watchdog;
 mod wsl;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -93,6 +94,8 @@ fn run() -> tauri::Result<()> {
             ipc::app_pause,
             ipc::insights,
             ipc::insight_dismiss,
+            ipc::runaway,
+            ipc::runaway_dismiss,
             ipc::quit_app,
             ipc::quit_meerkat,
             ipc::log_frontend,
@@ -178,6 +181,7 @@ fn run() -> tauri::Result<()> {
                 watcher: Mutex::new(Watcher::open(&app_data)),
                 app_history: Mutex::new(apphistory::AppHistory::open(&app_data)),
                 rules: Mutex::new(rules::Rules::open(&app_data)),
+                watchdog: Mutex::new(watchdog::Watchdog::new()),
                 events: Mutex::new(None),
                 tray: Mutex::new(TrayManager::new()),
                 main_visible: AtomicBool::new(false),
@@ -340,6 +344,8 @@ fn spawn_sampler(app: AppHandle) {
             // Started false so the first tick posts whatever the stored setting says: a machine
             // that was held awake before Meerkat closed is held awake again once it is back.
             let mut keep_awake = false;
+            // What the watchdog last sent to the frontend, so it only emits when the list moves.
+            let mut last_runaway: Vec<crate::models::RunawayVerdict> = Vec::new();
             loop {
                 let mut snapshot = sampler.sample();
                 let elapsed = last_sample.elapsed().as_secs_f64();
@@ -393,6 +399,52 @@ fn spawn_sampler(app: AppHandle) {
                 // Posted to the main thread, never waited for: the sampler holds no lock here
                 // and does not stand in the shell's queue.
                 tray::update(&app, &snapshot, &settings);
+
+                // The watchdog names a runtime that has been stuck, without ending it. Its list
+                // is emitted only when it changes, and re-fetched when a hidden window comes back
+                // (see ipc::runaway), so a row is never missed and never sent twice.
+                {
+                    let listening: std::collections::HashSet<u32> =
+                        snapshot.network.listening.iter().map(|l| l.pid).collect();
+                    let app_by_pid: std::collections::HashMap<u32, &crate::models::AppInfo> = snapshot
+                        .apps
+                        .iter()
+                        .flat_map(|a| a.pids.iter().copied().map(move |pid| (pid, a)))
+                        .collect();
+                    let observations: Vec<watchdog::Observation> = sampler
+                        .processes()
+                        .iter()
+                        .filter_map(|p| {
+                            let app = app_by_pid.get(&p.pid)?;
+                            Some(watchdog::Observation {
+                                app_key: app.key.clone(),
+                                app_name: app.name.clone(),
+                                image: p.name.clone(),
+                                pid: p.pid,
+                                started_at_ms: p.started_at_ms.unwrap_or(0),
+                                cpu_percent: p.cpu_percent,
+                                memory_bytes: p.memory_bytes,
+                                project: p.project.clone(),
+                                project_exists: p
+                                    .project
+                                    .as_deref()
+                                    .is_some_and(|dir| std::path::Path::new(dir).is_dir()),
+                                listening: listening.contains(&p.pid),
+                                paused: app.control.paused,
+                                muted: app.control.mute_alerts,
+                            })
+                        })
+                        .collect();
+                    let runaway = state
+                        .watchdog
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .observe(&observations, &watchdog::Thresholds::default(), history::now_seconds());
+                    if runaway != last_runaway {
+                        let _ = app.emit("runaway", &runaway);
+                        last_runaway = runaway;
+                    }
+                }
 
                 ipc::publish_metrics(&app, &state, &snapshot);
                 #[cfg(debug_assertions)]

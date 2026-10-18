@@ -11,6 +11,7 @@ import type {
   QuitResult,
   RankBy,
   RankingRow,
+  RunawayVerdict,
   Settings,
   Snapshot,
   StorageMap,
@@ -134,6 +135,9 @@ export const ipc = {
   dailyTotals: async (days: number) => (await call<DailyTotal[]>("daily_totals", { days })) ?? [],
   insights: async () => (await call<Insight[]>("insights")) ?? [],
   dismissInsight: (id: string) => void call("insight_dismiss", { id }),
+  /** The watchdog's current findings, fetched when a hidden window is shown again. */
+  runaway: async () => (await call<RunawayVerdict[]>("runaway")) ?? [],
+  dismissRunaway: (id: string) => void call("runaway_dismiss", { id }),
   quitApp: (key: string, force: boolean) => call<QuitResult>("quit_app", { key, force }),
   /**
    * Writes a line to Meerkat's own log. Never throws and never reports its own failure through
