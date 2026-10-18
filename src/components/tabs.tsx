@@ -1088,7 +1088,13 @@ export function GpuTab() {
                   {adapter.temperatureC !== null && (
                     <span>{t("metric.temperature")} {formatTemp(adapter.temperatureC, units)}</span>
                   )}
-                  {adapter.fanPercent !== null && <span>{t("label.fan")} {Math.round(adapter.fanPercent)}%</span>}
+                  {adapter.fanPercent !== null && (
+                    <span>
+                      {adapter.fanPercent > 0
+                        ? `${t("label.fan")} ${Math.round(adapter.fanPercent)}%`
+                        : t("label.fanStopped")}
+                    </span>
+                  )}
                   {adapter.powerWatts !== null && <span>{t("label.powerDraw")} {adapter.powerWatts.toFixed(1)} W</span>}
                 </div>
               )}
@@ -1186,7 +1192,7 @@ export function BatteryTab() {
                   </div>
                 ))}
               </div>
-              <AvailabilityNote state={temp.availability} t={t} elevate />
+              <AvailabilityNote state={temp.availability} t={t} />
             </Card>
           ),
           history: (

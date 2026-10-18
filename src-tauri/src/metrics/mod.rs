@@ -238,7 +238,7 @@ impl Sampler {
             if temperature.hottest.map_or(true, |h| gpu_temp > h) {
                 temperature.hottest = Some(gpu_temp);
             }
-            if temperature.availability == Availability::NeedsElevation {
+            if temperature.availability == Availability::Unavailable {
                 temperature.availability = Availability::Partial;
             }
         }
@@ -755,8 +755,9 @@ fn hottest_of(readings: impl Iterator<Item = f64>) -> Option<f64> {
 /// - `gpu_celsius` is the hottest GPU-named sensor;
 /// - `hottest` is the hottest of everything, which is what the heat alert and the history chart
 ///   use, and is not claimed to be the CPU's;
-/// - availability: no sensor at all is the usual unprivileged WMI refusal (needs elevation);
-///   sensors but none of them the CPU's is partial; the CPU's own is ok.
+/// - availability: no sensor at all is unavailable — no user-mode API on Windows exposes the
+///   CPU package temperature, so an empty list is a gap elevation cannot close; sensors but
+///   none of them the CPU's is partial; the CPU's own is ok.
 fn summarize_temperature(sensors: Vec<SensorReading>) -> TemperatureMetric {
     let kinds: Vec<SensorKind> = sensors.iter().map(|s| classify_sensor(&s.id, &s.label)).collect();
     let of_kind = |wanted: &[SensorKind]| {
@@ -775,7 +776,7 @@ fn summarize_temperature(sensors: Vec<SensorReading>) -> TemperatureMetric {
         gpu_celsius: of_kind(&[SensorKind::Gpu]),
         hottest: hottest_of(sensors.iter().map(|s| s.celsius)),
         availability: if sensors.is_empty() {
-            Availability::NeedsElevation
+            Availability::Unavailable
         } else if cpu_celsius.is_some() {
             Availability::Ok
         } else {
@@ -1376,9 +1377,9 @@ mod tests {
     }
 
     #[test]
-    fn no_sensor_at_all_needs_elevation_and_reads_as_nothing() {
+    fn no_sensor_at_all_is_unavailable_and_reads_as_nothing() {
         let metric = summarize_temperature(Vec::new());
-        assert_eq!(metric.availability, Availability::NeedsElevation);
+        assert_eq!(metric.availability, Availability::Unavailable);
         assert_eq!(metric.cpu_celsius, None);
         assert_eq!(metric.gpu_celsius, None);
         assert_eq!(metric.hottest, None);

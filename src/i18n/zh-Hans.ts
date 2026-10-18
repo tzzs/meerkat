@@ -135,6 +135,7 @@ const zh: Record<Key, string> = {
   "label.timeRemaining": "剩余时间",
   "label.powerDraw": "功耗",
   "label.fan": "风扇",
+  "label.fanStopped": "风扇已停止",
   "label.cycles": "循环次数",
   "label.designCapacity": "设计容量",
   "label.fullCharge": "完全充电容量",
