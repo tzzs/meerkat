@@ -11,6 +11,7 @@
 //! disk. The walking below is deliberately boring — `read_dir` over a real tree, never following
 //! a reparse point.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -157,6 +158,15 @@ struct Ctx {
     unreadable: u64,
     files: u64,
     bytes: u64,
+    /// Files already counted, by the identity Windows gives them regardless of their name.
+    ///
+    /// A hard link is one file with several names: each name reports the same length, and a walk
+    /// that counted by path counted that data once per link. A cargo target directory is full of
+    /// them, and on a real volume it made the map measure 90 GB of an 87 GB disk. Only files big
+    /// enough to matter are asked for their identity, because the question costs a file open and
+    /// the links worth catching are the large ones.
+    seen: HashSet<(u64, u64)>,
+
     generation: u64,
     cancelled: bool,
     last_emit: Instant,
@@ -197,6 +207,43 @@ fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
     // FILE_ATTRIBUTE_REPARSE_POINT, from winnt.h.
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+/// Files at least this large are asked for their identity, so a hard link is counted once. Below
+/// it the open costs more than the duplicate it would find, and a few small links cannot move a
+/// volume's total by anything a person would notice.
+const LINK_CHECK_BYTES: u64 = 1024 * 1024;
+
+/// The identity Windows keeps for a file however many names point at it: the volume's serial
+/// number and the file's index. Two hard links to one file share both, which is the only way to
+/// tell them from two files that happen to be the same size.
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }
+    .ok()?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    let read = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    let _ = unsafe { CloseHandle(handle) };
+    read.ok()?;
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Some((u64::from(info.dwVolumeSerialNumber), index))
 }
 
 /// The total size of `dir`, and how to draw it: a box for each child directory big enough to be
@@ -241,12 +288,8 @@ fn walk_dir(dir: &Path, min_bytes: u64, depth: usize, ctx: &mut Ctx) -> (u64, Ve
             }
         };
         if is_reparse_point(&meta) {
-            let len = meta.len();
-            total += len;
-            residual += len;
-            ctx.files += 1;
-            ctx.bytes = ctx.bytes.saturating_add(len);
-            ctx.emit_progress();
+            // A link's bytes belong to whatever it points at, which is counted where it lives.
+            // Counting them here as well is what made the total exceed the volume.
             continue;
         }
         if meta.is_dir() {
@@ -266,6 +309,17 @@ fn walk_dir(dir: &Path, min_bytes: u64, depth: usize, ctx: &mut Ctx) -> (u64, Ve
             }
         } else {
             let len = meta.len();
+            // A hard link's bytes are already counted under the name the walk reached first.
+            // Asking costs one file open, so only files big enough to matter are asked.
+            if len >= LINK_CHECK_BYTES {
+                match file_identity(&path) {
+                    Some(identity) if !ctx.seen.insert(identity) => continue,
+                    Some(_) => {}
+                    // Without an identity the file is counted by its path: a figure that may
+                    // over-count is still better than one that silently drops a file.
+                    None => {}
+                }
+            }
             total += len;
             residual += len;
             ctx.files += 1;
@@ -293,6 +347,7 @@ pub fn walk_volume(
         unreadable: 0,
         files: 0,
         bytes: 0,
+        seen: HashSet::new(),
         generation,
         cancelled: false,
         last_emit: Instant::now(),
@@ -353,7 +408,14 @@ pub async fn storage_map_scan(app: AppHandle, volume_id: String) -> Result<Stora
     .await
     .map_err(|error| format!("walk did not finish: {error}"))?;
 
-    let boxes: Vec<StorageMapBox> = layout(&walk.entries, total, used, free, walk.bytes, MAX_BOXES)
+    // A volume with hard links — a cargo target directory is full of them — reports the same
+    // bytes under every name, so a walk that counts by path can measure more than the disk holds.
+    // The volume's own figure is the authority here: it is what Explorer and the Disk tab already
+    // show, and a map that drew 84.6 GB of a 83.6 GB volume would be wrong in a way the picture
+    // makes obvious. Clamping means the unknown region is empty rather than negative, which is
+    // what `layout` already does with a total at or above `used`.
+    let measured = walk.bytes.min(used);
+    let boxes: Vec<StorageMapBox> = layout(&walk.entries, total, used, free, measured, MAX_BOXES)
         .into_iter()
         .map(|box_| StorageMapBox {
             name: box_name(&box_),
@@ -364,7 +426,7 @@ pub async fn storage_map_scan(app: AppHandle, volume_id: String) -> Result<Stora
             free: box_.free,
         })
         .collect();
-    let measured_bytes = walk.bytes;
+    let measured_bytes = measured;
 
     Ok(StorageMap {
         volume_id,
@@ -443,6 +505,19 @@ mod tests {
         let boxes = layout(&entries, 1000, 300, 700, 300, 40);
         let names: Vec<&str> = boxes.iter().filter(|b| !b.unknown && !b.free).map(|b| b.path.as_str()).collect();
         assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    // A volume full of hard links reports the same bytes under several names, so a walk that
+    // counts by path can measure more than the disk holds. The volume's own figure is clipped
+    // against at the call site; what must hold here is that a total at the volume's ceiling does
+    // not produce a negative or double-counted remainder.
+    #[test]
+    fn a_total_at_the_volume_ceiling_leaves_no_unknown_region() {
+        let entries = vec![entry("a", 400), entry("b", 200)];
+        let boxes = layout(&entries, 600, 600, 0, 600, 40);
+        assert!(boxes.iter().all(|b| !b.unknown), "nothing was left unmeasured");
+        let total: u64 = boxes.iter().map(|b| b.bytes).sum();
+        assert_eq!(total, 600, "the boxes account for exactly the volume");
     }
 
     #[test]
