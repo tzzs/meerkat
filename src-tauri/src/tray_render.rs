@@ -764,14 +764,14 @@ mod tests {
             layout: Layout,
         }
         let samples = [
-            Sample { label: "16", series: &wave, range: (0.0, 100.0), hue: (94, 203, 143), layout: Layout::Both },
-            Sample { label: "62", series: &climbing, range: (0.0, 100.0), hue: (100, 169, 255), layout: Layout::Value },
-            Sample { label: "1.2M", series: &network, range: network_range, hue: (79, 210, 218), layout: Layout::Value },
-            Sample { label: "1.2M", series: &network, range: network_range, hue: (79, 210, 218), layout: Layout::Both },
-            Sample { label: "3", series: &idle, range: (0.0, 100.0), hue: (94, 203, 143), layout: Layout::Graph },
-            Sample { label: "100", series: &climbing, range: (0.0, 100.0), hue: (163, 215, 95), layout: Layout::Value },
-            Sample { label: "62\u{b0}", series: &wave, range: (0.0, 100.0), hue: (255, 139, 94), layout: Layout::Both },
-            Sample { label: "\u{2014}", series: &[], range: (0.0, 100.0), hue: (234, 122, 198), layout: Layout::Both },
+            Sample { label: "16", series: &wave, range: (0.0, 100.0), hue: (57, 135, 229), layout: Layout::Both },
+            Sample { label: "62", series: &climbing, range: (0.0, 100.0), hue: (144, 133, 233), layout: Layout::Value },
+            Sample { label: "1.2M", series: &network, range: network_range, hue: (25, 158, 112), layout: Layout::Value },
+            Sample { label: "1.2M", series: &network, range: network_range, hue: (25, 158, 112), layout: Layout::Both },
+            Sample { label: "3", series: &idle, range: (0.0, 100.0), hue: (57, 135, 229), layout: Layout::Graph },
+            Sample { label: "100", series: &climbing, range: (0.0, 100.0), hue: (47, 168, 58), layout: Layout::Value },
+            Sample { label: "62\u{b0}", series: &wave, range: (0.0, 100.0), hue: (201, 133, 0), layout: Layout::Both },
+            Sample { label: "\u{2014}", series: &[], range: (0.0, 100.0), hue: (213, 81, 129), layout: Layout::Both },
         ];
 
         let zoom = 6u32;
