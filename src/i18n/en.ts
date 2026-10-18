@@ -439,6 +439,9 @@ const en = {
   "settings.sections": "Sections",
   "settings.resetTab": "Reset this tab",
 
+  "section.history.timeline": "Timeline",
+  "section.history.ranking": "Heaviest apps",
+  "section.history.events": "System events",
   "section.overview.charts": "CPU and memory history",
   "section.overview.topApps": "Busiest apps",
   "section.overview.worthALook": "Worth a look",

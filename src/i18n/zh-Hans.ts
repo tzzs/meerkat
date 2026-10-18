@@ -440,6 +440,9 @@ const zh: Record<Key, string> = {
   "settings.sections": "分区",
   "settings.resetTab": "恢复此标签页默认",
 
+  "section.history.timeline": "时间线",
+  "section.history.ranking": "最忙应用",
+  "section.history.events": "系统事件",
   "section.overview.charts": "处理器与内存历史",
   "section.overview.topApps": "最忙的应用",
   "section.overview.worthALook": "值得关注",

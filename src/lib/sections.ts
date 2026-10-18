@@ -11,6 +11,7 @@ import type { SectionConfig, Settings, TabConfig } from "./types";
  */
 export const TAB_SECTIONS: Readonly<Record<string, readonly string[]>> = {
   overview: ["charts", "topApps", "worthALook", "runaway", "storage", "byHour"],
+  history: ["timeline", "ranking", "events"],
   cpu: ["perCore", "history", "apps"],
   memory: ["breakdown", "history", "apps"],
   disk: ["volumes", "storageMap", "history", "apps"],
