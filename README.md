@@ -12,9 +12,9 @@ share the same live data, and a 30-day history says what happened while you were
 - **Tray readouts** — one notification-area icon per reading (CPU, memory, disk, network, GPU,
   battery, temperature) as a value, a graph, or both. Click one to open the panel.
 - **Panel** — tiles or a list of every reading, the busiest apps, and quit-from-here.
-- **Window** — Overview, History, CPU, Memory, Disk, Network, GPU, Power/Temperature and Sound
-  tabs; an application list with search, sort, pins and Quit / Force quit; history from one hour
-  to 30 days.
+- **Window** — Overview, History, CPU, Memory, Disk, Network, GPU, Power/Temperature, Sound and
+  Bluetooth tabs; an application list with search, sort, pins and Quit / Force quit; history from
+  one hour to 30 days.
 - **Every app's own history** — what each one did, minute by minute, for 30 days. Click a row for
   the processes it is made of, their command lines, its windows, its ports, its services, and what
   it has read and written since it started. A History tab draws the machine on one timeline, and
@@ -24,6 +24,17 @@ share the same live data, and a 30-day history says what happened while you were
   again to every process it starts. Paused apps are released when Meerkat exits.
 - **Who wrote today's bytes, and what is listening on which port** — asked by name, with the
   project a dev server is serving.
+- **Storage map** — a treemap of what is taking a chosen volume's space, walked on demand with a
+  progress read and a cancel, the free space drawn beside the folders, and whatever could not be
+  read shown as unknown rather than folded into either. Read-only: it names, it never deletes.
+- **Runaway** — dev processes stuck long enough to be worth naming (a core pinned for a quarter of
+  an hour, a leak past 8 GB and still climbing, a server holding a port whose project is gone),
+  each with the evidence and a way to its detail. It never ends anything itself.
+- **Keep awake** — an off-by-default switch that asks Windows not to sleep while Meerkat runs, and
+  lets go the moment it exits or the switch goes back.
+- **Bluetooth** — connected devices with the batteries that can honestly be read: a percentage from
+  the standard service for the ones that expose it, and the reason there is no number for the ones
+  that do not (AirPods and their private protocol), never a made-up zero.
 - **Worth a look** — apps that keep a core busy, grow in memory over half an hour, hammer the disk
   or the network, plus a toast for each (de-duplicated, with a cool-down).
 - **Sound mixer** — per-application volume and mute with live level meters, remembered across
