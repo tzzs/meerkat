@@ -10,7 +10,6 @@ pub enum Availability {
     Ok,
     Partial,
     Unavailable,
-    NeedsElevation,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

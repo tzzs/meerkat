@@ -110,7 +110,6 @@ fn run() -> tauri::Result<()> {
             ipc::audio_set_volume,
             ipc::audio_set_endpoint,
             ipc::app_icon,
-            ipc::relaunch_elevated,
             ipc::app_processes,
             ipc::focus_window,
             ipc::reveal_in_explorer,
@@ -243,7 +242,7 @@ fn run() -> tauri::Result<()> {
 }
 
 /// The last thing that runs, on the main thread, once the event loop has stopped: every
-/// clean way out (the tray menu, `quit_meerkat`, a relaunch) passes through here, because each of
+/// clean way out (the tray menu, `quit_meerkat`) passes through here, because each of
 /// them is `AppHandle::exit`, which ends the event loop and then reports `RunEvent::Exit`.
 ///
 /// The history is written out here. It is otherwise saved on a timer, so without this the minute
@@ -547,9 +546,9 @@ mod autostart {
 
     #[cfg(not(debug_assertions))]
     fn enable(app: &AppHandle) {
-        // The plugin writes HKLM whenever it is allowed to, and an elevated Meerkat (the thermal
-        // sensor relaunch) is: that would start Meerkat at every user's sign-in. The next normal
-        // start writes the per-user value instead.
+        // The plugin writes HKLM whenever it is allowed to, and an elevated Meerkat is: that
+        // would start Meerkat at every user's sign-in. The next normal start writes the per-user
+        // value instead.
         if unsafe { windows::Win32::UI::Shell::IsUserAnAdmin() }.as_bool() {
             crate::diag::info("running elevated; the login item is left to the next normal start");
             return;

@@ -174,9 +174,6 @@ const zh: Record<Key, string> = {
   "time.hoursAgo": "{count} 小时前",
   "time.daysAgo": "{count} 天前",
   "settings.noPowerHardware": "这台电脑没有电池，也没有可读的温度传感器。",
-  "action.elevateRestart": "以管理员身份重启",
-  "state.elevateHelp": "提权只能打开 ACPI 热区温度这一项；CPU 封装温度和风扇转速需要内核驱动，提权与否都拿不到。",
-  "state.elevateCancelled": "已取消，Meerkat 继续以非管理员身份运行。",
   "list.sortBy": "排序",
   "list.unreadable": "Meerkat 无法打开的进程",
   "list.unreadableHint": "读取这些进程需要管理员权限，所以 Meerkat 没有它们的数据，也不提供关闭它们的方式。",
@@ -370,7 +367,6 @@ const zh: Record<Key, string> = {
   "temperature.title": "温度",
 
   "state.unavailable": "不可用",
-  "state.needsElevation": "需要管理员权限",
   "state.partial": "部分可用",
   "state.noData": "暂无数据",
 

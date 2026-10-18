@@ -393,50 +393,6 @@ pub async fn app_icon(exe_path: String, size: i32) -> Option<String> {
     png_data_url(&image)
 }
 
-/// Restarts Meerkat with administrative rights, which is the only way to reach the ACPI thermal
-/// zone on Windows. The consent dialog is the user's decision: a declined one is reported and
-/// this instance keeps running, because quitting on their "No" would be worse than the missing
-/// sensor. Only after the elevated child is actually launched does this one exit, so the tray
-/// is never left without a process behind it.
-#[tauri::command]
-pub fn relaunch_elevated(app: AppHandle) -> Result<(), String> {
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-
-    fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let verb = wide("runas");
-    let path = wide(&exe.to_string_lossy());
-    let launched = unsafe {
-        ShellExecuteW(
-            None,
-            PCWSTR(verb.as_ptr()),
-            PCWSTR(path.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    // ShellExecute reports failure as a value at or below 32 rather than an error handle.
-    let code = launched.0 as isize;
-    if code > 32 {
-        app.exit(0);
-        return Ok(());
-    }
-    Err(match code {
-        // The user pressed No on the consent dialog, or it was blocked by policy.
-        5 | 1223 => "cancelled".to_string(),
-        other => {
-            crate::diag::warn(format!("relaunch as administrator: ShellExecute failed with {other}"));
-            format!("ShellExecute failed: {other}")
-        }
-    })
-}
-
 fn png_data_url(image: &crate::icons::IconImage) -> Option<String> {
     use base64::Engine;
     let rgba = image::RgbaImage::from_raw(image.width, image.height, image.rgba.clone())?;

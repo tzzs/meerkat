@@ -6,7 +6,7 @@
 
 export type MetricKind = "cpu" | "memory" | "disk" | "network" | "gpu" | "battery" | "temperature";
 
-export type Availability = "ok" | "partial" | "unavailable" | "needsElevation";
+export type Availability = "ok" | "partial" | "unavailable";
 
 export interface MachineInfo {
   hostname: string;

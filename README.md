@@ -36,9 +36,12 @@ share the same live data, and a 30-day history says what happened while you were
 Nothing is faked: a reading Windows does not give an unprivileged process is shown as unavailable
 instead of as zero. Processes are read from the kernel's own table, so Defender, Windows Update
 and every service host are measured and named without elevation — service hosts for the services
-they run, which is what Windows calls them in its own language. Per-app network *bytes*, CPU
-package temperature and fan speed are not available without a kernel driver or elevation; Meerkat
-shows connections and ports instead and says so.
+they run, which is what Windows calls them in its own language. Per-app network *bytes* need an
+ETW session only an administrator can open. The CPU package temperature is not reachable by any
+user-mode Windows API at all — the one ACPI thermal zone this machine exposes reports a static
+chassis reading that stays put under a full load, so it is shown as unavailable rather than
+passed off as the processor; the GPU's own temperature, fan and live power come from the vendor
+library without elevation.
 
 Meerkat has no account, no telemetry and makes no network requests.
 

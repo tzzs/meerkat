@@ -415,11 +415,9 @@ export function OverviewTab({ onOpenTab }: { onOpenTab: (tab: string) => void })
       sub:
         snapshot.temperature.sensors.length > 0
           ? `${snapshot.temperature.sensors.length} ${t("label.sensors")}`
-          : snapshot.temperature.availability === "needsElevation"
-            ? t("state.needsElevation")
-            : snapshot.temperature.availability === "partial"
-              ? t("state.partial")
-              : t("state.unavailable"),
+          : snapshot.temperature.availability === "partial"
+            ? t("state.partial")
+            : t("state.unavailable"),
       open: "battery",
     },
   ];

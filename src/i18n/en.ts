@@ -171,9 +171,6 @@ const en = {
   "time.hoursAgo": "{count, plural, one {# hour ago} other {# hours ago}}",
   "time.daysAgo": "{count, plural, one {# day ago} other {# days ago}}",
   "settings.noPowerHardware": "No battery and no readable temperature sensor on this machine.",
-  "action.elevateRestart": "Restart as administrator",
-  "state.elevateHelp": "Elevation opens the ACPI thermal zone and nothing else — CPU package temperature and fan speed need a kernel driver, so they stay out of reach either way.",
-  "state.elevateCancelled": "Cancelled. Meerkat keeps running without elevation.",
   "list.sortBy": "Sort",
   "list.unreadable": "Processes Meerkat cannot open",
   "list.unreadableHint":
@@ -369,7 +366,6 @@ const en = {
   "temperature.title": "Temperature",
 
   "state.unavailable": "Not available",
-  "state.needsElevation": "Needs administrator rights",
   "state.partial": "Partly available",
   "state.noData": "No data yet",
 
