@@ -12,6 +12,7 @@ mod diag;
 mod events;
 mod fps;
 mod history;
+mod hotkey;
 mod i18n;
 mod icons;
 mod ipc;
@@ -216,6 +217,7 @@ fn run() -> tauri::Result<()> {
             autostart::reconcile(&handle, initial.start_at_login);
 
             spawn_sampler(handle.clone());
+            hotkey::spawn(handle.clone());
             if initial.mcp_enabled {
                 mcp::start(handle.clone());
             }
