@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use tauri::Emitter;
+use tauri::{AppHandle, Emitter};
 
 use crate::ipc::AppState;
 use crate::models::{
@@ -281,6 +281,29 @@ pub fn record(state: &AppState, snapshot: &Snapshot) {
     if let (Some(status), Some(app)) = (status, state.app.get()) {
         let _ = app.emit("perf-status", &status);
     }
+}
+
+/// Toggle foreground monitoring from the global hotkey.
+pub fn toggle_foreground(app: &AppHandle, state: &AppState) {
+    let snapshot = state.latest.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let status = {
+        let mut store = state.perf.lock().unwrap_or_else(|p| p.into_inner());
+        if store.status().active {
+            if let Err(error) = store.stop() {
+                crate::diag::warn(format!("hotkey stop: {error}"));
+                return;
+            }
+        } else if let Some(snapshot) = snapshot.as_ref() {
+            if let Err(error) = store.start(PerfTargetMode::Foreground, None, snapshot) {
+                crate::diag::warn(format!("hotkey start: {error}"));
+                return;
+            }
+        } else {
+            return;
+        }
+        store.status()
+    };
+    let _ = app.emit("perf-status", &status);
 }
 
 mod foreground {

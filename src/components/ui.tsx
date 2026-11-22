@@ -313,6 +313,8 @@ const PILL_VARIANT: Record<string, NonNullable<BadgeProps["variant"]>> = {
   accent: "accent",
   faint: "faint",
   danger: "danger",
+  warn: "warn",
+  note: "note",
 };
 
 export function Pill({

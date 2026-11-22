@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { formatBytes, formatDuration, formatTime } from "../lib/format";
-import { ipc } from "../lib/ipc";
+import { ipc, listenEvent } from "../lib/ipc";
+import { subscribe } from "../lib/subscribe";
 import {
   PERF_METRICS,
   formatPerfStat,
@@ -25,10 +26,12 @@ import { Hint } from "./ui/tooltip";
 
 const VERDICT_TONE: Record<PerfVerdict, string> = {
   healthy: "accent",
-  warning: "",
+  warning: "warn",
   problem: "danger",
-  inconclusive: "faint",
+  inconclusive: "note",
 };
+
+const SESSION_LIMIT = 30;
 
 const SECTIONS = ["setup", "live", "history"];
 const MAX_LIVE_SAMPLES = 120;
@@ -171,7 +174,7 @@ function ReportView({
 }
 
 export function PerfTab() {
-  const { snapshot, units, t } = useStore();
+  const { snapshot, units, t, pushToast } = useStore();
   const [mode, setMode] = useState<PerfTargetMode>("foreground");
   const [appKey, setAppKey] = useState<string | null>(null);
   const [status, setStatus] = useState<PerfStatus>(() => ({
@@ -191,6 +194,9 @@ export function PerfTab() {
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const selectSeq = useRef(0);
+  const wasActive = useRef<boolean | null>(null);
+  const reportReady = useRef<(id: string) => void>(() => {});
+  const toastOpen = useRef<(id: string) => void>(() => {});
 
   const apps = useMemo(
     () => [...(snapshot?.apps ?? [])].filter((app) => app.name.trim()).sort((a, b) => a.name.localeCompare(b.name)),
@@ -199,12 +205,39 @@ export function PerfTab() {
 
   useEffect(() => {
     let alive = true;
-    void ipc.perfStatus().then((next) => alive && setStatus(next));
+    void ipc.perfStatus().then((next) => {
+      if (!alive) return;
+      wasActive.current = next.active;
+      setStatus(next);
+    });
     void ipc.perfSessions().then((next) => alive && setSessions(next));
     return () => {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    return subscribe(() =>
+      listenEvent<PerfStatus>("perf-status", (next) => {
+        setStatus(next);
+        const previous = wasActive.current;
+        wasActive.current = next.active;
+        if (previous !== true || next.active) return;
+        void ipc.perfSessions().then((saved) => {
+          setSessions(saved);
+          const newest = saved[0];
+          const openResult = () => {
+            if (newest) toastOpen.current(newest.id);
+          };
+          pushToast({
+            tone: "ok",
+            text: t("perf.saved"),
+            action: newest ? { label: t("perf.report.open"), run: openResult } : undefined,
+          });
+        });
+      }),
+    );
+  }, [pushToast, t]);
 
   useEffect(() => {
     if (!status.active) return;
@@ -269,7 +302,13 @@ export function PerfTab() {
   };
 
   const openSession = (id: string) => {
+    reportReady.current(id);
     setSelectedId(id);
+  };
+
+  toastOpen.current = openSession;
+
+  reportReady.current = (id: string) => {
     const seq = ++selectSeq.current;
     void ipc.perfReport(id).then((next) => seq === selectSeq.current && setReport(next));
   };
@@ -337,6 +376,7 @@ export function PerfTab() {
                 )}
               </div>
               {mode === "app" && apps.length === 0 && <p className="hint faint">{t("perf.noApps")}</p>}
+              <p className="hint faint">{t("perf.hotkeyHint")}</p>
               {error && (
                 <p className="hint" role="alert">
                   {error}
@@ -368,6 +408,9 @@ export function PerfTab() {
           history: (
             <div className="stack">
               <Card title={t("perf.history.title")}>
+                <p className="hint faint">
+                  {t("perf.history.saved", { count: sessions.length, max: SESSION_LIMIT })}
+                </p>
                 {sessions.length === 0 ? (
                   <p className="empty faint">{t("perf.history.empty")}</p>
                 ) : (
@@ -391,6 +434,19 @@ export function PerfTab() {
                               {formatTime(session.startedAtMs, units.locale)} ·{" "}
                               {t(session.mode === "app" ? "perf.mode.app" : "perf.mode.foreground")}
                             </span>
+                            <Hint label={t("perf.history.open")}>
+                              <Button
+                                variant="chip"
+                                className="border-input mt-1 self-start"
+                                aria-label={t("perf.history.open")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openSession(session.id);
+                                }}
+                              >
+                                {t("perf.history.open")}
+                              </Button>
+                            </Hint>
                           </div>
                           <Pill tone={VERDICT_TONE[session.verdict]}>{t(perfVerdictKey(session.verdict))}</Pill>
                           <span className="row-value num">
