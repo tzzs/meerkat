@@ -1,6 +1,7 @@
 // Reads the memory map out of the running window and takes the acceptance shots: where the
 // card sits, how many boxes it drew, whether any is a sliver, that a box opens the app detail,
-// and the same map in the dark theme.
+// that the folded box drills into its own map and comes back, and the same map in the dark
+// theme.
 //
 //   MEERKAT_CDP=9334 node scripts/map-probe.mjs shots/map
 import { writeFileSync } from "node:fs";
@@ -117,7 +118,26 @@ const read = () =>
     };
   })()`);
 
-console.log(JSON.stringify(await read(), null, 2));
+const readLevel = () =>
+  evaluate(`(() => {
+    const map = document.querySelector(".memory-map");
+    const trail = document.querySelector(".memory-map-trail");
+    const other = map?.querySelector(".mem-box.other");
+    return {
+      boxCount: map?.querySelectorAll(".mem-box").length ?? 0,
+      back: Boolean(trail?.querySelector("button")),
+      help: map?.parentElement?.querySelector(".hint")?.textContent?.trim() ?? "",
+      other: other
+        ? {
+            text: other.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+            enterHint: other.querySelector(".map-box-enter")?.textContent?.trim() ?? "",
+          }
+        : null,
+    };
+  })()`);
+
+const root = await read();
+console.log(JSON.stringify(root, null, 2));
 
 await evaluate(`document.querySelector(".memory-map")?.scrollIntoView({ block: "center" }); true`);
 await wait(900);
@@ -135,6 +155,54 @@ const dialog = await evaluate(`document.querySelector('[role="dialog"]')?.textCo
 console.log("clicked", JSON.stringify(clicked), "| detail sheet:", dialog ? "open" : "MISSING");
 await evaluate(`document.querySelector('[role="dialog"] [aria-label], [role="dialog"] button')?.click(); true`);
 await wait(600);
+
+const entered = await evaluate(`(() => {
+  const other = document.querySelector(".mem-box.other");
+  if (!other) return "";
+  const size = other.querySelector(".map-box-size")?.textContent?.trim() ?? "";
+  other.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+  // A box too short for its size line still counts as opened.
+  return size || "opened";
+})()`);
+
+if (!entered) {
+  console.log("no other box on the map, so the drill was not exercised");
+} else {
+  await wait(900);
+  const levelOne = await readLevel();
+  console.log("opened the other box", JSON.stringify(entered));
+  console.log("levelOne", JSON.stringify(levelOne, null, 2));
+  await shoot(`${base}-level.png`);
+
+  if (levelOne.other) {
+    await evaluate(
+      `document.querySelector(".mem-box.other").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })); true`,
+    );
+    await wait(900);
+    const levelTwo = await readLevel();
+    console.log("levelTwo", JSON.stringify({ boxCount: levelTwo.boxCount, help: levelTwo.help, other: Boolean(levelTwo.other) }));
+  }
+
+  for (let i = 0; i < 3; i++) {
+    if (!(await evaluate(`Boolean(document.querySelector(".memory-map-trail button"))`))) break;
+    await evaluate(`document.querySelector(".memory-map-trail button").click(); true`);
+    await wait(600);
+  }
+  const returned = await evaluate(`(() => {
+    const other = document.querySelector(".mem-box.other");
+    return {
+      trail: Boolean(document.querySelector(".memory-map-trail")),
+      text: other?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+    };
+  })()`);
+  const rootLabel = root.tail?.label ?? "";
+  console.log(
+    "back at root:",
+    returned.trail ? "TRAIL STILL OPEN" : "trail closed",
+    "| other box:",
+    rootLabel && returned.text.includes(rootLabel) ? "restored" : "MISSING",
+  );
+}
 
 await evaluate(`document.documentElement.setAttribute("data-theme", "dark"); true`);
 await wait(600);

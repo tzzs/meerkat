@@ -29,7 +29,7 @@ describe("memoryMap", () => {
     const other = map.boxes.find((box) => box.kind === "other");
     expect(other?.kind).toBe("other");
     if (other?.kind !== "other") throw new Error("no other box");
-    expect(other.count).toBe(30 - MAX_BOXES);
+    expect(other.apps).toHaveLength(30 - MAX_BOXES);
     expect(other.bytes).toBe((30 - MAX_BOXES) * 1000);
     expect(map.boxes.reduce((sum, box) => sum + box.bytes, 0)).toBe(map.mappedBytes);
   });
@@ -41,8 +41,20 @@ describe("memoryMap", () => {
     const other = map.boxes.find((box) => box.kind === "other");
     expect(other?.kind).toBe("other");
     if (other?.kind !== "other") throw new Error("no other box");
-    expect(other.count).toBe(1);
+    expect(other.apps.map((entry) => entry.key)).toEqual(["small"]);
     expect(other.bytes).toBe(small);
+  });
+
+  it("keeps the folded apps on the other box, so the next level is the same apps", () => {
+    const apps = Array.from({ length: 30 }, (_, i) => app(`app${i}`, 1000));
+    const map = memoryMap(apps);
+    const other = map.boxes.find((box) => box.kind === "other");
+    if (other?.kind !== "other") throw new Error("no other box");
+    expect(other.apps).toHaveLength(30 - MAX_BOXES);
+    expect(other.apps.reduce((sum, app) => sum + app.memoryBytes, 0)).toBe(other.bytes);
+    const next = memoryMap(other.apps);
+    expect(next.mappedBytes).toBe(other.bytes);
+    expect(next.boxes.every((box) => box.kind === "app")).toBe(true);
   });
 
   it("keeps the layout when every reading scales by the same factor", () => {
@@ -77,7 +89,7 @@ describe("memoryMap", () => {
     const other = map.boxes.find((box) => box.kind === "other");
     expect(other?.kind).toBe("other");
     if (other?.kind !== "other") throw new Error("no other box");
-    expect(other.count).toBe(299);
+    expect(other.apps).toHaveLength(299);
     expect(other.bytes).toBe(299_000);
   });
 
