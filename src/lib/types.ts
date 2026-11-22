@@ -470,7 +470,7 @@ export const METRIC_ORDER: MetricKind[] = [
 ];
 
 export const TAB_ORDER = [
-  "overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound", "bluetooth",
+  "overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound", "bluetooth", "perf",
 ] as const;
 export type TabId = (typeof TAB_ORDER)[number];
 
@@ -622,4 +622,102 @@ export interface StorageMapProgress {
   files: number;
   bytes: number;
   unreadable: number;
+}
+
+// ---- Game performance sessions. Mirrors src-tauri/src/models.rs. ------------------------------
+
+export type PerfTargetMode = "foreground" | "app";
+export type FpsSource = "none" | "presentMon";
+export type PerfVerdict = "healthy" | "warning" | "problem" | "inconclusive";
+export type PerfIssueKind =
+  | "fpsLow"
+  | "fpsUnstable"
+  | "cpuBound"
+  | "gpuBound"
+  | "vramPressure"
+  | "gpuHot"
+  | "memoryPressure"
+  | "fpsUnavailable";
+
+export interface PerfTarget {
+  mode: PerfTargetMode;
+  appKey: string | null;
+  name: string;
+  currentAppKey: string | null;
+}
+
+export interface PerfSample {
+  atMs: number;
+  fps: number | null;
+  fpsSource: FpsSource;
+  cpuPercent: number;
+  appCpuPercent: number | null;
+  cpuTempC: number | null;
+  gpuPercent: number | null;
+  appGpuPercent: number | null;
+  gpuTempC: number | null;
+  memoryPercent: number;
+  appMemoryBytes: number | null;
+  vramPercent: number | null;
+  vramUsedBytes: number | null;
+  vramTotalBytes: number | null;
+}
+
+export interface PerfIssue {
+  kind: PerfIssueKind;
+  verdict: PerfVerdict;
+  /** Translation key; the backend never sends prose into the UI. */
+  messageKey: string;
+  metric: string;
+  value: number | null;
+}
+
+export interface PerfStat {
+  key: string;
+  available: boolean;
+  min: number | null;
+  avg: number | null;
+  max: number | null;
+  p95: number | null;
+  last: number | null;
+}
+
+export interface PerfReport {
+  sessionId: string;
+  verdict: PerfVerdict;
+  headlineKey: string;
+  issues: PerfIssue[];
+  stats: PerfStat[];
+  durationSeconds: number;
+  sampleCount: number;
+}
+
+export interface PerfSession {
+  id: string;
+  target: PerfTarget;
+  startedAtMs: number;
+  endedAtMs: number | null;
+  samples: PerfSample[];
+  report: PerfReport | null;
+}
+
+export interface PerfSessionSummary {
+  id: string;
+  targetName: string;
+  mode: PerfTargetMode;
+  startedAtMs: number;
+  endedAtMs: number | null;
+  sampleCount: number;
+  verdict: PerfVerdict;
+}
+
+export interface PerfStatus {
+  active: boolean;
+  sessionId: string | null;
+  targetName: string;
+  mode: PerfTargetMode;
+  currentAppKey: string | null;
+  sampleCount: number;
+  startedAtMs: number | null;
+  latest: PerfSample | null;
 }

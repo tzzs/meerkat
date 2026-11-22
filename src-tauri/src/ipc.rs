@@ -10,7 +10,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::alerts::Watcher;
 use crate::history::History;
 use crate::menu::{self, PanelAnchor};
-use crate::models::{Insight, QuitResult, RunawayVerdict, Snapshot};
+use crate::models::{
+    Insight, PerfReport, PerfSession, PerfSessionSummary, PerfStatus, PerfTargetMode, QuitResult,
+    RunawayVerdict, Snapshot,
+};
 use crate::settings::{Settings, SettingsStore};
 use crate::tray::TrayManager;
 
@@ -32,6 +35,8 @@ pub struct AppState {
     pub rules: Mutex<crate::rules::Rules>,
     /// The runaway dev-process watchdog: its live list and the day's dismissals.
     pub watchdog: Mutex<crate::watchdog::Watchdog>,
+    /// Performance sessions: one recording at a time, and the reports of finished ones.
+    pub perf: Mutex<crate::perf::Store>,
     /// The last event-log reading, when it was taken and how far back it reached.
     pub events: Mutex<Option<(std::time::Instant, u64, Vec<crate::events::SystemEvent>)>>,
     pub watcher: Mutex<Watcher>,
@@ -729,4 +734,69 @@ pub fn app_pause(state: State<'_, AppState>, key: String, pause: bool) -> Result
         }
     }
     Ok(changed)
+}
+
+fn parse_perf_mode(mode: &str) -> Result<PerfTargetMode, String> {
+    match mode {
+        "foreground" => Ok(PerfTargetMode::Foreground),
+        "app" => Ok(PerfTargetMode::App),
+        other => Err(format!("unknown performance target mode {other}")),
+    }
+}
+
+fn emit_perf_status(app: &AppHandle, state: &AppState) {
+    let status = state.perf.lock().unwrap_or_else(|p| p.into_inner()).status();
+    let _ = app.emit("perf-status", &status);
+}
+
+#[tauri::command(async)]
+pub fn perf_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+    app_key: Option<String>,
+) -> Result<String, String> {
+    let mode = parse_perf_mode(&mode)?;
+    let snapshot = state
+        .latest
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .ok_or("no metrics reading yet")?;
+    let id = state
+        .perf
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .start(mode, app_key, &snapshot)?;
+    emit_perf_status(&app, &state);
+    Ok(id)
+}
+
+#[tauri::command(async)]
+pub fn perf_stop(app: AppHandle, state: State<'_, AppState>) -> Result<PerfReport, String> {
+    let report = state.perf.lock().unwrap_or_else(|p| p.into_inner()).stop()?;
+    emit_perf_status(&app, &state);
+    Ok(report)
+}
+
+#[tauri::command(async)]
+pub fn perf_status(state: State<'_, AppState>) -> PerfStatus {
+    state.perf.lock().unwrap_or_else(|p| p.into_inner()).status()
+}
+
+#[tauri::command(async)]
+pub fn perf_sessions(state: State<'_, AppState>) -> Vec<PerfSessionSummary> {
+    state.perf.lock().unwrap_or_else(|p| p.into_inner()).sessions()
+}
+
+#[tauri::command(async)]
+pub fn perf_report(state: State<'_, AppState>, id: String) -> Option<PerfSession> {
+    state.perf.lock().unwrap_or_else(|p| p.into_inner()).session(&id)
+}
+
+#[tauri::command(async)]
+pub fn perf_delete(app: AppHandle, state: State<'_, AppState>, id: String) {
+    if state.perf.lock().unwrap_or_else(|p| p.into_inner()).delete(&id) {
+        emit_perf_status(&app, &state);
+    }
 }

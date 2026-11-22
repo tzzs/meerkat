@@ -8,6 +8,11 @@ import type {
   DailyTotal,
   HistorySeries,
   Insight,
+  PerfReport,
+  PerfSession,
+  PerfSessionSummary,
+  PerfStatus,
+  PerfTargetMode,
   ProcessRow,
   QuitResult,
   RankBy,
@@ -142,6 +147,17 @@ export const ipc = {
   runaway: async () => (await call<RunawayVerdict[]>("runaway")) ?? [],
   dismissRunaway: (id: string) => void call("runaway_dismiss", { id }),
   quitApp: (key: string, force: boolean) => call<QuitResult>("quit_app", { key, force }),
+  /** Starts a game session. Null means it started; a string is the refusal to show. */
+  perfStart: async (mode: PerfTargetMode, appKey: string | null): Promise<string | null> => {
+    const result = await attempt<null>("perf_start", { mode, appKey });
+    return result.ok ? null : result.error;
+  },
+  /** The report answers through IpcResult so a refused stop is not shown as a clean report. */
+  perfStop: () => attempt<PerfReport>("perf_stop"),
+  perfStatus: async () => (await call<PerfStatus>("perf_status")) ?? emptyPerfStatus(),
+  perfSessions: async () => (await call<PerfSessionSummary[]>("perf_sessions")) ?? [],
+  perfReport: (id: string) => call<PerfSession>("perf_report", { id }),
+  perfDelete: (id: string) => call("perf_delete", { id }),
   /**
    * Writes a line to Meerkat's own log. Never throws and never reports its own failure through
    * the error path it serves, so a broken bridge cannot turn one error into a loop.
@@ -249,6 +265,19 @@ export async function listenEvent<T = unknown>(name: string, handler: (payload: 
   if (!inTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<T>(name, (event) => handler(event.payload), { target: await ownLabel() });
+}
+
+function emptyPerfStatus(): PerfStatus {
+  return {
+    active: false,
+    sessionId: null,
+    targetName: "",
+    mode: "foreground",
+    currentAppKey: null,
+    sampleCount: 0,
+    startedAtMs: null,
+    latest: null,
+  };
 }
 
 function emptySeries(metric: string, rangeSeconds: number): HistorySeries {

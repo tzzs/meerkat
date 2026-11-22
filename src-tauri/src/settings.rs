@@ -244,8 +244,8 @@ pub struct Settings {
     pub mcp_enabled: bool,
 }
 
-pub const TAB_IDS: [&str; 10] = [
-    "overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound", "bluetooth",
+pub const TAB_IDS: [&str; 11] = [
+    "overview", "history", "cpu", "memory", "disk", "network", "gpu", "battery", "sound", "bluetooth", "perf",
 ];
 
 /// What the dropdown panel can draw. These are metrics, not tabs: the default used to be built
@@ -272,6 +272,7 @@ pub fn default_sections(tab: &str) -> Vec<SectionConfig> {
         "battery" => vec!["charge", "health", "power", "history"],
         "sound" => vec!["output", "apps", "input"],
         "bluetooth" => vec!["devices"],
+        "perf" => vec!["setup", "live", "history"],
         _ => vec![],
     };
     ids.into_iter()
@@ -748,7 +749,7 @@ mod tests {
         let tabs: Vec<&str> = settings.window.tabs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             tabs,
-            vec!["cpu", "overview", "gpu", "memory", "disk", "network", "battery", "history", "sound", "bluetooth"],
+            vec!["cpu", "overview", "gpu", "memory", "disk", "network", "battery", "history", "sound", "bluetooth", "perf"],
             "the user's order, then what is new"
         );
         assert!(!tab(&settings, "gpu").visible, "a hidden tab stays hidden");
@@ -997,7 +998,7 @@ mod tests {
         let tabs: Vec<&str> = settings.window.tabs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(
             tabs,
-            vec!["network", "cpu", "overview", "history", "memory", "disk", "gpu", "battery", "sound", "bluetooth"],
+            vec!["network", "cpu", "overview", "history", "memory", "disk", "gpu", "battery", "sound", "bluetooth", "perf"],
         );
         assert!(settings.window.tabs[0].visible, "the first of two repeats wins");
         assert!(!settings.window.tabs[1].visible);
