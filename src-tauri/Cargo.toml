@@ -1,6 +1,6 @@
 [package]
 name = "meerkat"
-version = "0.1.0"
+version = "0.1.0" # x-release-please-version
 description = "Meerkat — an Activity Monitor alternative for Windows"
 authors = ["TZZ"]
 edition = "2021"
