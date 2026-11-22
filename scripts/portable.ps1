@@ -16,7 +16,7 @@ $conf = Get-Content (Join-Path $root "src-tauri/tauri.conf.json") -Raw | Convert
 $version = $conf.version
 
 $exe = Join-Path $release "meerkat.exe"
-if (-not (Test-Path $exe)) { throw "missing $exe — run `pnpm tauri build` first" }
+if (-not (Test-Path $exe)) { throw "missing $exe; run pnpm tauri build first" }
 # The GNU build leaves WebView2Loader.dll beside the exe; the MSVC build links it in. Include
 # it when it exists, so one archive step works with either toolchain.
 $files = @($exe)
