@@ -16,7 +16,6 @@ const tint = (box: MemoryBox) =>
  */
 interface Level {
   keys: readonly string[];
-  count: number;
 }
 
 export function MemoryMap({ apps, inUseBytes }: { apps: readonly AppInfo[]; inUseBytes: number }) {
@@ -36,8 +35,9 @@ export function MemoryMap({ apps, inUseBytes }: { apps: readonly AppInfo[]; inUs
   const live = useMemo(() => memoryMap(scoped), [scoped]);
   const map = held ?? live;
   const level = trail[trail.length - 1] ?? null;
+  const appCount = map.boxes.reduce((count, box) => count + (box.kind === "app" ? 1 : box.apps.length), 0);
   const enter = (box: Extract<MemoryBox, { kind: "other" }>) => {
-    setTrail((current) => [...current, { keys: box.apps.map((app) => app.key), count: box.apps.length }]);
+    setTrail((current) => [...current, { keys: box.apps.map((app) => app.key) }]);
     setHeld(null);
   };
   const back = () => {
@@ -133,7 +133,7 @@ export function MemoryMap({ apps, inUseBytes }: { apps: readonly AppInfo[]; inUs
       </div>
       <p className="hint faint">
         {level
-          ? t("memoryMap.levelHelp", { count: level.count, value: formatBytes(map.mappedBytes, units) })
+          ? t("memoryMap.levelHelp", { count: appCount, value: formatBytes(map.mappedBytes, units) })
           : t("memoryMap.help", {
               mapped: formatBytes(map.mappedBytes, units),
               inUse: formatBytes(inUseBytes, units),
