@@ -16,15 +16,17 @@ $conf = Get-Content (Join-Path $root "src-tauri/tauri.conf.json") -Raw | Convert
 $version = $conf.version
 
 $exe = Join-Path $release "meerkat.exe"
+if (-not (Test-Path $exe)) { throw "missing $exe — run `pnpm tauri build` first" }
+# The GNU build leaves WebView2Loader.dll beside the exe; the MSVC build links it in. Include
+# it when it exists, so one archive step works with either toolchain.
+$files = @($exe)
 $loader = Join-Path $release "WebView2Loader.dll"
-foreach ($f in @($exe, $loader)) {
-  if (-not (Test-Path $f)) { throw "missing $f — run `pnpm tauri build` first" }
-}
+if (Test-Path $loader) { $files += $loader }
 
 $stage = Join-Path $out "Meerkat"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage | Out-Null
-Copy-Item $exe, $loader -Destination $stage
+Copy-Item $files -Destination $stage
 
 $zip = Join-Path $out "Meerkat-$version-portable-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
