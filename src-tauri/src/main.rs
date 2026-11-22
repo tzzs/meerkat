@@ -10,6 +10,7 @@ mod daily;
 mod devmirror;
 mod diag;
 mod events;
+mod fps;
 mod history;
 mod i18n;
 mod icons;
@@ -20,6 +21,7 @@ mod menu;
 mod metrics;
 mod models;
 mod nvml;
+mod perf;
 mod quit;
 mod rules;
 mod settings;
@@ -118,6 +120,12 @@ fn run() -> tauri::Result<()> {
             ipc::wsl_memory,
             ipc::bluetooth_devices,
             ipc::daily_totals,
+            ipc::perf_start,
+            ipc::perf_stop,
+            ipc::perf_status,
+            ipc::perf_sessions,
+            ipc::perf_report,
+            ipc::perf_delete,
             stormap::storage_map_scan,
             stormap::storage_map_cancel
         ])
@@ -183,6 +191,7 @@ fn run() -> tauri::Result<()> {
                 app_history: Mutex::new(apphistory::AppHistory::open(&app_data)),
                 rules: Mutex::new(rules::Rules::open(&app_data)),
                 watchdog: Mutex::new(watchdog::Watchdog::new()),
+                perf: Mutex::new(perf::Store::open(&app_data)),
                 events: Mutex::new(None),
                 tray: Mutex::new(TrayManager::new()),
                 main_visible: AtomicBool::new(false),
@@ -256,6 +265,7 @@ fn on_exit(app: &AppHandle) {
         history.flush();
         drop(history);
         state.app_history.lock().unwrap_or_else(|p| p.into_inner()).flush();
+        state.perf.lock().unwrap_or_else(|p| p.into_inner()).flush();
         // A paused app must not outlive the program that paused it. A crash skips this; the
         // list on disk catches that case at the next start (rules.rs).
         state.rules.lock().unwrap_or_else(|p| p.into_inner()).resume_all();
@@ -372,6 +382,7 @@ fn spawn_sampler(app: AppHandle) {
                 };
 
                 *state.latest.write().unwrap_or_else(|p| p.into_inner()) = Some(snapshot.clone());
+                perf::record(&state, &snapshot);
                 *state.processes.write().unwrap_or_else(|p| p.into_inner()) = sampler.processes().to_vec();
                 state.history.lock().unwrap_or_else(|p| p.into_inner()).record(&snapshot);
                 {
