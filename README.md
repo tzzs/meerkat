@@ -46,6 +46,8 @@ share the same live data, and a 30-day history says what happened while you were
   Meerkat to Claude Code and other MCP clients. They can ask what is using the machine, what
   holds a port, what an app did this week and what Windows logged. It is read-only: the one
   action, quitting an app, is a question the user answers in Meerkat's own window.
+- **Game performance sessions.** Record one app or the foreground window while you play. Read a
+  report afterwards with the findings and the fluctuation of every metric.
 
 Nothing is faked: a reading Windows does not give an unprivileged process is shown as unavailable
 instead of as zero. Processes are read from the kernel's own table, so Defender, Windows Update
@@ -58,6 +60,28 @@ passed off as the processor; the GPU's own temperature, fan and live power come 
 library without elevation.
 
 Meerkat has no account, no telemetry and makes no network requests.
+
+## Game performance sessions
+
+Open the Performance tab. Choose the app you want to watch, or leave Meerkat following the
+foreground window. Press Start before the game and Stop when you finish. The tab keeps a live
+readout while a session runs and lists finished sessions underneath. Open one to see the verdict,
+the findings and a chart for every metric.
+
+CPU and GPU usage, memory use, VRAM use and GPU temperature come from Windows and the vendor
+library. A reading that cannot be made stays unavailable. Two readings need a source outside
+Meerkat.
+
+FPS comes from a PresentMon CSV when PresentMon is writing one to `presentmon.csv` in Meerkat's
+data directory. Start that capture before the session. Without it the report marks FPS as
+unavailable and leaves out FPS findings. Meerkat never uses the monitor refresh rate as a
+substitute for a measured frame rate.
+
+CPU package temperature has no user-mode API on Windows, so the report leaves it unavailable
+rather than passing a chassis sensor off as the processor. GPU temperature comes from NVML on
+NVIDIA cards.
+
+Sessions are stored in `perf-sessions.json` in the data directory. The newest 30 are kept.
 
 ## Requirements
 
@@ -113,6 +137,7 @@ User data is in `%APPDATA%\com.tzz.meerkat\`:
 | `apps.db` | what each *app* did, per minute for a day and per ten minutes for 30, in SQLite |
 | `daily.json` | bytes moved per local day, for the 7- and 30-day totals |
 | `insights.json` | the "worth a look" list |
+| `perf-sessions.json` | finished game sessions, their samples and their reports, newest 30 kept |
 | `rules.json` | how an app should run (efficiency mode, priority, muted alerts) |
 | `audio-volumes.json` | remembered per-app volumes |
 | `logs/meerkat.log` | diagnostics (rotated at 512 KiB); the last lines are in Settings → About → Copy report |
