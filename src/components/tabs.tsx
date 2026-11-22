@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
+  cpuDisplay,
   formatBytes,
   formatDuration,
   formatLinkSpeed,
@@ -10,6 +11,7 @@ import {
   type UnitPrefs,
 } from "../lib/format";
 import { appLabel, forLists } from "../lib/apps";
+import { CPU_AVERAGE_SAMPLES, useCpuAverage } from "../lib/cpu-average";
 import { ipc, listenEvent } from "../lib/ipc";
 import { formatHourLabel, iconPathForKey, rankingByHour, type RankingMetric } from "../lib/ranking";
 import { buildSeries, formatAxisTime, formatHistoryValue, historyCeiling, historyUnit } from "../lib/series";
@@ -23,7 +25,7 @@ import { capacityTrend, sumDays } from "../lib/totals";
 import { portMatches, portRows } from "../lib/ports";
 import { useLoaded } from "../lib/use-loaded";
 import type { Translate } from "../i18n";
-import { MemoryMap } from "./memory-map";
+import { AppTreemap } from "./app-treemap";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import {
@@ -528,12 +530,16 @@ function historyFor(snapshot: NonNullable<ReturnType<typeof useStore>["snapshot"
   }
 }
 
+/** The tab before the first sample passes this list; a fresh `[]` per render would re-fire the average. */
+const NO_APPS: readonly AppInfo[] = [];
+
 export function CpuTab() {
   const { snapshot, settings, units, t } = useStore();
   const order = visibleSections(settings, "cpu");
   const [range, setRange] = useTabState("cpu", "range", 3600);
   const [metric, setMetric] = useTabState<AppMetric>("cpu", "metric", "cpu");
   const apps = useApps();
+  const averages = useCpuAverage(snapshot?.apps ?? NO_APPS);
   if (!snapshot) return <Missing />;
   const totalBusy = snapshot.cpu.userPercent + snapshot.cpu.privilegedPercent;
 
@@ -560,6 +566,29 @@ export function CpuTab() {
           <p className="hint faint">{t("cpu.queueHelp")}</p>
         </Card>
       </div>
+
+      <Card title={t("cpuMap.title")} tone={TONE.cpu}>
+        <AppTreemap
+          apps={snapshot.apps}
+          valueOf={(app) => averages.get(app.key) ?? 0}
+          label={t("cpuMap.title")}
+          tone={TONE.cpu}
+          format={(value) => formatPercent(cpuDisplay(value, units), units.locale, value >= 10 ? 0 : 1)}
+          caption={(mapped) =>
+            t("cpuMap.help", {
+              seconds: CPU_AVERAGE_SAMPLES,
+              mapped: formatPercent(cpuDisplay(mapped, units), units.locale, 1),
+            })
+          }
+          levelCaption={(count, mapped) =>
+            t("cpuMap.levelHelp", {
+              count,
+              value: formatPercent(cpuDisplay(mapped, units), units.locale, 1),
+              seconds: CPU_AVERAGE_SAMPLES,
+            })
+          }
+        />
+      </Card>
 
       <Sections
         order={order}
@@ -629,7 +658,22 @@ export function MemoryTab({ search }: { search?: string }) {
       </div>
 
       <Card title={t("memoryMap.title")} tone={TONE.memory}>
-        <MemoryMap apps={snapshot.apps} inUseBytes={m.inUseBytes} />
+        <AppTreemap
+          apps={snapshot.apps}
+          valueOf={(app) => app.memoryBytes}
+          label={t("memoryMap.title")}
+          tone={TONE.memory}
+          format={(value) => formatBytes(value, units)}
+          caption={(mapped) =>
+            t("memoryMap.help", {
+              mapped: formatBytes(mapped, units),
+              inUse: formatBytes(m.inUseBytes, units),
+            })
+          }
+          levelCaption={(count, mapped) =>
+            t("memoryMap.levelHelp", { count, value: formatBytes(mapped, units) })
+          }
+        />
       </Card>
 
       <Sections

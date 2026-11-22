@@ -570,40 +570,41 @@
   gap: var(--sp-3);
 }
 
-/* ---------- memory map ---------- */
+/* ---------- app maps ---------- */
 
-.memory-map-card {
+.app-map-card {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
 }
-.memory-map-trail {
+.app-map-trail {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
 }
-.memory-map {
+.app-map {
   position: relative;
   height: 260px;
   border-radius: var(--r-md);
   overflow: hidden;
   background: var(--surface-3);
 }
-.mem-box {
-  background: color-mix(in srgb, var(--m-memory) var(--tint), var(--surface-2));
+/* One map serves the memory and CPU tabs: the card sets --map-tone to that metric's hue. */
+.treemap-box {
+  background: color-mix(in srgb, var(--map-tone) var(--tint), var(--surface-2));
   cursor: pointer;
   font: inherit;
   text-align: left;
   appearance: none;
 }
-.mem-box:hover {
+.treemap-box:hover {
   filter: brightness(1.06);
 }
-.mem-box:focus-visible {
+.treemap-box:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.mem-box.other {
+.treemap-box.other {
   color: var(--text-2);
   cursor: pointer;
 }

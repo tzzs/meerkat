@@ -1,13 +1,13 @@
-// Reads the memory map out of the running window and takes the acceptance shots: where the
-// card sits, how many boxes it drew, whether any is a sliver, that a box opens the app detail,
-// that the folded box drills into its own map and comes back, and the same map in the dark
-// theme.
+// Reads an app map out of the running window and takes the acceptance shots: where the card
+// sits, how many boxes it drew, whether any is a sliver, that a box opens the app detail, that
+// the folded box drills into its own map and comes back, and the same map in the dark theme.
 //
-//   MEERKAT_CDP=9334 node scripts/map-probe.mjs shots/map
+//   MEERKAT_CDP=9334 node scripts/treemap-probe.mjs shots/map 内存
+//   MEERKAT_CDP=9334 node scripts/treemap-probe.mjs shots/cpu 处理器
 import { writeFileSync } from "node:fs";
 
 const PORT = process.env.MEERKAT_CDP ?? "9334";
-const base = process.argv[2] ?? "shots/map";
+const [base = "shots/map", label = "内存"] = process.argv.slice(2);
 const lightPath = `${base}-light.png`;
 const darkPath = `${base}-dark.png`;
 
@@ -46,9 +46,9 @@ const evaluate = async (expression) => {
 };
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const openMemory = () =>
+const openTab = () =>
   evaluate(`(() => {
-    const b = [...document.querySelectorAll('[role="tab"]')].find((n) => /内存|Memory/.test(n.textContent.trim()));
+    const b = [...document.querySelectorAll('[role="tab"]')].find((n) => n.textContent.trim().includes(${JSON.stringify(label)}));
     if (!b) return false;
     b.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     b.click();
@@ -80,9 +80,9 @@ await wait(600);
 
 // The window can be showing another tab (the app remembers where it was), so the map is
 // checked for rather than assumed.
-if (!(await openMemory())) console.log("no Memory tab found");
+if (!(await openTab())) console.log(`no ${label} tab found`);
 await wait(1200);
-if (!(await evaluate(`Boolean(document.querySelector(".memory-map"))`))) await openMemory();
+if (!(await evaluate(`Boolean(document.querySelector(".app-map"))`))) await openTab();
 await wait(800);
 
 const read = () =>
@@ -92,8 +92,8 @@ const read = () =>
       title: s.querySelector("h3")?.textContent?.trim() ?? "",
       top: Math.round(s.getBoundingClientRect().top + scrollY),
     }));
-    const map = document.querySelector(".memory-map");
-    const boxes = [...(map?.querySelectorAll(".mem-box") ?? [])].map((b) => {
+    const map = document.querySelector(".app-map");
+    const boxes = [...(map?.querySelectorAll(".treemap-box") ?? [])].map((b) => {
       const r = b.getBoundingClientRect();
       return {
         label: b.querySelector(".map-box-name")?.textContent?.trim() ?? "",
@@ -120,11 +120,11 @@ const read = () =>
 
 const readLevel = () =>
   evaluate(`(() => {
-    const map = document.querySelector(".memory-map");
-    const trail = document.querySelector(".memory-map-trail");
-    const other = map?.querySelector(".mem-box.other");
+    const map = document.querySelector(".app-map");
+    const trail = document.querySelector(".app-map-trail");
+    const other = map?.querySelector(".treemap-box.other");
     return {
-      boxCount: map?.querySelectorAll(".mem-box").length ?? 0,
+      boxCount: map?.querySelectorAll(".treemap-box").length ?? 0,
       back: Boolean(trail?.querySelector("button")),
       help: map?.parentElement?.querySelector(".hint")?.textContent?.trim() ?? "",
       other: other
@@ -139,12 +139,12 @@ const readLevel = () =>
 const root = await read();
 console.log(JSON.stringify(root, null, 2));
 
-await evaluate(`document.querySelector(".memory-map")?.scrollIntoView({ block: "center" }); true`);
+await evaluate(`document.querySelector(".app-map")?.scrollIntoView({ block: "center" }); true`);
 await wait(900);
 await shoot(lightPath);
 
 const clicked = await evaluate(`(() => {
-  const box = [...document.querySelectorAll(".mem-box")].find((b) => b.tagName === "BUTTON" && b.querySelector(".map-box-name"));
+  const box = [...document.querySelectorAll(".treemap-box")].find((b) => b.tagName === "BUTTON" && b.querySelector(".map-box-name"));
   if (!box) return "";
   const name = box.querySelector(".map-box-name").textContent.trim();
   box.click();
@@ -157,7 +157,7 @@ await evaluate(`document.querySelector('[role="dialog"] [aria-label], [role="dia
 await wait(600);
 
 const entered = await evaluate(`(() => {
-  const other = document.querySelector(".mem-box.other");
+  const other = document.querySelector(".treemap-box.other");
   if (!other) return "";
   const size = other.querySelector(".map-box-size")?.textContent?.trim() ?? "";
   other.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
@@ -176,7 +176,7 @@ if (!entered) {
 
   if (levelOne.other) {
     await evaluate(
-      `document.querySelector(".mem-box.other").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })); true`,
+      `document.querySelector(".treemap-box.other").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })); true`,
     );
     await wait(900);
     const levelTwo = await readLevel();
@@ -184,14 +184,14 @@ if (!entered) {
   }
 
   for (let i = 0; i < 3; i++) {
-    if (!(await evaluate(`Boolean(document.querySelector(".memory-map-trail button"))`))) break;
-    await evaluate(`document.querySelector(".memory-map-trail button").click(); true`);
+    if (!(await evaluate(`Boolean(document.querySelector(".app-map-trail button"))`))) break;
+    await evaluate(`document.querySelector(".app-map-trail button").click(); true`);
     await wait(600);
   }
   const returned = await evaluate(`(() => {
-    const other = document.querySelector(".mem-box.other");
+    const other = document.querySelector(".treemap-box.other");
     return {
-      trail: Boolean(document.querySelector(".memory-map-trail")),
+      trail: Boolean(document.querySelector(".app-map-trail")),
       text: other?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
     };
   })()`);
@@ -207,7 +207,7 @@ if (!entered) {
 await evaluate(`document.documentElement.setAttribute("data-theme", "dark"); true`);
 await wait(600);
 await shoot(darkPath);
-console.log("dark box fill:", await evaluate(`getComputedStyle(document.querySelector(".mem-box")).backgroundColor`));
+console.log("dark box fill:", await evaluate(`getComputedStyle(document.querySelector(".treemap-box")).backgroundColor`));
 await evaluate(`document.documentElement.removeAttribute("data-theme"); true`);
 
 socket.close();
