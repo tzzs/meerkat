@@ -464,3 +464,158 @@ pub struct StorageMap {
     pub cancelled: bool,
     pub boxes: Vec<StorageMapBox>,
 }
+
+// ---- Game performance sessions (src/perf.rs) -------------------------------------------------
+// One session is one bounded monitoring run. The state is a machine: idle -> recording ->
+// reported. A stopped session keeps its samples so the report can be reopened later.
+
+/// Which application a session measures.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PerfTargetMode {
+    /// Follow whichever application owns the foreground window at each tick.
+    #[default]
+    Foreground,
+    /// Watch one application chosen by its stable key for the whole session.
+    App,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfTarget {
+    pub mode: PerfTargetMode,
+    /// The key chosen in `App` mode; absent in `Foreground` mode.
+    pub app_key: Option<String>,
+    /// The name shown in the session list and the report.
+    pub name: String,
+    /// The application actually measured at the last tick; changes while following.
+    pub current_app_key: Option<String>,
+}
+
+/// Where a frame rate came from. `None` means no measurement, never a guessed number.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FpsSource {
+    #[default]
+    None,
+    /// The last `MsBetweenPresents` of a PresentMon CSV Meerkat started for this process.
+    PresentMon,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfSample {
+    pub at_ms: u64,
+    pub fps: Option<f64>,
+    pub fps_source: FpsSource,
+    /// Whole machine, so the number matches the Overview tab.
+    pub cpu_percent: f64,
+    /// The measured application's share of all logical processors.
+    pub app_cpu_percent: Option<f64>,
+    /// Windows exposes no CPU package temperature to an unprivileged process; None is honest.
+    pub cpu_temp_c: Option<f64>,
+    /// Whole machine; `app_gpu_percent` is the target's own engine share when it can be attributed.
+    pub gpu_percent: Option<f64>,
+    pub app_gpu_percent: Option<f64>,
+    pub gpu_temp_c: Option<f64>,
+    pub memory_percent: f64,
+    pub app_memory_bytes: Option<u64>,
+    pub vram_percent: Option<f64>,
+    pub vram_used_bytes: Option<u64>,
+    pub vram_total_bytes: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PerfVerdict {
+    Healthy,
+    Warning,
+    Problem,
+    #[default]
+    Inconclusive,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PerfIssueKind {
+    FpsLow,
+    FpsUnstable,
+    CpuBound,
+    GpuBound,
+    VramPressure,
+    GpuHot,
+    MemoryPressure,
+    FpsUnavailable,
+}
+
+/// A finding with its evidence. The backend never sends prose: `message_key` is translated in the UI.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfIssue {
+    pub kind: PerfIssueKind,
+    pub verdict: PerfVerdict,
+    pub message_key: String,
+    /// Which metric this finding is about, so the UI can place the number beside it.
+    pub metric: String,
+    pub value: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfStat {
+    pub key: String,
+    pub available: bool,
+    pub min: Option<f64>,
+    pub avg: Option<f64>,
+    pub max: Option<f64>,
+    pub p95: Option<f64>,
+    pub last: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfReport {
+    pub session_id: String,
+    pub verdict: PerfVerdict,
+    pub headline_key: String,
+    pub issues: Vec<PerfIssue>,
+    pub stats: Vec<PerfStat>,
+    pub duration_seconds: u64,
+    pub sample_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfSession {
+    pub id: String,
+    pub target: PerfTarget,
+    pub started_at_ms: u64,
+    pub ended_at_ms: Option<u64>,
+    pub samples: Vec<PerfSample>,
+    pub report: Option<PerfReport>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfSessionSummary {
+    pub id: String,
+    pub target_name: String,
+    pub mode: PerfTargetMode,
+    pub started_at_ms: u64,
+    pub ended_at_ms: Option<u64>,
+    pub sample_count: usize,
+    pub verdict: PerfVerdict,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfStatus {
+    pub active: bool,
+    pub session_id: Option<String>,
+    pub target_name: String,
+    pub mode: PerfTargetMode,
+    pub current_app_key: Option<String>,
+    pub sample_count: usize,
+    pub started_at_ms: Option<u64>,
+    pub latest: Option<PerfSample>,
+}
