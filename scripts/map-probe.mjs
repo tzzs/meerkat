@@ -66,6 +66,12 @@ const shoot = async (path) => {
 await send("Page.enable");
 await send("Runtime.enable");
 
+// CDP answers before the window's first paint on a cold start, so the tab strip is waited for.
+for (let i = 0; i < 40; i++) {
+  if (await evaluate(`document.querySelectorAll('[role="tab"]').length > 0`)) break;
+  await wait(500);
+}
+
 // A detail sheet left open by another run would eat the first shot.
 await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
