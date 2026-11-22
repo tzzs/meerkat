@@ -23,6 +23,7 @@ import { capacityTrend, sumDays } from "../lib/totals";
 import { portMatches, portRows } from "../lib/ports";
 import { useLoaded } from "../lib/use-loaded";
 import type { Translate } from "../i18n";
+import { MemoryMap } from "./memory-map";
 import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import {
@@ -626,6 +627,10 @@ export function MemoryTab({ search }: { search?: string }) {
           </div>
         </Card>
       </div>
+
+      <Card title={t("memoryMap.title")} tone={TONE.memory}>
+        <MemoryMap apps={snapshot.apps} inUseBytes={m.inUseBytes} />
+      </Card>
 
       <Sections
         order={order}
