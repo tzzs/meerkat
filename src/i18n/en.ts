@@ -338,6 +338,10 @@ const en = {
   "memoryMap.help": "Boxes are apps' working sets, and smaller apps share one box. Shared pages count in each app, so the {mapped} mapped here is not the machine's {inUse} in use.",
   "memoryMap.other": "Everything else",
   "memoryMap.otherHint": "{count, plural, one {# app} other {# apps}}, {bytes}",
+  "memoryMap.back": "Back",
+  "memoryMap.enter": "Double-click to open",
+  "memoryMap.levelHelp":
+    "{count, plural, one {# app} other {# apps}}, {value} in total. Shared pages count in each app.",
   "memoryMap.empty": "No app memory measured yet.",
   "disk.title": "Disk",
   "disk.dailyHelp": "Meerkat adds up every byte moved since midnight.",
