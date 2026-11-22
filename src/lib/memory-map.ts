@@ -8,7 +8,7 @@ export const MIN_SHARE = 0.005;
 
 export type MemoryBox =
   | { kind: "app"; bytes: number; share: number; rect: Rect; app: AppInfo }
-  | { kind: "other"; bytes: number; share: number; count: number; rect: Rect };
+  | { kind: "other"; bytes: number; share: number; rect: Rect; apps: AppInfo[] };
 
 export interface MemoryMapData {
   boxes: MemoryBox[];
@@ -50,8 +50,8 @@ export function memoryMap(apps: readonly AppInfo[]): MemoryMapData {
       kind: "other",
       bytes: otherBytes,
       share: otherBytes / mappedBytes,
-      count: folded.length,
       rect: rects[named.length],
+      apps: folded,
     });
   }
 
