@@ -609,7 +609,7 @@
 }
 .map-box-enter {
   font-size: 10px;
-  opacity: 0.72;
+  opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
