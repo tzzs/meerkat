@@ -16,6 +16,7 @@ import { SoundTab } from "./components/sound";
 import { BluetoothTab } from "./components/bluetooth";
 import { AppDetailSheet } from "./components/app-detail";
 import { HistoryTab } from "./components/history";
+import { PerfTab } from "./components/perf";
 
 /** The hue each tab wears in the bar's dot and, when it is on screen, its fill. */
 const TAB_TONE: Record<string, string> = {
@@ -29,6 +30,7 @@ const TAB_TONE: Record<string, string> = {
   battery: "var(--m-battery)",
   sound: "var(--m-gpu)",
   bluetooth: "var(--m-network)",
+  perf: "var(--m-gpu)",
 };
 
 /** `?tab=` lets a probe open the window on a given tab; it outranks the setting. */
@@ -311,6 +313,9 @@ export default function App() {
             </TabsContent>
             <TabsContent value="bluetooth">
               <BluetoothTab />
+            </TabsContent>
+            <TabsContent value="perf">
+              <PerfTab />
             </TabsContent>
           </>
         )}

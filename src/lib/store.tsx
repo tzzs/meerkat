@@ -48,6 +48,8 @@ export const fallbackSettings: Settings = {
       { id: "gpu", visible: true, sections: [] },
       { id: "battery", visible: true, sections: [] },
       { id: "sound", visible: true, sections: [] },
+      { id: "bluetooth", visible: true, sections: [] },
+      { id: "perf", visible: true, sections: [] },
     ],
   },
   alerts: {
