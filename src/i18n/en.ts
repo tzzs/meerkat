@@ -336,13 +336,18 @@ const en = {
   "memory.pressureHelp": "How hard the machine is working to keep things in RAM.",
   "memoryMap.title": "Memory map",
   "memoryMap.help": "Boxes are apps' working sets, and smaller apps share one box. Shared pages count in each app, so the {mapped} mapped here is not the machine's {inUse} in use.",
-  "memoryMap.other": "Everything else",
-  "memoryMap.otherHint": "{count, plural, one {# app} other {# apps}}, {bytes}",
-  "memoryMap.back": "Back",
-  "memoryMap.enter": "Double-click to open",
   "memoryMap.levelHelp":
     "{count, plural, one {# app} other {# apps}}, {value} in total. Shared pages count in each app.",
-  "memoryMap.empty": "No app memory measured yet.",
+  "cpuMap.title": "CPU map",
+  "cpuMap.help":
+    "Boxes are apps' CPU use, averaged over the last {seconds} seconds. The apps shown use {mapped} in total.",
+  "cpuMap.levelHelp":
+    "{count, plural, one {# app} other {# apps}}, {value} in total, averaged over the last {seconds} seconds.",
+  "treemap.other": "Everything else",
+  "treemap.otherHint": "{count, plural, one {# app} other {# apps}}, {value}",
+  "treemap.back": "Back",
+  "treemap.enter": "Double-click to open",
+  "treemap.empty": "Nothing measured yet.",
   "disk.title": "Disk",
   "disk.dailyHelp": "Meerkat adds up every byte moved since midnight.",
   "storageMap.help": "Adds up every folder on the volume to find what is taking the space. Reading a full drive takes minutes, so it runs only when you ask.",

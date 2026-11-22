@@ -27,9 +27,9 @@ share the same live data, and a 30-day history says what happened while you were
 - **Storage map** — a treemap of what is taking a chosen volume's space, walked on demand with a
   progress read and a cancel, the free space drawn beside the folders, and whatever could not be
   read shown as unknown rather than folded into either. Read-only: it names, it never deletes.
-- **Memory map** — a treemap of the programs holding RAM, sized by each app's working set, with
-  the smaller apps folded into one box you can double-click to open. Shared pages count in more
-  than one app, and the caption says so.
+- **Memory and CPU maps** — treemaps of the programs holding RAM and using the CPU. The memory
+  map is sized by working set and says shared pages count more than once; the CPU map is sized by
+  a five-second average. The smaller apps fold into one box you can double-click to open.
 - **Runaway** — dev processes stuck long enough to be worth naming (a core pinned for a quarter of
   an hour, a leak past 8 GB and still climbing, a server holding a port whose project is gone),
   each with the evidence and a way to its detail. It never ends anything itself.
