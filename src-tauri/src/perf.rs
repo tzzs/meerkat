@@ -371,7 +371,9 @@ fn build_sample(snapshot: &Snapshot, app: Option<&AppInfo>, data_dir: &Path) -> 
         fps,
         fps_source,
         cpu_percent: snapshot.cpu.total_percent,
-        app_cpu_percent: app.map(|app| app.cpu_percent),
+        // App CPU arrives as a sum of per-core shares, so a game using every core reads
+        // several hundred. The report is in whole-machine percent, like the CPU tile.
+        app_cpu_percent: app.map(|app| app.cpu_percent / snapshot.machine.logical_cores.max(1) as f64),
         cpu_temp_c: snapshot.temperature.cpu_celsius,
         gpu_percent: snapshot.gpu.total_percent,
         app_gpu_percent,
@@ -788,6 +790,42 @@ mod tests {
         let mut store = Store::open(&dir);
         assert!(store.start(PerfTargetMode::App, Some("missing".into()), &test_snapshot()).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn app_cpu_is_reported_as_a_share_of_the_whole_machine() {
+        let mut snapshot = test_snapshot();
+        snapshot.machine.logical_cores = 20;
+        snapshot.apps = vec![test_app(1_000.0)];
+        let sample = build_sample(&snapshot, snapshot.apps.first(), std::path::Path::new("."));
+        assert_eq!(sample.app_cpu_percent, Some(50.0));
+    }
+
+    fn test_app(cpu_percent: f64) -> AppInfo {
+        AppInfo {
+            key: "game".into(),
+            name: "Game".into(),
+            exe_path: "C:\\game.exe".into(),
+            kind: crate::models::AppKind::App,
+            main_pid: 42,
+            process_count: 1,
+            cpu_percent,
+            memory_bytes: 1_000,
+            read_bytes_per_second: 0.0,
+            write_bytes_per_second: 0.0,
+            read_bytes_total: 0,
+            write_bytes_total: 0,
+            connections: 0,
+            listening_ports: Vec::new(),
+            oldest_started_at_ms: None,
+            windows: Vec::new(),
+            pids: vec![42],
+            unmeasured_processes: 0,
+            services: Vec::new(),
+            can_quit: true,
+            control: Default::default(),
+            project: None,
+        }
     }
 
     fn test_snapshot() -> Snapshot {

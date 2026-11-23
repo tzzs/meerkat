@@ -1362,3 +1362,288 @@
   border-radius: var(--r-card);
   box-shadow: var(--card-shadow);
 }
+
+/* ---------- performance console ---------- */
+
+/* The control deck: what to watch on the left, the session on the right. Two columns rather
+   than one long row, so the picker's list has somewhere to grow and the action button does
+   not slide sideways when it does. */
+.perf-deck {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-5);
+}
+.perf-deck > * {
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .perf-deck {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-4);
+  }
+}
+
+/* The two modes are one control, so they share a track. The chosen chip keeps the accent
+   tint the ToggleChip already gives it. */
+.perf-mode {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+}
+.perf-mode [role="radiogroup"] {
+  gap: 2px;
+}
+.perf-mode [data-state="off"]:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.perf-note {
+  margin: var(--sp-2) 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.perf-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.perf-picker .find {
+  width: 100%;
+  min-width: 0;
+}
+.perf-apps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+.perf-app {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  transition: background var(--t-fast);
+}
+.perf-app:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.perf-app[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.perf-app:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: -2px;
+}
+.perf-app:disabled {
+  opacity: 0.55;
+}
+.perf-app-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.perf-app-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-app-meta {
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-app-check {
+  color: var(--accent);
+  flex: none;
+}
+.perf-picker-count {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.perf-session {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+}
+.perf-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.perf-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-3);
+}
+.perf-state.live .perf-state-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  animation: perf-pulse 2s var(--ease) infinite;
+}
+.perf-state.saved .perf-state-dot {
+  background: var(--accent);
+}
+@keyframes perf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.perf-session-target {
+  margin: var(--sp-2) 0 0;
+  max-width: 100%;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A duration can be long ("1 小时 2 分"), so the figure gives way rather than the column. */
+.perf-elapsed {
+  margin-top: 2px;
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 1.05;
+}
+.perf-action {
+  margin-top: var(--sp-3);
+}
+.perf-error {
+  margin: var(--sp-2) 0 0;
+  font-size: 11.5px;
+  color: var(--m-danger);
+}
+
+.perf-strip {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+}
+.perf-strip-target {
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-strip-elapsed {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.perf-table-note {
+  margin: 0 0 var(--sp-3);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.perf-table th {
+  padding: 0 var(--sp-2) 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.perf-table td {
+  padding: 8px var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  vertical-align: middle;
+}
+.perf-table th:first-child,
+.perf-table td:first-child {
+  padding-left: 0;
+}
+.perf-table th:last-child,
+.perf-table td:last-child {
+  padding-right: 0;
+}
+.perf-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.perf-table tbody tr:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+/* Which row the sheet is showing, so the table and the destination stay connected. */
+.perf-table tbody tr[data-open] {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.perf-table .perf-col-right {
+  text-align: right;
+}
+.perf-cell-target {
+  display: block;
+  font-weight: 550;
+}
+.perf-cell-sub {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.perf-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
+
+.perf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  text-align: center;
+}
+.perf-empty-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+}
+.perf-empty-body {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
