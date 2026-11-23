@@ -1,6 +1,8 @@
 import type { Key } from "../i18n/en";
 import { formatBytes, formatPercent, formatTemp, type UnitPrefs } from "./format";
 import type {
+  AppInfo,
+  AppKind,
   PerfIssue,
   PerfReport,
   PerfSample,
@@ -177,4 +179,27 @@ export function perfIssueValue(issue: PerfIssue, units: UnitPrefs): string {
 /** A blank name means the backend had no window to name, so the caller's mode label takes over. */
 export function perfTargetLabel(target: Pick<PerfTarget, "mode" | "name">, fallback: string): string {
   return target.name.trim() || fallback;
+}
+
+/** Only the operating system's services and system processes are not worth monitoring. */
+const PICKABLE_KINDS: ReadonlySet<AppKind> = new Set<AppKind>(["app", "background", "packaged"]);
+
+/**
+ * The apps the picker offers, filtered by a name or executable path. A session is about one
+ * program, so the service hosts and system processes the rest of the window lists stay out.
+ */
+export function perfAppChoices<T extends Pick<AppInfo, "name" | "kind" | "exePath">>(
+  apps: readonly T[],
+  query: string,
+): T[] {
+  const needle = query.trim().toLowerCase();
+  return apps
+    .filter((app) => PICKABLE_KINDS.has(app.kind) && app.name.trim() !== "")
+    .filter(
+      (app) =>
+        needle === "" ||
+        app.name.toLowerCase().includes(needle) ||
+        app.exePath.toLowerCase().includes(needle),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

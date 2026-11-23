@@ -3,6 +3,7 @@ import { defaultUnits, type UnitPrefs } from "./format";
 import {
   formatPerfStat,
   formatPerfValue,
+  perfAppChoices,
   perfHeadlineKey,
   perfIssueKey,
   perfIssueValue,
@@ -10,7 +11,7 @@ import {
   perfTargetLabel,
   perfVerdictKey,
 } from "./perf";
-import type { PerfIssue, PerfReport, PerfSample, PerfSession, PerfStat } from "./types";
+import type { AppKind, PerfIssue, PerfReport, PerfSample, PerfSession, PerfStat } from "./types";
 
 const units: UnitPrefs = { ...defaultUnits, locale: "en-US" };
 
@@ -142,5 +143,37 @@ describe("the target shown in a session", () => {
 
   it("falls back to the mode label when no window could be named", () => {
     expect(perfTargetLabel({ mode: "foreground", name: "   " }, "Foreground window")).toBe("Foreground window");
+  });
+});
+
+describe("the apps a session can watch", () => {
+  const choice = (name: string, kind: AppKind, exePath = `C:\\Program Files\\${name}\\${name}.exe`) => ({
+    key: exePath,
+    name,
+    kind,
+    exePath,
+  });
+
+  it("offers programs and leaves services and system processes out", () => {
+    const apps = [
+      choice("Game", "app"),
+      choice("Launcher", "packaged"),
+      choice("Helper", "background"),
+      choice("Print Spooler", "service"),
+      choice("Registry", "system"),
+    ];
+    expect(perfAppChoices(apps, "").map((app) => app.name)).toEqual(["Game", "Helper", "Launcher"]);
+  });
+
+  it("matches an app by name or by executable path, ignoring case and surrounding spaces", () => {
+    const apps = [choice("Game", "app", "C:\\Games\\game.exe"), choice("Editor", "app", "C:\\Apps\\Editor\\editor.exe")];
+    expect(perfAppChoices(apps, "  GAM ").map((app) => app.name)).toEqual(["Game"]);
+    expect(perfAppChoices(apps, "apps\\editor").map((app) => app.name)).toEqual(["Editor"]);
+  });
+
+  it("sorts by name and answers an empty list when nothing matches", () => {
+    const apps = [choice("Zebra", "app"), choice("alpha", "app"), choice("Beta", "packaged")];
+    expect(perfAppChoices(apps, "").map((app) => app.name)).toEqual(["alpha", "Beta", "Zebra"]);
+    expect(perfAppChoices(apps, "nothing like this")).toEqual([]);
   });
 });
