@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/tzzs/meerkat/compare/meerkat-v0.2.0...meerkat-v0.3.0) (2026-11-24)
+
+
+### Features
+
+* **perf:** redesign the monitoring console ([#9](https://github.com/tzzs/meerkat/issues/9)) ([8dfc894](https://github.com/tzzs/meerkat/commit/8dfc89497198ff547ad116a763059e545cbc0259))
+
+
+### Bug Fixes
+
+* **styles:** draw the hairlines the palette rename stranded ([#11](https://github.com/tzzs/meerkat/issues/11)) ([0be7b82](https://github.com/tzzs/meerkat/commit/0be7b826598587e2f64d9ef5ee4f8e0cfbf019af))
+* the tray panel shows its tab strip, and each readout says which metric it is ([#12](https://github.com/tzzs/meerkat/issues/12)) ([7ada755](https://github.com/tzzs/meerkat/commit/7ada755dc612ae24bf1696fb80b8897ee3955def))
+
+
+### Performance Improvements
+
+* **perf:** the console stops rebuilding its picker and its saved sessions ([#13](https://github.com/tzzs/meerkat/issues/13)) ([0a7b546](https://github.com/tzzs/meerkat/commit/0a7b5467433560162077d55f3730d0abfb1d5499))
+
 ## [0.2.0](https://github.com/tzzs/meerkat/compare/meerkat-v0.1.0...meerkat-v0.2.0) (2026-11-23)
 
 
