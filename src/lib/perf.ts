@@ -107,8 +107,13 @@ function seriesFrom(samples: readonly PerfSample[], key: PerfMetricKey): number[
   return values;
 }
 
+/**
+ * A finished session's chart data. The backend thins it to the chart's own width — a long
+ * session holds tens of thousands of readings, and shipping them all moved 17 MB over IPC for
+ * one twenty-hour session and took the sheet half a minute to draw.
+ */
 export function perfSeries(session: PerfSession, key: PerfMetricKey): number[] {
-  return seriesFrom(session.samples, key);
+  return session.series.find((series) => series.key === key)?.values ?? [];
 }
 
 export function perfSampleSeries(samples: readonly PerfSample[], key: PerfMetricKey): number[] {

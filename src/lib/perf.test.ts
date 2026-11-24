@@ -8,6 +8,7 @@ import {
   perfHeadlineKey,
   perfIssueKey,
   perfIssueValue,
+  perfSampleSeries,
   perfSeries,
   perfTargetLabel,
   perfVerdictKey,
@@ -113,20 +114,24 @@ describe("figures a reader can see", () => {
 });
 
 describe("a session's series", () => {
+  // The backend thins the readings to the chart's width and skips the ones a metric was not
+  // available for; the sheet only has to find its key.
   const session: PerfSession = {
     id: "s1",
     target: { mode: "app", appKey: "game", name: "Game", currentAppKey: "game" },
     startedAtMs: 1000,
     endedAtMs: 4000,
-    samples: [
-      sample({ atMs: 1000, fps: 60, vramUsedBytes: 2_000_000_000 }),
-      sample({ atMs: 2000, fps: null, fpsSource: "none", vramUsedBytes: null }),
-      sample({ atMs: 3000, fps: 42, vramUsedBytes: 3_000_000_000 }),
+    sampleCount: 3,
+    series: [
+      { key: "fps", values: [60, 42] },
+      { key: "cpuTempC", values: [68, 68, 68] },
+      { key: "vramPercent", values: [50, 50, 50] },
+      { key: "vramUsedBytes", values: [2_000_000_000, 3_000_000_000] },
     ],
     report: null,
   };
 
-  it("skips samples where the metric was unavailable", () => {
+  it("hands back the metric the chart asked for", () => {
     expect(perfSeries(session, "fps")).toEqual([60, 42]);
     expect(perfSeries(session, "cpuTempC")).toEqual([68, 68, 68]);
   });
@@ -134,6 +139,24 @@ describe("a session's series", () => {
   it("keeps VRAM bytes separate from the percentage", () => {
     expect(perfSeries(session, "vramPercent")).toEqual([50, 50, 50]);
     expect(perfSeries(session, "vramUsedBytes")).toEqual([2_000_000_000, 3_000_000_000]);
+  });
+
+  it("draws nothing for a metric the session never measured", () => {
+    expect(perfSeries(session, "gpuTempC")).toEqual([]);
+  });
+});
+
+// The live tiles still chart the raw readings the status event carries; only a saved session
+// gets the backend's thinned series.
+describe("the live series", () => {
+  it("skips the readings where the metric was unavailable", () => {
+    const samples = [
+      sample({ fps: 60 }),
+      sample({ fps: null, fpsSource: "none" }),
+      sample({ fps: 30 }),
+    ];
+    expect(perfSampleSeries(samples, "fps")).toEqual([60, 30]);
+    expect(perfSampleSeries(samples, "cpuPercent")).toEqual([25, 25, 25]);
   });
 });
 

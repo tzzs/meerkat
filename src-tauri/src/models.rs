@@ -584,6 +584,18 @@ pub struct PerfReport {
     pub sample_count: usize,
 }
 
+/// One metric's shape across a session, thinned to what a chart can draw.
+///
+/// The sheet's chart is 240 units wide and a long session holds tens of thousands of readings,
+/// so the report carries this envelope instead of the readings: shipping every sample moved
+/// 17 MB over IPC for one twenty-hour session, and the sheet took half a minute to show.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfSeries {
+    pub key: String,
+    pub values: Vec<f64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PerfSession {
@@ -591,8 +603,20 @@ pub struct PerfSession {
     pub target: PerfTarget,
     pub started_at_ms: u64,
     pub ended_at_ms: Option<u64>,
-    pub samples: Vec<PerfSample>,
+    /// How many readings the session took, including the ones the series only summarises.
+    #[serde(default)]
+    pub sample_count: usize,
     pub report: Option<PerfReport>,
+    /// What the report's charts draw (see `PerfSeries`).
+    #[serde(default)]
+    pub series: Vec<PerfSeries>,
+    /// The readings themselves, held only while a session records: they are appended to a
+    /// journal so a crash loses nothing, and a finished session keeps its report and series
+    /// instead of them. Never written to the sessions file, which is why the file no longer
+    /// grows with the length of the sessions it lists. Files from the older format still carry
+    /// them, and `perf::Store::open` converts those.
+    #[serde(default, skip_serializing)]
+    pub samples: Vec<PerfSample>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
