@@ -203,3 +203,20 @@ export function perfAppChoices<T extends Pick<AppInfo, "name" | "kind" | "exePat
     )
     .sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/**
+ * What the app picker's rows actually show, as one string.
+ *
+ * The picker is rebuilt when this changes, and only then. The snapshot object itself is new
+ * every second, so keying the list on it would hand the rows a fresh array on every tick for
+ * figures they do not draw — which is what made the Performance tab drop a frame a second and
+ * stutter when its list was scrolled. `processCount` is part of it on purpose: a row that said
+ * "2 processes" while the app ran five would be a stale reading, not a stable one.
+ */
+export function pickerSignature(
+  apps: readonly Pick<AppInfo, "key" | "name" | "exePath" | "kind" | "processCount">[],
+): string {
+  return apps
+    .map((app) => `${app.key}\u0000${app.name}\u0000${app.exePath}\u0000${app.kind}\u0000${app.processCount}`)
+    .join("\u0001");
+}

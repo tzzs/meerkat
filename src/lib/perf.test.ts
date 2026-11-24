@@ -4,6 +4,7 @@ import {
   formatPerfStat,
   formatPerfValue,
   perfAppChoices,
+  pickerSignature,
   perfHeadlineKey,
   perfIssueKey,
   perfIssueValue,
@@ -175,5 +176,44 @@ describe("the apps a session can watch", () => {
     const apps = [choice("Zebra", "app"), choice("alpha", "app"), choice("Beta", "packaged")];
     expect(perfAppChoices(apps, "").map((app) => app.name)).toEqual(["alpha", "Beta", "Zebra"]);
     expect(perfAppChoices(apps, "nothing like this")).toEqual([]);
+  });
+});
+
+// The picker keeps its rows when this signature holds; the memo behind that is why the tab no
+// longer rebuilds ninety-odd rows on every snapshot. The test pins the contract: a fresh
+// snapshot with the same figures must produce the same string, and anything a row draws must
+// change it.
+describe("the picker's signature", () => {
+  const pick = (over: Record<string, unknown> = {}) => ({
+    key: "C:\\Apps\\editor.exe",
+    name: "Editor",
+    exePath: "C:\\Apps\\editor.exe",
+    kind: "app" as AppKind,
+    processCount: 3,
+    ...over,
+  });
+
+  it("ignores a new snapshot whose rows say the same thing", () => {
+    expect(pickerSignature([pick()])).toBe(pickerSignature([pick()]));
+    expect(pickerSignature([pick(), pick({ key: "b", name: "Browser", exePath: "b.exe" })])).toBe(
+      pickerSignature([pick(), pick({ key: "b", name: "Browser", exePath: "b.exe" })]),
+    );
+  });
+
+  it("changes when anything a row draws changes", () => {
+    const base = pickerSignature([pick()]);
+    expect(pickerSignature([pick({ processCount: 4 })])).not.toBe(base);
+    expect(pickerSignature([pick({ name: "Editor (x64)" })])).not.toBe(base);
+    expect(pickerSignature([pick({ exePath: "C:\\Other\\editor.exe" })])).not.toBe(base);
+    expect(pickerSignature([pick({ kind: "packaged" })])).not.toBe(base);
+    expect(pickerSignature([pick({ key: "other" })])).not.toBe(base);
+  });
+
+  it("sees a change of order or of count, and has one value for no apps", () => {
+    const a = pick();
+    const b = pick({ key: "b", name: "Browser", exePath: "b.exe" });
+    expect(pickerSignature([a, b])).not.toBe(pickerSignature([b, a]));
+    expect(pickerSignature([])).toBe("");
+    expect(pickerSignature([a])).not.toBe(pickerSignature([a, b]));
   });
 });
