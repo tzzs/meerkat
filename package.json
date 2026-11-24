@@ -7,6 +7,7 @@
     "dev": "vite dev",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
+    "check:css": "node scripts/check-css-tokens.mjs",
     "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portable.ps1",
     "preview": "vite preview",
     "tauri": "tauri"

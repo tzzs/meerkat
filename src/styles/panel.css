@@ -41,7 +41,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--line);
 }
 /* The chip name takes whatever room is left and ellipsises; the memory total never yields. */
 .panel-machine {
@@ -161,7 +161,7 @@
 
 .panel-apps {
   padding: 4px 8px 8px;
-  border-top: 1px solid var(--hairline);
+  border-top: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   /* The one flex child allowed to give up height: rows drop whole before the tab strip moves. */
@@ -213,7 +213,7 @@
   display: flex;
   gap: 2px;
   padding: 6px 8px;
-  border-top: 1px solid var(--hairline);
+  border-top: 1px solid var(--line);
   background: var(--bg-deep);
   overflow-x: auto;
 }

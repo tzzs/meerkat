@@ -46,7 +46,7 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--hairline-strong);
+    background: var(--line-strong);
     border: 3px solid transparent;
     background-clip: content-box;
     border-radius: 8px;
@@ -96,7 +96,7 @@
   padding: 0 var(--sp-4) 0 var(--sp-5);
   height: 46px;
   flex: none;
-  border-bottom: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--line);
   background: var(--bg);
 }
 
@@ -246,7 +246,7 @@
   flex-wrap: wrap;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
-  border: 1px dashed var(--hairline-strong);
+  border: 1px dashed var(--line-strong);
   border-radius: var(--r-md);
   color: var(--text-3);
   font-size: 12px;

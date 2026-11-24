@@ -49,7 +49,7 @@
   --accent-fill: color-mix(in srgb, var(--accent) 34%, transparent);
   --danger-tint: color-mix(in srgb, var(--m-danger) 14%, transparent);
   --warn-tint: color-mix(in srgb, var(--m-warn) 14%, transparent);
-  --danger-edge: color-mix(in srgb, var(--m-danger) 45%, var(--hairline));
+  --danger-edge: color-mix(in srgb, var(--m-danger) 45%, var(--line));
   /* What sits behind a dialog: the page colour pushed most of the way opaque. */
   --overlay: color-mix(in srgb, var(--bg-deep) 62%, transparent);
 }
