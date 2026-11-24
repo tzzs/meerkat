@@ -62,6 +62,10 @@ pub enum Layout {
 pub struct Frame<'a> {
     /// What is written on the icon: "16", "1.2M", "62°", "—". Empty draws no text.
     pub label: &'a str,
+    /// A short mark naming the metric, drawn beside the reading in the metric's own colour:
+    /// "C" for the processor, "M" for memory. Without it a row of figures says nothing about
+    /// which is which.
+    pub caption: Option<&'a str>,
     /// Oldest first. Fewer than two usable points means there is nothing to draw as a line.
     pub series: &'a [f64],
     /// The values that sit on the bottom and the top of the sparkline.
@@ -176,6 +180,7 @@ pub fn render(frame: &Frame) -> Rendered {
     let size = frame.size.clamp(16, 64);
     let side = size as usize;
     let mut text_layer = vec![0u8; side * side];
+    let mut mark_layer = vec![0u8; side * side];
     let mut line_layer = vec![0u8; side * side];
     let mut fill_layer = vec![0u8; side * side];
 
@@ -197,7 +202,26 @@ pub fn render(frame: &Frame) -> Rendered {
     let mut canvas = if label.is_empty() { None } else { Canvas::new(size * 5, size * 3) };
     let mut drawn = false;
     if let (Some(area), Some(canvas)) = (text_area, canvas.as_mut()) {
-        drawn = draw_label(canvas, label, area, MIN_EM, &mut text_layer, size);
+        // The mark names the metric the figure belongs to, in the metric's own colour. A row
+        // of bare figures in the notification area says nothing about which is which, and the
+        // tooltip only helps once the pointer is there.
+        //
+        // The reading has the claim on the space: the number is fitted into the whole area
+        // first, and the mark takes what is left over. A mark that would need more than that
+        // is left out rather than squeezing the figure.
+        let mut number_area = area;
+        let mut mark: Option<Mark> = None;
+        if let Some(caption) = frame.caption.filter(|m| !m.is_empty() && !label.is_empty()) {
+            if let Some((mark_ink, mark_em)) = fit_number_and_mark(canvas, caption, label, area) {
+                let width = (mark_ink.2 - mark_ink.0) + 1;
+                number_area = Area { x: area.x + width, y: area.y, w: area.w - width, h: area.h };
+                mark = Some(Mark { ink: mark_ink, em: mark_em, width });
+            }
+        }
+        drawn = draw_label(canvas, label, number_area, MIN_EM, &mut text_layer, size);
+        if let Some(mark) = mark {
+            draw_mark(canvas, frame.caption.unwrap_or_default(), &mark, number_area, &mut mark_layer, size);
+        }
         // A label that cannot be read at this size gives way to the graph, which gets the whole
         // square; the tooltip still carries the figure.
         if !drawn && has_series {
@@ -218,7 +242,7 @@ pub fn render(frame: &Frame) -> Rendered {
     let ink = if frame.light_bar { TEXT_ON_LIGHT } else { TEXT_ON_DARK };
     let pen = if frame.light_bar { darken(frame.hue, 0.58) } else { frame.hue };
     Rendered {
-        rgba: composite(side, &text_layer, &line_layer, &fill_layer, ink, pen),
+        rgba: composite(side, &text_layer, &mark_layer, &line_layer, &fill_layer, ink, pen),
         width: size as u32,
         height: size as u32,
     }
@@ -230,8 +254,16 @@ fn darken((r, g, b): (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
 }
 
 /// Layers over a transparent canvas into straight alpha: the line over its fill (one colour),
-/// then the text over that.
-fn composite(side: usize, text: &[u8], line: &[u8], fill: &[u8], ink: (u8, u8, u8), pen: (u8, u8, u8)) -> Vec<u8> {
+/// then the metric mark and the text over that.
+fn composite(
+    side: usize,
+    text: &[u8],
+    mark: &[u8],
+    line: &[u8],
+    fill: &[u8],
+    ink: (u8, u8, u8),
+    pen: (u8, u8, u8),
+) -> Vec<u8> {
     let mut rgba = vec![0u8; side * side * 4];
     for i in 0..side * side {
         let a_fill = fill[i] as f32 / 255.0 * FILL_ALPHA;
@@ -249,6 +281,29 @@ fn composite(side: usize, text: &[u8], line: &[u8], fill: &[u8], ink: (u8, u8, u
         rgba[i * 4 + 1] = channel(ink.1, pen.1);
         rgba[i * 4 + 2] = channel(ink.2, pen.2);
         rgba[i * 4 + 3] = (alpha * 255.0).round() as u8;
+    }
+
+    // The mark is the metric's own colour, laid over the text layer: it is a name, not a
+    // reading, so it does not take part in the text's alpha.
+    for i in 0..side * side {
+        let mark_alpha = mark[i] as f32 / 255.0;
+        if mark_alpha <= 0.0 {
+            continue;
+        }
+        let at = i * 4;
+        let existing_alpha = rgba[at + 3] as f32 / 255.0;
+        let alpha = mark_alpha + existing_alpha * (1.0 - mark_alpha);
+        if alpha <= 0.0 {
+            continue;
+        }
+        let keep = existing_alpha * (1.0 - mark_alpha) / alpha;
+        let share = mark_alpha / alpha;
+        let hues = [pen.0, pen.1, pen.2];
+        for channel in 0..3 {
+            rgba[at + channel] =
+                (rgba[at + channel] as f32 * keep + hues[channel] as f32 * share).round() as u8;
+        }
+        rgba[at + 3] = (alpha * 255.0).round() as u8;
     }
     rgba
 }
@@ -423,11 +478,115 @@ fn fit_text(canvas: &mut Canvas, text: &str, area: Area, min_em: i32) -> Option<
     measure(canvas, text, min_em, width, max_w, max_h)
 }
 
+/// The metric mark as it was measured: the glyph's box, the size it was drawn at, and the
+/// width of the column it takes beside the number.
+struct Mark {
+    ink: (i32, i32, i32, i32),
+    em: i32,
+    width: i32,
+}
+
+/// The number and its metric mark, fitted into `area` together: the mark's box and the size
+/// it is drawn at.
+///
+/// The number comes first and the mark takes what is left: a figure that cannot be read is
+/// worse than a figure without a name. The mark is never drawn smaller than a letter can be
+/// read, so a cell with no room for both gets the number alone.
+fn fit_number_and_mark(
+    canvas: &mut Canvas,
+    caption: &str,
+    label: &str,
+    area: Area,
+) -> Option<((i32, i32, i32, i32), i32)> {
+    let max_em = ((area.h as f32) * 0.9).round() as i32;
+    let max_em = max_em.clamp(MIN_EM, 64);
+    // The number is as large as it can be; the mark then fits into what it leaves.
+    for number_em in (MIN_EM..=max_em).rev() {
+        canvas.draw(label, number_em, 0);
+        let Some(number_ink) = canvas.ink() else { continue };
+        let number_width = number_ink.2 - number_ink.0;
+        if number_width + 3 > area.w {
+            // Too wide for the cell even on its own: squeeze it sideways, as `fit_text` does.
+            continue;
+        }
+        let spare = area.w - number_width - 1;
+        let Some((mark_ink, mark_em)) = fit_mark(canvas, caption, spare, area.h) else {
+            continue;
+        };
+        let mark_width = (mark_ink.2 - mark_ink.0) + 1;
+        let rest = Area { x: area.x + mark_width, y: area.y, w: area.w - mark_width, h: area.h };
+        // The number must still fit in what the mark leaves.
+        if fit_text(canvas, label, rest, MIN_EM).is_none() {
+            continue;
+        }
+        return Some((mark_ink, mark_em));
+    }
+    None
+}
+
+/// The metric mark, fitted into `spare` pixels of width beside the number: the largest size
+/// at which its glyph fits, and the box it was drawn in. None when it does not fit at all.
+fn fit_mark(canvas: &mut Canvas, caption: &str, spare: i32, height: i32) -> Option<((i32, i32, i32, i32), i32)> {
+    if spare < 3 {
+        return None;
+    }
+    let max_em = ((height as f32) * 0.55).round() as i32;
+    let max_em = max_em.clamp(6, MIN_EM);
+    for em in (6..=max_em).rev() {
+        canvas.draw(caption, em, 0);
+        let Some(ink) = canvas.ink() else { continue };
+        if (ink.2 - ink.0) + 1 <= spare && (ink.3 - ink.1) <= height - 2 {
+            return Some((ink, em));
+        }
+    }
+    None
+}
+
+/// Draws the metric mark beside the number: a small letter set on the number's baseline, in
+/// the metric's own colour.
+fn draw_mark(
+    canvas: &mut Canvas,
+    caption: &str,
+    mark: &Mark,
+    number_area: Area,
+    layer: &mut [u8],
+    side: i32,
+) {
+    let (left, top, right, bottom) = mark.ink;
+    canvas.draw(caption, mark.em, 0);
+    // Its own column, vertically centred on the number's own line.
+    let dy = number_area.y + (number_area.h - (bottom - top)) / 2 - top;
+    let dx = number_area.x - mark.width - left;
+    for y in (top - 1)..(bottom + 1) {
+        for x in (left - 1)..(right + 1) {
+            let (tx, ty) = (x + dx, y + dy);
+            if tx < 0 || ty < 0 || tx >= side || ty >= side {
+                continue;
+            }
+            let value = canvas.coverage(x, y);
+            let at = (ty * side + tx) as usize;
+            layer[at] = layer[at].max(value);
+        }
+    }
+}
+
 /// Draws `text` centred (by its ink, not by its line box) in `area` of `layer`.
 fn draw_label(canvas: &mut Canvas, text: &str, area: Area, min_em: i32, layer: &mut [u8], side: i32) -> bool {
     let Some((left, top, right, bottom)) = fit_text(canvas, text, area, min_em) else {
         return false;
     };
+    paint(canvas, area, (left, top, right, bottom), layer, side)
+}
+
+/// Puts the glyphs the canvas holds into `area` of `layer`, centred by their ink.
+fn paint(
+    canvas: &Canvas,
+    area: Area,
+    ink_box: (i32, i32, i32, i32),
+    layer: &mut [u8],
+    side: i32,
+) -> bool {
+    let (left, top, right, bottom) = ink_box;
     let dx = area.x + (area.w - (right - left)) / 2 - left;
     let dy = area.y + (area.h - (bottom - top)) / 2 - top;
     // One pixel more on each side, to carry the anti-aliasing fringe along.
@@ -554,7 +713,11 @@ mod tests {
     const GREEN: (u8, u8, u8) = (57, 135, 229);
 
     fn frame<'a>(label: &'a str, series: &'a [f64], layout: Layout, light_bar: bool, size: i32) -> Frame<'a> {
-        Frame { label, series, range: (0.0, 100.0), hue: GREEN, layout, light_bar, size }
+        Frame { label, caption: None, series, range: (0.0, 100.0), hue: GREEN, layout, light_bar, size }
+    }
+
+    fn marked_frame<'a>(label: &'a str, caption: &'a str, size: i32) -> Frame<'a> {
+        Frame { label, caption: Some(caption), series: &[], range: (0.0, 100.0), hue: GREEN, layout: Layout::Value, light_bar: false, size }
     }
 
     fn alpha(image: &Rendered, x: u32, y: u32) -> u8 {
@@ -570,6 +733,16 @@ mod tests {
         rows.flat_map(|y| (0..image.width).map(move |x| (x, y)))
             .filter(|(x, y)| alpha(image, *x, *y) > 0)
             .count()
+    }
+
+    /// The box around everything on the icon: (left, right).
+    fn ink_box(image: &Rendered) -> Option<(u32, u32)> {
+        let xs: Vec<u32> = (0..image.height)
+            .flat_map(|y| (0..image.width).map(move |x| (x, y)))
+            .filter(|(x, y)| alpha(image, *x, *y) > 40)
+            .map(|(x, _)| x)
+            .collect();
+        Some((*xs.iter().min()? as u32, *xs.iter().max()? as u32))
     }
 
     #[test]
@@ -597,6 +770,56 @@ mod tests {
 
     // The old renderer took alpha from max(r, g, b): ink #181A1E over black came out 12 % opaque
     // and the light bar's text was close to invisible.
+    #[test]
+    fn a_caption_marks_the_metric_without_squeezing_the_number() {
+        for size in [20, 24, 32] {
+            let plain = render(&frame("67", &[], Layout::Value, false, size));
+            let marked = render(&marked_frame("67", "C", size));
+            // The mark is there, in the metric's own colour.
+            assert!(
+                marked.rgba.chunks(4).any(|p| p[3] >= 200 && (p[0], p[1], p[2]) == GREEN),
+                "size {size}: the mark is drawn in the metric's colour",
+            );
+            // And the number is still there, in the taskbar's ink, at the size it would have
+            // had on its own: the mark does not squeeze it.
+            let plain_ink = ink_box(&plain).expect("the bare number is drawn");
+            let marked_ink = ink_box(&marked).expect("the marked number is drawn");
+            assert!(
+                marked_ink.1 - marked_ink.0 <= plain_ink.1 - plain_ink.0 + 2,
+                "size {size}: the number was squeezed: {} -> {}",
+                plain_ink.1 - plain_ink.0,
+                marked_ink.1 - marked_ink.0,
+            );
+        }
+    }
+
+    #[test]
+    fn the_mark_is_the_metrics_own_colour_and_the_number_stays_in_the_taskbars_ink() {
+        let marked = render(&marked_frame("67", "C", 24));
+        let hues: Vec<(u8, u8, u8)> = marked
+            .rgba
+            .chunks(4)
+            .filter(|p| p[3] >= 200)
+            .map(|p| (p[0], p[1], p[2]))
+            .collect();
+        assert!(
+            hues.iter().any(|c| *c == GREEN),
+            "the mark is drawn in the metric's colour: {hues:?}",
+        );
+        assert!(
+            hues.iter().any(|c| *c == TEXT_ON_DARK),
+            "the number keeps the taskbar's ink: {hues:?}",
+        );
+    }
+
+    #[test]
+    fn a_caption_that_cannot_fit_leaves_the_number_alone() {
+        // A long mark is a hint, not an excuse to lose the reading. "67" still gets drawn.
+        let marked = render(&marked_frame("67", "Temperature", 16));
+        let plain = render(&frame("67", &[], Layout::Value, false, 16));
+        assert_eq!(marked.rgba, plain.rgba, "an oversized hint changes nothing");
+    }
+
     #[test]
     fn a_glyph_is_opaque_in_the_ink_of_the_taskbar_it_is_drawn_for() {
         for (light, ink) in [(false, TEXT_ON_DARK), (true, TEXT_ON_LIGHT)] {
@@ -758,20 +981,22 @@ mod tests {
 
         struct Sample<'a> {
             label: &'a str,
+            caption: Option<&'a str>,
             series: &'a [f64],
             range: (f64, f64),
             hue: (u8, u8, u8),
             layout: Layout,
         }
         let samples = [
-            Sample { label: "16", series: &wave, range: (0.0, 100.0), hue: (57, 135, 229), layout: Layout::Both },
-            Sample { label: "62", series: &climbing, range: (0.0, 100.0), hue: (144, 133, 233), layout: Layout::Value },
-            Sample { label: "1.2M", series: &network, range: network_range, hue: (25, 158, 112), layout: Layout::Value },
-            Sample { label: "1.2M", series: &network, range: network_range, hue: (25, 158, 112), layout: Layout::Both },
-            Sample { label: "3", series: &idle, range: (0.0, 100.0), hue: (57, 135, 229), layout: Layout::Graph },
-            Sample { label: "100", series: &climbing, range: (0.0, 100.0), hue: (47, 168, 58), layout: Layout::Value },
-            Sample { label: "62\u{b0}", series: &wave, range: (0.0, 100.0), hue: (201, 133, 0), layout: Layout::Both },
-            Sample { label: "\u{2014}", series: &[], range: (0.0, 100.0), hue: (213, 81, 129), layout: Layout::Both },
+            Sample { label: "16", caption: Some("C"), series: &wave, range: (0.0, 100.0), hue: (57, 135, 229), layout: Layout::Both },
+            Sample { label: "62", caption: Some("M"), series: &climbing, range: (0.0, 100.0), hue: (144, 133, 233), layout: Layout::Value },
+            Sample { label: "16", caption: None, series: &wave, range: (0.0, 100.0), hue: (57, 135, 229), layout: Layout::Both },
+            Sample { label: "62", caption: None, series: &climbing, range: (0.0, 100.0), hue: (144, 133, 233), layout: Layout::Value },
+            Sample { label: "1.2M", caption: Some("N"), series: &network, range: network_range, hue: (25, 158, 112), layout: Layout::Both },
+            Sample { label: "3", caption: Some("D"), series: &idle, range: (0.0, 100.0), hue: (201, 133, 0), layout: Layout::Graph },
+            Sample { label: "100", caption: Some("B"), series: &climbing, range: (0.0, 100.0), hue: (47, 168, 58), layout: Layout::Value },
+            Sample { label: "62\u{b0}", caption: Some("T"), series: &wave, range: (0.0, 100.0), hue: (201, 133, 0), layout: Layout::Both },
+            Sample { label: "\u{2014}", caption: Some("G"), series: &[], range: (0.0, 100.0), hue: (213, 81, 129), layout: Layout::Both },
         ];
 
         let zoom = 6u32;
@@ -789,6 +1014,7 @@ mod tests {
                 for (column, sample) in samples.iter().enumerate() {
                     let rendered = render(&Frame {
                         label: sample.label,
+                        caption: sample.caption,
                         series: sample.series,
                         range: sample.range,
                         hue: sample.hue,

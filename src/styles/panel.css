@@ -42,6 +42,9 @@
   gap: var(--sp-2);
   padding: 10px 12px 8px;
   border-bottom: 1px solid var(--line);
+  /* The header, the tiles and the tab strip are the panel's chrome: they keep their height.
+     Only the app list gives up rows when the work area cannot hold the whole card. */
+  flex: none;
 }
 /* The chip name takes whatever room is left and ellipsises; the memory total never yields. */
 .panel-machine {
@@ -89,6 +92,7 @@
   padding: 10px 12px;
   display: grid;
   gap: 8px;
+  flex: none;
 }
 .panel-metrics.tiles {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -216,6 +220,7 @@
   border-top: 1px solid var(--line);
   background: var(--bg-deep);
   overflow-x: auto;
+  flex: none;
 }
 .panel-tabs button {
   padding: 4px 9px;

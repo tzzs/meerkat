@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitRows, panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize } from "./panel";
+import { fitRows, panelContentHeight, panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize } from "./panel";
 import type { Snapshot } from "./types";
 
 const machine = (hasBattery: boolean, hottest: number | null = null): Snapshot =>
@@ -71,6 +71,20 @@ describe("panelSeries", () => {
     expect(panelSeries("disk", s)).toEqual([11, 22]);
     expect(panelSeries("network", s)).toEqual([12]);
     expect(panelSeries("cpu", s)).toEqual([3, 4]);
+  });
+});
+
+describe("panelContentHeight", () => {
+  it("adds the natural heights of every section", () => {
+    expect(panelContentHeight([40, 264, 204, 27])).toBe(535);
+  });
+
+  it("ignores a section that is not on screen", () => {
+    expect(panelContentHeight([40, 100, 0, 27])).toBe(167);
+  });
+
+  it("does not let a bad measurement shrink the card", () => {
+    expect(panelContentHeight([40, Number.NaN, -20, 27])).toBe(67);
   });
 });
 

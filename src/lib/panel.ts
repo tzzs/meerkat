@@ -66,6 +66,16 @@ export const PANEL_MIN_HEIGHT = 220;
 export const PANEL_MAX_HEIGHT = 760;
 
 /**
+ * The card's natural height, before a window that is too short has squeezed its flex children.
+ * `.panel.scrollHeight` is no good for sizing the window: once the card has been clipped it
+ * reports the clipped height, so the window is asked to stay the size that caused the clipping.
+ * Measuring each section's own scroll height gives the size the card actually wants.
+ */
+export function panelContentHeight(sections: readonly number[]): number {
+  return sections.reduce((total, height) => total + (Number.isFinite(height) ? Math.max(0, height) : 0), 0);
+}
+
+/**
  * The window size that holds the card, its border and the margin around it. Sized to the
  * card's scroll box alone, the window came out one border and one margin short on each axis,
  * which cut the strip of tabs and the shadow off the bottom edge.

@@ -7,7 +7,7 @@ import { ipc, listenEvent } from "../lib/ipc";
 import { AppIcon, QuitDialog, Toaster, useHeldCeiling } from "../components/ui";
 import { Hint, TooltipReset } from "../components/ui/tooltip";
 import { useStore } from "../lib/store";
-import { fitRows, PANEL_MAX_HEIGHT, panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize, type PanelTab } from "../lib/panel";
+import { fitRows, PANEL_MAX_HEIGHT, panelContentHeight, panelNav, panelSeries, panelTabForKey, panelTiles, panelWindowSize, type PanelTab } from "../lib/panel";
 import { SPARK_CEILING, sparkPoints, windowPeak } from "../lib/spark";
 import { subscribe } from "../lib/subscribe";
 import { headline, type MetricKind, type Snapshot } from "../lib/types";
@@ -72,9 +72,14 @@ export function PanelApp() {
       timer = 0;
       const style = getComputedStyle(node);
       const px = (value: string) => Number.parseFloat(value) || 0;
+      const natural = panelContentHeight(
+        [".panel-head", ".panel-metrics", ".panel-apps", ".panel-tabs"].map(
+          (selector) => node.querySelector<HTMLElement>(selector)?.scrollHeight ?? 0,
+        ),
+      );
       const size = panelWindowSize({
         scrollWidth: node.scrollWidth,
-        scrollHeight: node.scrollHeight,
+        scrollHeight: natural,
         borderX: node.offsetWidth - node.clientWidth,
         borderY: node.offsetHeight - node.clientHeight,
         marginX: px(style.marginLeft) + px(style.marginRight),
