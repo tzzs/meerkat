@@ -168,6 +168,36 @@ function gradientId(color: string) {
   return `chart-${color.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
 }
 
+/**
+ * The line through the readings, curved through every point instead of joined with corners.
+ *
+ * The control points are Catmull-Rom: a point's tangent is the line between its neighbours, so
+ * the curve passes exactly through every reading and only the joins between them round off.
+ * They are held inside the plot, or a spike would bow out past its own card.
+ */
+function curvedLine(points: readonly [number, number][], height: number): string {
+  const at = (point: [number, number]) => `${point[0].toFixed(1)},${point[1].toFixed(1)}`;
+  const within = (y: number) => Math.min(height, Math.max(0, y));
+  const [first] = points;
+  let path = `M${at(first)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const previous = points[i - 1] ?? points[i];
+    const current = points[i];
+    const next = points[i + 1];
+    const after = points[i + 2] ?? next;
+    const from: [number, number] = [
+      current[0] + (next[0] - previous[0]) / 6,
+      within(current[1] + (next[1] - previous[1]) / 6),
+    ];
+    const to: [number, number] = [
+      next[0] - (after[0] - current[0]) / 6,
+      within(next[1] - (after[1] - current[1]) / 6),
+    ];
+    path += ` C${at(from)} ${at(to)} ${at(next)}`;
+  }
+  return path;
+}
+
 export const Chart = memo(function Chart({ values, ceiling, color, variant = "area", height = 56 }: ChartProps) {
   const width = 240;
   const held = useHeldCeiling(values.length > 0 ? Math.max(...values) : 0);
@@ -197,8 +227,8 @@ export const Chart = memo(function Chart({ values, ceiling, color, variant = "ar
   }
 
   const step = width / Math.max(1, normalized.length - 1);
-  const points = normalized.map((r, i) => `${(i * step).toFixed(2)},${(height - r * height).toFixed(2)}`);
-  const line = `M${points.join(" L")}`;
+  const points: [number, number][] = normalized.map((r, i) => [i * step, height - r * height]);
+  const line = curvedLine(points, height);
   const area = `${line} L${width},${height} L0,${height} Z`;
   return (
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img">
