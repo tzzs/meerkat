@@ -83,6 +83,24 @@ pub fn metric(lang: Lang, metric: MetricKind) -> &'static str {
     }
 }
 
+/// One letter that marks a tray readout's metric on the icon itself. The tooltip has the whole
+/// name, but a row of bare figures in the notification area gives no clue which is which.
+///
+/// Latin initials in both languages on purpose: the icon is 16–24 px, and a CJK glyph drawn at
+/// six pixels is a smudge. C/M/D/N/G/B/T are the same in either catalogue, so the mark needs no
+/// translation and cannot disagree with the tooltip beside it.
+pub fn caption(metric: MetricKind) -> &'static str {
+    match metric {
+        MetricKind::Cpu => "C",
+        MetricKind::Memory => "M",
+        MetricKind::Disk => "D",
+        MetricKind::Network => "N",
+        MetricKind::Gpu => "G",
+        MetricKind::Battery => "B",
+        MetricKind::Temperature => "T",
+    }
+}
+
 /// The unit choices from Settings that change how a figure is written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Units {
@@ -304,6 +322,27 @@ mod tests {
             insight(InsightKind::HeavyNetwork, 25_100_000.0, 30),
             insight(InsightKind::Heat, 95.0, 60),
         ]
+    }
+
+    #[test]
+    fn tray_captions_name_the_metric_in_one_letter() {
+        const METRICS: [MetricKind; 7] = [
+            MetricKind::Cpu,
+            MetricKind::Memory,
+            MetricKind::Disk,
+            MetricKind::Network,
+            MetricKind::Gpu,
+            MetricKind::Battery,
+            MetricKind::Temperature,
+        ];
+        let marks: Vec<&str> = METRICS.iter().map(|m| caption(*m)).collect();
+        assert!(marks.iter().all(|mark| mark.chars().count() == 1), "one letter each: {marks:?}");
+        let mut sorted = marks.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), marks.len(), "two metrics share a caption: {marks:?}");
+        assert_eq!(caption(MetricKind::Cpu), "C");
+        assert_eq!(caption(MetricKind::Memory), "M");
     }
 
     #[test]

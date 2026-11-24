@@ -13,7 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// 2: `alerts.cpu_percent` became a share of the whole machine (it was per core, summed).
-pub const SETTINGS_VERSION: u32 = 2;
+/// 3: tray readouts gained a short metric mark, on by default so bare figures become identifiable.
+pub const SETTINGS_VERSION: u32 = 3;
 
 /// What a file without a version field is taken to be: everything before version 2 had one,
 /// so a file without it is old or hand-written, and the v1 migration is harmless for both.
@@ -296,9 +297,9 @@ impl Default for Settings {
             show_in_taskbar: false,
             keep_awake: false,
             tray: vec![
-                TrayReadout { id: "cpu".into(), metric: MetricKind::Cpu, style: TrayStyle::Both, show_icon: false, show_caption: false, invert: false, enabled: true },
-                TrayReadout { id: "memory".into(), metric: MetricKind::Memory, style: TrayStyle::Value, show_icon: false, show_caption: false, invert: false, enabled: true },
-                TrayReadout { id: "network".into(), metric: MetricKind::Network, style: TrayStyle::Graph, show_icon: false, show_caption: false, invert: false, enabled: false },
+                TrayReadout { id: "cpu".into(), metric: MetricKind::Cpu, style: TrayStyle::Both, show_icon: false, show_caption: true, invert: false, enabled: true },
+                TrayReadout { id: "memory".into(), metric: MetricKind::Memory, style: TrayStyle::Value, show_icon: false, show_caption: true, invert: false, enabled: true },
+                TrayReadout { id: "network".into(), metric: MetricKind::Network, style: TrayStyle::Graph, show_icon: false, show_caption: true, invert: false, enabled: false },
             ],
             panel: PanelConfig::default(),
             window: WindowConfig::default(),
@@ -316,9 +317,13 @@ impl Settings {
     /// - panel tiles keep only ids in [`PANEL_METRICS`], deduplicated, missing ones appended
     ///   (a file written by an older default still carried a `sound` tile);
     /// - tray readouts with a repeated id are dropped (each id is one tray icon);
+    /// - files from before version 3 get the new metric mark on every readout;
     /// - alert thresholds are clamped ([`AlertThresholds::sanitized`]);
     /// - `open_window_on` is "overview", "last" or a tab id, otherwise "overview".
     pub fn sanitize(&mut self) {
+        // A readout saved before there was a caption field has it at its serde default, false.
+        // That is the old look, not a choice the person made, so the migration turns it on.
+        let mark_tray = self.version < SETTINGS_VERSION;
         self.version = SETTINGS_VERSION;
 
         let defaults: Vec<&str> = TAB_IDS.to_vec();
@@ -347,6 +352,11 @@ impl Settings {
             seen.push(readout.id.clone());
             true
         });
+        if mark_tray {
+            for readout in &mut self.tray {
+                readout.show_caption = true;
+            }
+        }
 
         self.alerts = self.alerts.sanitized();
 
@@ -770,7 +780,7 @@ mod tests {
 
         // The file itself was rewritten, and the old one kept.
         let on_disk: Value = serde_json::from_str(&fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], 2);
+        assert_eq!(on_disk["version"], SETTINGS_VERSION);
         assert_eq!(on_disk["alerts"]["cpuPercent"], 25.0);
         assert_eq!(fs::read_to_string(dir.join("settings.v1.json.bak")).unwrap(), original);
         assert_eq!(raw(&SettingsStore::read(&dir.join("settings.json"))), raw(&settings));
@@ -843,23 +853,59 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn old_tray_readouts_gain_the_metric_mark() {
+        let dir = temp_dir("tray-mark-migration");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{
+                "version": 2,
+                "tray": [
+                    { "id": "cpu", "metric": "cpu", "style": "value" },
+                    { "id": "memory", "metric": "memory", "style": "value" }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let settings = SettingsStore::open(&dir).get();
+        assert_eq!(settings.version, SETTINGS_VERSION);
+        assert!(settings.tray.iter().all(|r| r.show_caption), "the old figures were bare, not deliberately unmarked");
+        let _ = fs::remove_dir_all(dir);
+
+        let dir = temp_dir("tray-mark-choice");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{
+                "version": 3,
+                "tray": [{ "id": "cpu", "metric": "cpu", "style": "value", "showCaption": false }]
+            }"#,
+        )
+        .unwrap();
+        let settings = SettingsStore::open(&dir).get();
+        assert!(!settings.tray[0].show_caption, "a deliberate choice is kept");
+        let _ = fs::remove_dir_all(dir);
+    }
+
     // One bad value used to reset the whole file. Now only that value falls back.
     #[test]
     fn one_unreadable_value_costs_only_itself() {
         let dir = temp_dir("one-bad-value");
-        let text = r#"{
-            "version": 2,
+        // The current version, so the backup is `settings.json.bad` and not a migration copy.
+        let text = format!(
+            r#"{{
+            "version": {SETTINGS_VERSION},
             "language": "zhHans",
             "theme": "sepia",
             "temperatureUnit": "fahrenheit",
             "tray": [
-                { "id": "cpu", "metric": "cpu", "style": "graph" },
-                { "id": "mystery", "metric": "quantum" },
-                { "id": "memory", "metric": "memory", "enabled": false }
+                {{ "id": "cpu", "metric": "cpu", "style": "graph" }},
+                {{ "id": "mystery", "metric": "quantum" }},
+                {{ "id": "memory", "metric": "memory", "enabled": false }}
             ],
-            "alerts": { "cpuPercent": "lots", "sustainedSeconds": 90 }
-        }"#;
-        fs::write(dir.join("settings.json"), text).unwrap();
+            "alerts": {{ "cpuPercent": "lots", "sustainedSeconds": 90 }}
+        }}"#,
+        );
+        fs::write(dir.join("settings.json"), &text).unwrap();
 
         let settings = SettingsStore::open(&dir).get();
         assert_eq!(settings.language, Language::ZhHans, "readable fields are kept");
@@ -916,14 +962,18 @@ mod tests {
     fn a_file_from_a_newer_build_is_kept_before_it_is_rewritten() {
         let dir = temp_dir("newer");
         let mut file = serde_json::to_value(Settings::default()).unwrap();
-        file["version"] = Value::from(3);
+        let newer = SETTINGS_VERSION + 1;
+        file["version"] = Value::from(newer);
         file["theme"] = Value::from("dark");
         let text = serde_json::to_string(&file).unwrap();
         fs::write(dir.join("settings.json"), &text).unwrap();
         let settings = SettingsStore::open(&dir).get();
         assert_eq!(settings.theme, Theme::Dark);
         assert_eq!(settings.version, SETTINGS_VERSION);
-        assert_eq!(fs::read_to_string(dir.join("settings.v3.json.bak")).unwrap(), text);
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("settings.v{newer}.json.bak"))).unwrap(),
+            text
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

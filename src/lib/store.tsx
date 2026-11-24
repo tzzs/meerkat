@@ -9,7 +9,7 @@ import type { AppInfo, Settings, Snapshot } from "./types";
 
 /** What the window shows before the backend has answered. Mirrors `Settings::default()` in Rust. */
 export const fallbackSettings: Settings = {
-  version: 2,
+  version: 3,
   language: "auto",
   temperatureUnit: "celsius",
   networkUnit: "bytes",
@@ -22,9 +22,9 @@ export const fallbackSettings: Settings = {
   showInTaskbar: false,
   keepAwake: false,
   tray: [
-    { id: "cpu", metric: "cpu", style: "both", showIcon: false, showCaption: false, invert: false, enabled: true },
-    { id: "memory", metric: "memory", style: "value", showIcon: false, showCaption: false, invert: false, enabled: true },
-    { id: "network", metric: "network", style: "graph", showIcon: false, showCaption: false, invert: false, enabled: false },
+    { id: "cpu", metric: "cpu", style: "both", showIcon: false, showCaption: true, invert: false, enabled: true },
+    { id: "memory", metric: "memory", style: "value", showIcon: false, showCaption: true, invert: false, enabled: true },
+    { id: "network", metric: "network", style: "graph", showIcon: false, showCaption: true, invert: false, enabled: false },
   ],
   panel: {
     layout: "tiles",

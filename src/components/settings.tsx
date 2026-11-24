@@ -44,6 +44,17 @@ const TRAY_METRICS: Record<MetricKind, Key> = {
   temperature: "metric.temperature",
 };
 
+/** The letter each readout wears on its tray icon, mirroring `i18n::caption` in Rust. */
+const TRAY_MARKS: Record<MetricKind, string> = {
+  cpu: "C",
+  memory: "M",
+  disk: "D",
+  network: "N",
+  gpu: "G",
+  battery: "B",
+  temperature: "T",
+};
+
 export function SettingsPages({ page, setPage }: { page: Page; setPage: (p: Page | null) => void }) {
   const { settings, save, t, settingsError, clearSettingsError } = useStore();
   const [confirmReset, setConfirmReset] = useState(false);
@@ -421,7 +432,7 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
       metric,
       style: "value",
       showIcon: false,
-      showCaption: false,
+      showCaption: true,
       invert: false,
       enabled: true,
     };
@@ -469,6 +480,16 @@ function Layout({ settings, save }: { settings: Settings; save: (s: Settings) =>
               label: t(TRAY_METRICS[readout.metric]),
             },
           )}
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={readout.showCaption}
+              onChange={(e) =>
+                updateTray(settings.tray.map((r) => (r.id === readout.id ? { ...r, showCaption: e.target.checked } : r)))
+              }
+            />
+            {t("settings.showCaption")}
+          </label>
           {readout.metric === "memory" && (
             <label className="inline-check">
               <input
@@ -661,25 +682,26 @@ function preview(
   units: ReturnType<typeof useStore>["units"],
 ): string {
   if (!snapshot) return "—";
+  const mark = readout.showCaption ? `${TRAY_MARKS[readout.metric]} ` : "";
   switch (readout.metric) {
     case "cpu":
-      return `${Math.round(snapshot.cpu.totalPercent)}%`;
+      return `${mark}${Math.round(snapshot.cpu.totalPercent)}%`;
     case "memory": {
       const ratio = snapshot.memory.inUseBytes / Math.max(1, snapshot.memory.totalBytes);
-      return readout.invert ? `${Math.round((1 - ratio) * 100)}%` : `${Math.round(ratio * 100)}%`;
+      return `${mark}${readout.invert ? Math.round((1 - ratio) * 100) : Math.round(ratio * 100)}%`;
     }
     case "disk":
-      return formatRate(snapshot.disk.readBytesPerSecond + snapshot.disk.writeBytesPerSecond, units, "storage");
+      return `${mark}${formatRate(snapshot.disk.readBytesPerSecond + snapshot.disk.writeBytesPerSecond, units, "storage")}`;
     case "network":
-      return formatRate(snapshot.network.downloadBytesPerSecond, units, "network");
+      return `${mark}${formatRate(snapshot.network.downloadBytesPerSecond, units, "network")}`;
     case "gpu":
-      return snapshot.gpu.totalPercent === null ? "—" : `${Math.round(snapshot.gpu.totalPercent)}%`;
+      return snapshot.gpu.totalPercent === null ? "—" : `${mark}${Math.round(snapshot.gpu.totalPercent)}%`;
     case "battery":
       return snapshot.battery.hasBattery && snapshot.battery.chargePercent !== null
-        ? `${Math.round(snapshot.battery.chargePercent)}%`
+        ? `${mark}${Math.round(snapshot.battery.chargePercent)}%`
         : "—";
     case "temperature":
-      return snapshot.temperature.hottest !== null ? `${Math.round(snapshot.temperature.hottest)}°` : "—";
+      return snapshot.temperature.hottest !== null ? `${mark}${Math.round(snapshot.temperature.hottest)}°` : "—";
   }
 }
 

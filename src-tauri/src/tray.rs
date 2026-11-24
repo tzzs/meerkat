@@ -226,6 +226,7 @@ fn frames_for(snapshot: &Snapshot, settings: &Settings) -> Vec<IconFrame> {
         let reading = reading(readout, snapshot, lang, units);
         let rendered = tray_render::render(&Frame {
             label: &reading.label,
+            caption: readout.show_caption.then(|| i18n::caption(readout.metric)),
             series: &reading.series,
             range: reading.range,
             hue: hue(readout.metric),
