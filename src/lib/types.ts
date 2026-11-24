@@ -692,13 +692,20 @@ export interface PerfReport {
   sampleCount: number;
 }
 
+/** One metric's shape across a session, thinned by the backend to what a chart can draw. */
+export interface PerfSeries {
+  key: string;
+  values: number[];
+}
+
 export interface PerfSession {
   id: string;
   target: PerfTarget;
   startedAtMs: number;
   endedAtMs: number | null;
-  samples: PerfSample[];
+  sampleCount: number;
   report: PerfReport | null;
+  series: PerfSeries[];
 }
 
 export interface PerfSessionSummary {

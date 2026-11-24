@@ -107,8 +107,13 @@ function seriesFrom(samples: readonly PerfSample[], key: PerfMetricKey): number[
   return values;
 }
 
+/**
+ * A finished session's chart data. The backend thins it to the chart's own width — a long
+ * session holds tens of thousands of readings, and shipping them all moved 17 MB over IPC for
+ * one twenty-hour session and took the sheet half a minute to draw.
+ */
 export function perfSeries(session: PerfSession, key: PerfMetricKey): number[] {
-  return seriesFrom(session.samples, key);
+  return session.series.find((series) => series.key === key)?.values ?? [];
 }
 
 export function perfSampleSeries(samples: readonly PerfSample[], key: PerfMetricKey): number[] {
@@ -202,4 +207,21 @@ export function perfAppChoices<T extends Pick<AppInfo, "name" | "kind" | "exePat
         app.exePath.toLowerCase().includes(needle),
     )
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * What the app picker's rows actually show, as one string.
+ *
+ * The picker is rebuilt when this changes, and only then. The snapshot object itself is new
+ * every second, so keying the list on it would hand the rows a fresh array on every tick for
+ * figures they do not draw — which is what made the Performance tab drop a frame a second and
+ * stutter when its list was scrolled. `processCount` is part of it on purpose: a row that said
+ * "2 processes" while the app ran five would be a stale reading, not a stable one.
+ */
+export function pickerSignature(
+  apps: readonly Pick<AppInfo, "key" | "name" | "exePath" | "kind" | "processCount">[],
+): string {
+  return apps
+    .map((app) => `${app.key}\u0000${app.name}\u0000${app.exePath}\u0000${app.kind}\u0000${app.processCount}`)
+    .join("\u0001");
 }

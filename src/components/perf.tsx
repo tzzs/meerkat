@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { Check, Trash2, X } from "lucide-react";
 import { formatBytes, formatDuration, formatTime } from "../lib/format";
 import { ipc, listenEvent } from "../lib/ipc";
@@ -8,6 +8,7 @@ import {
   formatPerfStat,
   formatPerfValue,
   perfAppChoices,
+  pickerSignature,
   perfHeadlineKey,
   perfIssueKey,
   perfIssueValue,
@@ -19,7 +20,7 @@ import {
 } from "../lib/perf";
 import { appLabel } from "../lib/apps";
 import { useStore } from "../lib/store";
-import type { PerfReport, PerfSample, PerfSession, PerfSessionSummary, PerfStatus, PerfTargetMode, PerfVerdict } from "../lib/types";
+import type { AppInfo, PerfReport, PerfSample, PerfSession, PerfSessionSummary, PerfStatus, PerfTargetMode, PerfVerdict } from "../lib/types";
 import type { Translate } from "../i18n";
 import type { UnitPrefs } from "../lib/format";
 import { Button } from "./ui/button";
@@ -61,6 +62,98 @@ function unavailableReason(metric: PerfMetric, t: Translate): string {
 function sessionSeconds(session: Pick<PerfSessionSummary, "startedAtMs" | "endedAtMs">): number | null {
   return session.endedAtMs === null ? null : (session.endedAtMs - session.startedAtMs) / 1000;
 }
+
+/**
+ * One row of the app picker.
+ *
+ * The picker lists every running app at once, and the tab re-renders on each snapshot — once
+ * a second — because it reads the store. Rebuilding ninety-odd rows for figures they do not
+ * show measured as a dropped frame on every tick; with a memo of its own, each row is skipped
+ * unless its own app changed. Every prop is a primitive and the handler reads the key off the
+ * button, so the memo actually holds.
+ */
+const PickerRow = memo(function PickerRow({
+  id,
+  name,
+  exePath,
+  processCount,
+  processLabel,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  id: string;
+  name: string;
+  exePath: string;
+  processCount: number;
+  processLabel: string;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="perf-app"
+      data-key={id}
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onSelect}
+    >
+      <AppIcon name={name} seed={id} exePath={exePath || undefined} />
+      <span className="perf-app-main">
+        <span className="perf-app-name">{name}</span>
+        <span className="perf-app-meta">
+          {processCount} {processLabel}
+        </span>
+      </span>
+      {selected && <Check aria-hidden className="perf-app-check size-3.5" />}
+    </button>
+  );
+});
+
+/**
+ * The picker's rows, as one memoised block.
+ *
+ * The tab re-renders on every snapshot; this list only changes when the set of apps does. The
+ * memo keeps React from even building the rows' elements on the ticks that change nothing
+ * they show.
+ */
+const AppPicker = memo(function AppPicker({
+  apps,
+  selectedKey,
+  disabled,
+  processLabel,
+  t,
+  ariaLabel,
+  onSelect,
+}: {
+  apps: readonly AppInfo[];
+  selectedKey: string | null;
+  disabled: boolean;
+  processLabel: string;
+  t: Translate;
+  ariaLabel: string;
+  onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <div className="perf-apps" role="group" aria-label={ariaLabel}>
+      {apps.map((app) => (
+        <PickerRow
+          key={app.key}
+          id={app.key}
+          name={appLabel(app, t)}
+          exePath={app.exePath}
+          processCount={app.processCount}
+          processLabel={processLabel}
+          selected={app.key === selectedKey}
+          disabled={disabled}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  );
+});
 
 function LiveTile({
   metric,
@@ -268,9 +361,25 @@ export function PerfTab() {
     setStatus(next);
   }, []);
 
-  const allApps = useMemo(() => perfAppChoices(snapshot?.apps ?? [], ""), [snapshot]);
+  // The picker's rows are memoised and the list around them is too, so the list has to keep
+  // its identity across the snapshots that change nothing it draws: a new array every second
+  // would undo both memos. `pickerSignature` says what the rows show.
+  const appSignature = snapshot ? pickerSignature(snapshot.apps) : "";
+  const allApps = useMemo(
+    () => perfAppChoices(snapshot?.apps ?? [], ""),
+    // Reads the snapshot through the closure on purpose: the signature above is the part of it
+    // the rows draw, and it is what the list's identity must follow.
+    [appSignature],
+  );
   const apps = useMemo(() => perfAppChoices(allApps, query), [allApps, query]);
   const chosen = allApps.find((app) => app.key === appKey) ?? null;
+
+  // Stable across snapshots, so the memoised rows keep their identity; the key travels on the
+  // button instead of in a closure.
+  const chooseApp = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    const key = event.currentTarget.dataset.key;
+    if (key) setAppKey(key);
+  }, []);
 
   const loadReport = useCallback((id: string) => {
     const seq = ++reportSeq.current;
@@ -388,6 +497,9 @@ export function PerfTab() {
     });
   };
 
+  // One string for every row's meta line, so a row's props stay identical across snapshots
+  // unless its own figures changed.
+  const processLabel = t("label.processes").toLowerCase();
   const targetFallback = t(status.mode === "app" ? "perf.mode.app" : "perf.mode.foreground");
   const targetName = perfTargetLabel({ mode: status.mode, name: status.targetName }, targetFallback);
   const elapsedSeconds =
@@ -442,27 +554,15 @@ export function PerfTab() {
                           {apps.length === 0 ? (
                             <p className="perf-note">{t("perf.picker.noMatch")}</p>
                           ) : (
-                            <div className="perf-apps" role="group" aria-label={t("perf.appPicker")}>
-                              {apps.map((app) => (
-                                <button
-                                  key={app.key}
-                                  type="button"
-                                  className="perf-app"
-                                  aria-pressed={app.key === appKey}
-                                  disabled={status.active}
-                                  onClick={() => setAppKey(app.key)}
-                                >
-                                  <AppIcon name={app.name} seed={app.key} exePath={app.exePath || undefined} />
-                                  <span className="perf-app-main">
-                                    <span className="perf-app-name">{appLabel(app, t)}</span>
-                                    <span className="perf-app-meta">
-                                      {app.processCount} {t("label.processes").toLowerCase()}
-                                    </span>
-                                  </span>
-                                  {app.key === appKey && <Check aria-hidden className="perf-app-check size-3.5" />}
-                                </button>
-                              ))}
-                            </div>
+                            <AppPicker
+                              apps={apps}
+                              selectedKey={appKey}
+                              disabled={status.active}
+                              processLabel={processLabel}
+                              t={t}
+                              ariaLabel={t("perf.appPicker")}
+                              onSelect={chooseApp}
+                            />
                           )}
                         </>
                       )}

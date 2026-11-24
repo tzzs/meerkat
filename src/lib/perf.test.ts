@@ -4,9 +4,11 @@ import {
   formatPerfStat,
   formatPerfValue,
   perfAppChoices,
+  pickerSignature,
   perfHeadlineKey,
   perfIssueKey,
   perfIssueValue,
+  perfSampleSeries,
   perfSeries,
   perfTargetLabel,
   perfVerdictKey,
@@ -112,20 +114,24 @@ describe("figures a reader can see", () => {
 });
 
 describe("a session's series", () => {
+  // The backend thins the readings to the chart's width and skips the ones a metric was not
+  // available for; the sheet only has to find its key.
   const session: PerfSession = {
     id: "s1",
     target: { mode: "app", appKey: "game", name: "Game", currentAppKey: "game" },
     startedAtMs: 1000,
     endedAtMs: 4000,
-    samples: [
-      sample({ atMs: 1000, fps: 60, vramUsedBytes: 2_000_000_000 }),
-      sample({ atMs: 2000, fps: null, fpsSource: "none", vramUsedBytes: null }),
-      sample({ atMs: 3000, fps: 42, vramUsedBytes: 3_000_000_000 }),
+    sampleCount: 3,
+    series: [
+      { key: "fps", values: [60, 42] },
+      { key: "cpuTempC", values: [68, 68, 68] },
+      { key: "vramPercent", values: [50, 50, 50] },
+      { key: "vramUsedBytes", values: [2_000_000_000, 3_000_000_000] },
     ],
     report: null,
   };
 
-  it("skips samples where the metric was unavailable", () => {
+  it("hands back the metric the chart asked for", () => {
     expect(perfSeries(session, "fps")).toEqual([60, 42]);
     expect(perfSeries(session, "cpuTempC")).toEqual([68, 68, 68]);
   });
@@ -133,6 +139,24 @@ describe("a session's series", () => {
   it("keeps VRAM bytes separate from the percentage", () => {
     expect(perfSeries(session, "vramPercent")).toEqual([50, 50, 50]);
     expect(perfSeries(session, "vramUsedBytes")).toEqual([2_000_000_000, 3_000_000_000]);
+  });
+
+  it("draws nothing for a metric the session never measured", () => {
+    expect(perfSeries(session, "gpuTempC")).toEqual([]);
+  });
+});
+
+// The live tiles still chart the raw readings the status event carries; only a saved session
+// gets the backend's thinned series.
+describe("the live series", () => {
+  it("skips the readings where the metric was unavailable", () => {
+    const samples = [
+      sample({ fps: 60 }),
+      sample({ fps: null, fpsSource: "none" }),
+      sample({ fps: 30 }),
+    ];
+    expect(perfSampleSeries(samples, "fps")).toEqual([60, 30]);
+    expect(perfSampleSeries(samples, "cpuPercent")).toEqual([25, 25, 25]);
   });
 });
 
@@ -175,5 +199,44 @@ describe("the apps a session can watch", () => {
     const apps = [choice("Zebra", "app"), choice("alpha", "app"), choice("Beta", "packaged")];
     expect(perfAppChoices(apps, "").map((app) => app.name)).toEqual(["alpha", "Beta", "Zebra"]);
     expect(perfAppChoices(apps, "nothing like this")).toEqual([]);
+  });
+});
+
+// The picker keeps its rows when this signature holds; the memo behind that is why the tab no
+// longer rebuilds ninety-odd rows on every snapshot. The test pins the contract: a fresh
+// snapshot with the same figures must produce the same string, and anything a row draws must
+// change it.
+describe("the picker's signature", () => {
+  const pick = (over: Record<string, unknown> = {}) => ({
+    key: "C:\\Apps\\editor.exe",
+    name: "Editor",
+    exePath: "C:\\Apps\\editor.exe",
+    kind: "app" as AppKind,
+    processCount: 3,
+    ...over,
+  });
+
+  it("ignores a new snapshot whose rows say the same thing", () => {
+    expect(pickerSignature([pick()])).toBe(pickerSignature([pick()]));
+    expect(pickerSignature([pick(), pick({ key: "b", name: "Browser", exePath: "b.exe" })])).toBe(
+      pickerSignature([pick(), pick({ key: "b", name: "Browser", exePath: "b.exe" })]),
+    );
+  });
+
+  it("changes when anything a row draws changes", () => {
+    const base = pickerSignature([pick()]);
+    expect(pickerSignature([pick({ processCount: 4 })])).not.toBe(base);
+    expect(pickerSignature([pick({ name: "Editor (x64)" })])).not.toBe(base);
+    expect(pickerSignature([pick({ exePath: "C:\\Other\\editor.exe" })])).not.toBe(base);
+    expect(pickerSignature([pick({ kind: "packaged" })])).not.toBe(base);
+    expect(pickerSignature([pick({ key: "other" })])).not.toBe(base);
+  });
+
+  it("sees a change of order or of count, and has one value for no apps", () => {
+    const a = pick();
+    const b = pick({ key: "b", name: "Browser", exePath: "b.exe" });
+    expect(pickerSignature([a, b])).not.toBe(pickerSignature([b, a]));
+    expect(pickerSignature([])).toBe("");
+    expect(pickerSignature([a])).not.toBe(pickerSignature([a, b]));
   });
 });

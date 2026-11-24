@@ -4,19 +4,27 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
 
 use crate::ipc::AppState;
 use crate::models::{
-    AppInfo, GpuAdapter, PerfIssue, PerfIssueKind, PerfReport, PerfSample, PerfSession,
+    AppInfo, GpuAdapter, PerfIssue, PerfIssueKind, PerfReport, PerfSample, PerfSeries, PerfSession,
     PerfSessionSummary, PerfStat, PerfStatus, PerfTarget, PerfTargetMode, PerfVerdict, Snapshot,
 };
 
 const FILE_NAME: &str = "perf-sessions.json";
+/// Where a recording session's readings go while it runs: one line per reading, appended.
+///
+/// The sessions file used to carry every reading too, which made it 16 MB after one long
+/// session and meant the whole file was rewritten every few seconds while recording. A
+/// journal is appended to instead, and a finished session keeps its report and series.
+const JOURNAL_DIR: &str = "perf-samples";
 const MAX_SESSIONS: usize = 30;
-const FLUSH_EVERY: Duration = Duration::from_secs(10);
+/// The result sheet's chart is 240 units wide. A twenty-hour session holds fifty thousand
+/// readings; the series keeps the envelope, not every reading.
+const SERIES_POINTS: usize = 240;
 
 const FPS_LOW_AVG: f64 = 50.0;
 const FPS_LOW_PERCENT: f64 = 45.0;
@@ -56,7 +64,8 @@ pub struct Store {
     data_dir: PathBuf,
     phase: Phase,
     sessions: Vec<PerfSession>,
-    last_flush: Instant,
+    /// Open while a session records; every reading is appended to it as it arrives.
+    journal: Option<fs::File>,
 }
 
 impl Store {
@@ -69,34 +78,83 @@ impl Store {
             data_dir: data_dir.to_path_buf(),
             phase: Phase::Idle,
             sessions,
-            last_flush: Instant::now(),
+            journal: None,
         };
-        let original_len = store.sessions.len();
+        let mut changed = store.recover();
+        let before = store.sessions.len();
         store.trim();
-        let trimmed = store.sessions.len() != original_len;
-        if store.finish_interrupted() || trimmed {
+        changed |= store.sessions.len() != before;
+        changed |= store.drop_stray_journals();
+        if changed {
             store.flush();
         }
         store
     }
 
-    /// A session left open by a crash is closed at its last sample, not left active forever.
-    fn finish_interrupted(&mut self) -> bool {
-        let mut last = None;
+    /// Closes sessions a crash left open and converts files from the older format, which kept
+    /// every reading next to the session. Those readings become the report and the series a
+    /// chart can draw; nothing keeps them afterwards. Returns whether the file has to be
+    /// written again.
+    fn recover(&mut self) -> bool {
+        let mut changed = false;
+        let mut interrupted = None;
         for session in &mut self.sessions {
-            if session.ended_at_ms.is_none() {
-                let ended = session.samples.last().map(|s| s.at_ms).unwrap_or(session.started_at_ms);
+            let open = session.ended_at_ms.is_none();
+            if open && session.samples.is_empty() {
+                session.samples = read_journal(&journal_path(&self.data_dir, &session.id));
+            }
+            if open {
+                // A session left open by a crash is closed at its last reading, not left
+                // recording forever.
+                let ended = session.samples.last().map(|sample| sample.at_ms).unwrap_or(session.started_at_ms);
                 session.ended_at_ms = Some(ended);
                 session.report = Some(analyze(&session.samples, session.id.clone()));
-                last = Some(session.id.clone());
+                session.series = series_of(&session.samples);
+                session.sample_count = session.sample_count.max(session.samples.len());
+                session.samples = Vec::new();
+                interrupted = Some(session.id.clone());
+                changed = true;
+                continue;
+            }
+            if session.samples.is_empty() {
+                continue;
+            }
+            // Older files stored the readings; the session keeps what it draws and loses the rest.
+            changed = true;
+            session.sample_count = session.sample_count.max(session.samples.len());
+            session.series = series_of(&session.samples);
+            if session.report.is_none() {
+                session.report = Some(analyze(&session.samples, session.id.clone()));
+            }
+            session.samples = Vec::new();
+        }
+        if let Some(id) = interrupted {
+            self.phase = Phase::Reported { id };
+        }
+        changed
+    }
+
+    /// A journal belongs to the session that is recording right now. Anything else is what a
+    /// stop that never finished left behind, or a session that has been trimmed away.
+    fn drop_stray_journals(&self) -> bool {
+        let Ok(entries) = fs::read_dir(journal_dir(&self.data_dir)) else {
+            return false;
+        };
+        let mut removed = false;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let recording = matches!(&self.phase, Phase::Recording { id: current } if current == id);
+            if !recording {
+                removed |= fs::remove_file(&path).is_ok();
             }
         }
-        if let Some(id) = last {
-            self.phase = Phase::Reported { id };
-            true
-        } else {
-            false
-        }
+        removed
     }
 
     pub fn start(
@@ -139,11 +197,14 @@ impl Store {
             target,
             started_at_ms: now_ms(),
             ended_at_ms: None,
-            samples: Vec::new(),
+            sample_count: 0,
             report: None,
+            series: Vec::new(),
+            samples: Vec::new(),
         });
         self.trim();
         self.phase = Phase::Recording { id: id.clone() };
+        self.open_journal(&id);
         self.flush();
         Ok(id)
     }
@@ -172,10 +233,12 @@ impl Store {
         };
         let session = &mut self.sessions[index];
         session.target.current_app_key = current_key;
-        session.samples.push(build_sample(snapshot, app, &self.data_dir));
-        if self.last_flush.elapsed() >= FLUSH_EVERY {
-            self.flush();
+        let sample = build_sample(snapshot, app, &self.data_dir);
+        if let Some(journal) = self.journal.as_mut() {
+            append_journal(journal, &sample);
         }
+        session.samples.push(sample);
+        session.sample_count = session.samples.len();
         Some(self.status())
     }
 
@@ -185,10 +248,17 @@ impl Store {
             _ => return Err("no performance session is recording".into()),
         };
         let index = self.sessions.iter().position(|session| session.id == id).ok_or("session is gone")?;
-        self.sessions[index].ended_at_ms = Some(now_ms());
-        let report = analyze(&self.sessions[index].samples, id.clone());
-        self.sessions[index].report = Some(report.clone());
-        self.phase = Phase::Reported { id };
+        let session = &mut self.sessions[index];
+        session.ended_at_ms = Some(now_ms());
+        let report = analyze(&session.samples, id.clone());
+        session.report = Some(report.clone());
+        session.series = series_of(&session.samples);
+        session.sample_count = session.sample_count.max(session.samples.len());
+        // A finished session is summarised, so the readings are no longer kept anywhere.
+        session.samples = Vec::new();
+        session.samples.shrink_to_fit();
+        self.phase = Phase::Reported { id: id.clone() };
+        self.close_journal(&id);
         self.flush();
         Ok(report)
     }
@@ -201,7 +271,7 @@ impl Store {
             status.target_name = session.target.name.clone();
             status.mode = session.target.mode;
             status.current_app_key = session.target.current_app_key.clone();
-            status.sample_count = session.samples.len();
+            status.sample_count = session.sample_count;
             status.started_at_ms = Some(session.started_at_ms);
             status.latest = session.samples.last().cloned();
         }
@@ -218,14 +288,19 @@ impl Store {
                 mode: session.target.mode,
                 started_at_ms: session.started_at_ms,
                 ended_at_ms: session.ended_at_ms,
-                sample_count: session.samples.len(),
+                sample_count: session.sample_count,
                 verdict: session.report.as_ref().map(|report| report.verdict).unwrap_or(PerfVerdict::Inconclusive),
             })
             .collect()
     }
 
+    /// A saved session as the window asks for it. The readings are never part of the answer:
+    /// the report carries what the sheet shows, and a recording session's readings stay here.
     pub fn session(&self, id: &str) -> Option<PerfSession> {
-        self.sessions.iter().find(|session| session.id == id).cloned()
+        self.sessions
+            .iter()
+            .find(|session| session.id == id)
+            .map(|session| PerfSession { samples: Vec::new(), ..session.clone() })
     }
 
     pub fn delete(&mut self, id: &str) -> bool {
@@ -233,9 +308,11 @@ impl Store {
         self.sessions.retain(|session| session.id != id);
         if self.phase_id() == Some(id) {
             self.phase = Phase::Idle;
+            self.journal = None;
         }
         let removed = self.sessions.len() != before;
         if removed {
+            let _ = fs::remove_file(journal_path(&self.data_dir, id));
             self.flush();
         }
         removed
@@ -256,19 +333,41 @@ impl Store {
     fn trim(&mut self) {
         while self.sessions.len() > MAX_SESSIONS {
             let id = self.sessions.remove(0).id;
+            let _ = fs::remove_file(journal_path(&self.data_dir, &id));
             if self.phase_id() == Some(&id) {
                 self.phase = Phase::Idle;
+                self.journal = None;
             }
         }
+    }
+
+    fn open_journal(&mut self, id: &str) {
+        let path = journal_path(&self.data_dir, id);
+        if let Some(parent) = path.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                crate::diag::warn(format!("perf journal: directory could not be made: {error}"));
+            }
+        }
+        match fs::File::create(&path) {
+            Ok(file) => self.journal = Some(file),
+            Err(error) => {
+                // The session still records in memory; only a crash would lose it.
+                crate::diag::warn(format!("perf journal: could not be opened: {error}"));
+                self.journal = None;
+            }
+        }
+    }
+
+    fn close_journal(&mut self, id: &str) {
+        self.journal = None;
+        let _ = fs::remove_file(journal_path(&self.data_dir, id));
     }
 
     pub fn flush(&mut self) {
         let path = self.data_dir.join(FILE_NAME);
         if let Err(error) = write_atomically(&path, &self.sessions) {
             crate::diag::warn(format!("perf sessions: could not be saved: {error}"));
-            return;
         }
-        self.last_flush = Instant::now();
     }
 }
 
@@ -491,11 +590,7 @@ fn issue(kind: PerfIssueKind, metric: &str, value: Option<f64>) -> PerfIssue {
 }
 
 fn stat(key: &str, samples: &[PerfSample]) -> PerfStat {
-    let values: Vec<f64> = samples
-        .iter()
-        .filter_map(|sample| value_of(sample, key))
-        .filter(|value| value.is_finite())
-        .collect();
+    let values = values_of(samples, key);
     if values.is_empty() {
         return PerfStat { key: key.into(), available: false, min: None, avg: None, max: None, p95: None, last: None };
     }
@@ -527,6 +622,96 @@ fn value_of(sample: &PerfSample, key: &str) -> Option<f64> {
         "vramUsedBytes" => sample.vram_used_bytes.map(|bytes| bytes as f64),
         _ => None,
     }
+}
+
+/// One key's readings in the order they were taken, skipping the sample points where the metric
+/// was not available at all.
+fn values_of(samples: &[PerfSample], key: &str) -> Vec<f64> {
+    samples
+        .iter()
+        .filter_map(|sample| value_of(sample, key))
+        .filter(|value| value.is_finite())
+        .collect()
+}
+
+/// Every metric's shape, thinned to what the result sheet's charts can draw.
+fn series_of(samples: &[PerfSample]) -> Vec<PerfSeries> {
+    STAT_KEYS
+        .iter()
+        .map(|key| PerfSeries { key: (*key).into(), values: downsample(&values_of(samples, key)) })
+        .collect()
+}
+
+/// At most `SERIES_POINTS` readings, each bucket contributing its lowest and highest in the
+/// order they happened.
+///
+/// Averaging would hide exactly what a performance report exists for — the spike — so the
+/// envelope keeps both ends of every bucket. The stats in the report are still computed over
+/// every reading; only the drawing is thinned.
+fn downsample(values: &[f64]) -> Vec<f64> {
+    if values.len() <= SERIES_POINTS {
+        return values.to_vec();
+    }
+    let buckets = SERIES_POINTS / 2;
+    let mut kept = Vec::with_capacity(SERIES_POINTS);
+    for bucket in 0..buckets {
+        let start = bucket * values.len() / buckets;
+        let end = ((bucket + 1) * values.len() / buckets).max(start + 1);
+        let slice = &values[start..end.min(values.len())];
+        let (mut low, mut high) = (0usize, 0usize);
+        for (index, value) in slice.iter().enumerate() {
+            if *value < slice[low] {
+                low = index;
+            }
+            if *value > slice[high] {
+                high = index;
+            }
+        }
+        if low <= high {
+            kept.push(slice[low]);
+            if high != low {
+                kept.push(slice[high]);
+            }
+        } else {
+            kept.push(slice[high]);
+            kept.push(slice[low]);
+        }
+    }
+    kept
+}
+
+fn journal_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(JOURNAL_DIR)
+}
+
+fn journal_path(data_dir: &Path, id: &str) -> PathBuf {
+    journal_dir(data_dir).join(format!("{id}.jsonl"))
+}
+
+/// Appends one reading. A failure costs that second and nothing else: the session goes on, and
+/// the next line still lands.
+fn append_journal(journal: &mut fs::File, sample: &PerfSample) {
+    use std::io::Write;
+    let written = serde_json::to_writer(&mut *journal, sample).is_ok() && journal.write_all(b"\n").is_ok();
+    if !written {
+        crate::diag::warn("perf journal: a reading could not be written");
+    }
+}
+
+/// The readings a crash left behind. Reading stops at the first line that does not parse: the
+/// journal is written in order, so nothing after a torn line is trustworthy.
+fn read_journal(path: &Path) -> Vec<PerfSample> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut samples = Vec::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        match serde_json::from_str::<PerfSample>(line) {
+            Ok(sample) => samples.push(sample),
+            Err(_) => break,
+        }
+    }
+    samples
 }
 
 fn write_atomically(path: &Path, sessions: &[PerfSession]) -> Result<(), String> {
@@ -762,8 +947,140 @@ mod tests {
         let reopened = Store::open(&dir);
         assert_eq!(reopened.sessions().len(), MAX_SESSIONS);
         assert_eq!(reopened.sessions()[0].sample_count, 1);
-        assert_eq!(reopened.session(&reopened.sessions()[0].id).unwrap().samples.len(), 1);
+        let saved = reopened.session(&reopened.sessions()[0].id).unwrap();
+        assert!(saved.samples.is_empty(), "a saved session does not carry its readings");
+        let cpu = saved.series.iter().find(|series| series.key == "cpuPercent").unwrap();
+        assert_eq!(cpu.values.len(), 1);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_finished_session_keeps_a_series_a_chart_can_draw() {
+        let dir = std::env::temp_dir().join(format!("meerkat-perf-series-{}", std::process::id()));
+        let snapshot = test_snapshot();
+        {
+            let mut store = Store::open(&dir);
+            store.start(PerfTargetMode::Foreground, None, &snapshot).unwrap();
+            for _ in 0..600 {
+                store.record(&snapshot);
+            }
+            store.stop().unwrap();
+        }
+        let reopened = Store::open(&dir);
+        let summary = &reopened.sessions()[0];
+        assert_eq!(summary.sample_count, 600);
+        let saved = reopened.session(&summary.id).unwrap();
+        assert!(saved.samples.is_empty());
+        assert_eq!(saved.series.len(), STAT_KEYS.len());
+        let cpu = saved.series.iter().find(|series| series.key == "cpuPercent").unwrap();
+        assert!(!cpu.values.is_empty());
+        assert!(cpu.values.len() <= SERIES_POINTS, "the series had {} points", cpu.values.len());
+        // The stats are still computed over every reading, not over the drawing.
+        let report = saved.report.unwrap();
+        assert_eq!(report.sample_count, 600);
+        let cpu_stat = report.stats.iter().find(|stat| stat.key == "cpuPercent").unwrap();
+        assert!(cpu_stat.available && cpu_stat.avg.is_some());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_sessions_file_does_not_grow_with_the_length_of_a_session() {
+        let dir = std::env::temp_dir().join(format!("meerkat-perf-size-{}", std::process::id()));
+        let snapshot = test_snapshot();
+        let mut store = Store::open(&dir);
+        store.start(PerfTargetMode::Foreground, None, &snapshot).unwrap();
+        for _ in 0..2_000 {
+            store.record(&snapshot);
+        }
+        store.stop().unwrap();
+        let bytes = std::fs::read(dir.join(FILE_NAME)).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("\"samples\""), "the readings were written into the sessions file");
+        assert!(bytes.len() < 64 * 1024, "the sessions file was {} bytes for one session", bytes.len());
+        // Nothing is left in the journal either: the report holds what the window shows.
+        let journals: Vec<_> = std::fs::read_dir(dir.join(JOURNAL_DIR))
+            .map(|entries| entries.flatten().collect())
+            .unwrap_or_default();
+        assert!(journals.is_empty(), "a finished session left its journal behind");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_crash_is_recovered_from_the_journal() {
+        let dir = std::env::temp_dir().join(format!("meerkat-perf-journal-{}", std::process::id()));
+        let snapshot = test_snapshot();
+        let id = {
+            let mut store = Store::open(&dir);
+            let id = store.start(PerfTargetMode::Foreground, None, &snapshot).unwrap();
+            for _ in 0..5 {
+                store.record(&snapshot);
+            }
+            id
+            // No stop: this is the app dying mid-session.
+        };
+        let journal = dir.join(JOURNAL_DIR).join(format!("{id}.jsonl"));
+        assert!(journal.exists(), "the readings were not journalled");
+
+        let reopened = Store::open(&dir);
+        let summary = &reopened.sessions()[0];
+        assert_eq!(summary.sample_count, 5);
+        assert!(summary.ended_at_ms.is_some());
+        let saved = reopened.session(&summary.id).unwrap();
+        assert_eq!(saved.report.unwrap().sample_count, 5);
+        assert!(saved.series.iter().any(|series| !series.values.is_empty()));
+        assert!(!journal.exists(), "the journal is cleared once its readings are in the report");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn deleting_a_session_removes_its_journal() {
+        let dir = std::env::temp_dir().join(format!("meerkat-perf-delete-{}", std::process::id()));
+        let snapshot = test_snapshot();
+        let mut store = Store::open(&dir);
+        let id = store.start(PerfTargetMode::Foreground, None, &snapshot).unwrap();
+        store.record(&snapshot);
+        let journal = dir.join(JOURNAL_DIR).join(format!("{id}.jsonl"));
+        assert!(journal.exists());
+        assert!(store.delete(&id));
+        assert!(!journal.exists());
+        assert!(store.sessions().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_older_file_with_readings_is_converted_when_it_is_opened() {
+        let dir = std::env::temp_dir().join(format!("meerkat-perf-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = serde_json::json!([{
+            "id": "old",
+            "target": { "mode": "foreground", "appKey": null, "name": "Old", "currentAppKey": null },
+            "startedAtMs": 1_000,
+            "endedAtMs": 2_000,
+            "samples": serde_json::to_value([sample()]).unwrap(),
+            "report": null,
+        }]);
+        std::fs::write(dir.join(FILE_NAME), serde_json::to_vec(&old).unwrap()).unwrap();
+
+        let store = Store::open(&dir);
+        let saved = store.session("old").unwrap();
+        assert!(saved.samples.is_empty());
+        assert_eq!(saved.sample_count, 1);
+        assert_eq!(saved.report.unwrap().sample_count, 1);
+        assert!(saved.series.iter().any(|series| !series.values.is_empty()));
+        let text = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
+        assert!(!text.contains("\"samples\""), "the converted file still carries the readings");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn downsampling_keeps_the_spike_and_both_ends_of_a_bucket() {
+        let mut values: Vec<f64> = (0..10_000).map(|index| (index % 7) as f64).collect();
+        values[5_000] = 999.0;
+        let kept = downsample(&values);
+        assert!(kept.len() <= SERIES_POINTS, "kept {} points", kept.len());
+        assert!(kept.contains(&999.0), "the spike was averaged away");
+        assert_eq!(downsample(&[1.0, 2.0, 3.0]), vec![1.0, 2.0, 3.0]);
+        assert_eq!(downsample(&[]), Vec::<f64>::new());
     }
 
     #[test]
