@@ -6,9 +6,13 @@ import { useStore, type AppSeed } from "../lib/store";
 import { sectionShown, visibleSections } from "../lib/sections";
 import { appLabel } from "../lib/apps";
 import { eventText, isProblem } from "../lib/events";
+import { buildSeries, seriesPaths } from "../lib/series";
+import { blankSpans, isSameClick, recordedSpan, snapToBucket } from "../lib/timeline";
 import type { AppUsage, HistoryPoint, RankBy, SystemEvent } from "../lib/types";
+import type { Translate } from "../i18n";
 import type { Key } from "../i18n/en";
 import { AppIcon, Card, Meter } from "./ui";
+import { Button } from "./ui/button";
 import { ToggleChip, ToggleGroup } from "./ui/toggle-group";
 import { RangePicker, TONE, useSeries, useTabState } from "./tabs";
 
@@ -62,8 +66,13 @@ export function HistoryTab() {
   const now = snapshot?.takenAtMs ?? Date.now();
   const top = useRef<HTMLDivElement>(null);
 
+  /**
+   * Picking a moment from the event list. It lands on the same bucket grid a click on the chart
+   * lands on, so the marker is drawn at a place that has a reading (and a value in its pill)
+   * rather than at the exact second Windows logged, which sits between two buckets.
+   */
   const pick = (at: number) => {
-    setMoment(at);
+    setMoment(Math.round(snapToBucket(at, series?.points ?? [], series?.bucketSeconds ?? 60)));
     top.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 
@@ -96,6 +105,7 @@ export function HistoryTab() {
             from={now - range * 1000}
             to={now}
             tone={measure.tone}
+            name={t(measure.label)}
             format={(value) =>
               measure.percent ? formatPercent(value, units.locale) : formatRate(value, units, "storage")
             }
@@ -104,9 +114,13 @@ export function HistoryTab() {
             selected={moment}
             onSelect={setMoment}
             label={(at) => formatWhen(at, range, units.locale)}
+            loading={series === null}
+            t={t}
+            shortDuration={(ms) => formatDuration(ms / 1000, units.locale, { short: true })}
+            viewKey={`${range}:${by}`}
           />
           <p className="hint faint">{t("history.clickHint")}</p>
-          {moment !== null && <MomentPanel at={moment} range={range} events={events} />}
+          {moment !== null && <MomentPanel at={moment} range={range} events={events} onClear={() => setMoment(null)} />}
         </Card>
       )}
 
@@ -141,7 +155,10 @@ export function HistoryTab() {
 /**
  * The machine-wide figure over the chosen range, with the system's events marked along the
  * bottom edge. It is a picker as much as a chart: a click chooses the moment the panel below
- * describes. Gaps where Meerkat was not running are left as gaps rather than joined across.
+ * describes, and a second click on the same moment gives the choice back — a stuck selection had
+ * no way out, and the vertical bar it drew said nothing about what it was. Gaps where Meerkat was
+ * not running are drawn as hatched stretches named as such, so an empty chart reads as "nothing
+ * was recorded here" rather than as a broken chart with one bar in it.
  */
 function TimelineChart({
   points,
@@ -149,28 +166,44 @@ function TimelineChart({
   from,
   to,
   tone,
+  name,
   format,
   fixedMax,
   events,
   selected,
   onSelect,
   label,
+  loading,
+  t,
+  shortDuration,
+  viewKey,
 }: {
   points: HistoryPoint[];
   bucketSeconds: number;
   from: number;
   to: number;
   tone: string;
+  /** The measure's own name, for the legend and for the plot's accessible name. */
+  name: string;
   format: (value: number) => string;
   fixedMax?: number;
   events: SystemEvent[];
   selected: number | null;
-  onSelect: (at: number) => void;
+  /** Null clears the selection. */
+  onSelect: (at: number | null) => void;
   label: (at: number) => string;
+  /** Still asking for the series. "Nothing recorded" and "not answered yet" are not the same thing. */
+  loading: boolean;
+  t: Translate;
+  /** A length of time in words, for "only the 26 minutes that were recorded". */
+  shortDuration: (ms: number) => string;
+  /** Changes when the range or metric does: a zoom into the old series means nothing on a new one. */
+  viewKey: string;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
   const [hover, setHover] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(false);
   useEffect(() => {
     const element = box.current;
     if (!element) return;
@@ -178,69 +211,191 @@ function TimelineChart({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  // A zoom into the previous series would put its labels over a different picture.
+  useEffect(() => setZoom(false), [viewKey]);
 
   const height = 168;
   const band = 16;
-  const top = 8;
+  const top = 10;
   const plot = height - band - top;
   const span = Math.max(1, to - from);
-  const visible = points.filter((p) => p.atMs >= from && p.atMs <= to);
+  const visible = useMemo(() => points.filter((p) => p.atMs >= from && p.atMs <= to), [points, from, to]);
+  const recorded = useMemo(
+    () => recordedSpan(visible, from, to, bucketSeconds),
+    [visible, from, to, bucketSeconds],
+  );
+  const blanks = useMemo(() => blankSpans(visible, from, to, bucketSeconds), [visible, from, to, bucketSeconds]);
+  // A day's range with half an hour of record is a sliver against one edge; offering to draw only
+  // what was recorded is what makes that half hour legible. Nothing to offer when the record
+  // already fills most of the range.
+  const recordedMs = recorded === null ? 0 : recorded.toMs - recorded.fromMs;
+  const zoomable = recordedMs > 0 && recordedMs < 0.6 * span;
+  const view = zoom && recorded !== null ? recorded : { fromMs: from, toMs: to };
+  const viewSpan = Math.max(1, view.toMs - view.fromMs);
+  const x = (at: number) => ((at - view.fromMs) / viewSpan) * width;
+  // Where each blank stretch falls on screen, clipped to the plot: zoomed in, a stretch can start
+  // days to the left of the view, and an unclipped label would be drawn far outside the card.
+  // Nothing is marked as missing until the series has actually answered.
+  const blanksPx = loading
+    ? []
+    : blanks
+        .map((blank) => {
+          const left = Math.max(0, x(blank.fromMs));
+          const right = Math.min(width, x(blank.toMs));
+          return { left, right, width: Math.max(0, right - left) };
+        })
+        .filter((blank) => blank.width > 0);
+  // The top of the scale, from the means the line draws: the peak a bucket reached is a detail,
+  // and a band of it behind the line read as a second, noisier series.
   const max = fixedMax ?? Math.max(1, ...visible.map((p) => p.value)) * 1.15;
-  const x = (at: number) => ((at - from) / span) * width;
   const y = (value: number) => top + plot - (Math.min(value, max) / max) * plot;
+  // A bucket's reading stands for its whole bucket, so the last one is held to the end of it.
+  // Drawn only to its own timestamp, the line stopped one bucket short of the right edge, which
+  // on a range zoomed to a quarter of an hour left the last two-fifths of the chart looking empty.
+  const drawn = useMemo(() => {
+    const last = visible[visible.length - 1];
+    if (last === undefined) return visible;
+    const tail = Math.min(view.toMs, last.atMs + bucketSeconds * 1000);
+    return tail > last.atMs ? [...visible, { ...last, atMs: tail }] : visible;
+  }, [visible, view.toMs, bucketSeconds]);
+  const built = useMemo(
+    () => buildSeries(drawn, view.fromMs, view.toMs, bucketSeconds),
+    [drawn, view.fromMs, view.toMs, bucketSeconds],
+  );
+  const paths = useMemo(() => seriesPaths(built, width, plot, max), [built, width, plot, max]);
 
-  const segments = useMemo(() => {
-    const out: HistoryPoint[][] = [];
-    let current: HistoryPoint[] = [];
-    for (const point of visible) {
-      const previous = current[current.length - 1];
-      if (previous && point.atMs - previous.atMs > bucketSeconds * 1000 * 2.5) {
-        out.push(current);
-        current = [];
-      }
-      current.push(point);
-    }
-    if (current.length) out.push(current);
-    return out;
-  }, [visible, bucketSeconds]);
-
+  const shownEvents = events.filter((event) => event.atMs >= view.fromMs && event.atMs <= view.toMs);
+  const atOf = (clientX: number) => {
+    const rect = box.current?.getBoundingClientRect();
+    if (!rect) return view.fromMs;
+    const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return view.fromMs + fraction * viewSpan;
+  };
+  const msPerPixel = viewSpan / width;
+  const bucketMs = bucketSeconds * 1000;
+  const moment = (at: number) => Math.round(snapToBucket(at, visible, bucketSeconds));
+  const pick = (at: number) => {
+    if (selected !== null && isSameClick(at, selected, msPerPixel)) onSelect(null);
+    else onSelect(moment(at));
+  };
   const nearest = (at: number) =>
     visible.reduce<HistoryPoint | null>(
       (best, p) => (best === null || Math.abs(p.atMs - at) < Math.abs(best.atMs - at) ? p : best),
       null,
     );
-  const atOf = (clientX: number) => {
-    const rect = box.current?.getBoundingClientRect();
-    if (!rect) return from;
-    return from + ((clientX - rect.left) / rect.width) * span;
-  };
   const hovered = hover === null ? null : nearest(hover);
+  const readout = hovered !== null && hover !== null && Math.abs(hovered.atMs - hover) < bucketMs * 1.5 ? hovered.value : null;
+  const picked = selected === null ? null : (visible.find((p) => p.atMs === selected) ?? null);
+  const selectedShown = selected !== null && selected >= view.fromMs && selected <= view.toMs;
+  // The widest stretch with nothing recorded is named, so the blank part of a chart says what it
+  // is rather than looking like a chart that failed to draw.
+  const widest = blanksPx.reduce<{ left: number; right: number; width: number } | null>(
+    (best, blank) => (best === null || blank.width > best.width ? blank : best),
+    null,
+  );
+  const clamp = (at: number, edge: number) => Math.min(Math.max(x(at), edge), Math.max(edge, width - edge));
+
+  const step = (delta: number) => {
+    const base = selected ?? Math.round((view.fromMs + view.toMs) / 2 / bucketMs) * bucketMs;
+    onSelect(Math.min(view.toMs, Math.max(view.fromMs, base + delta * bucketMs)));
+  };
 
   return (
     <div className="timeline">
+      <div className="timeline-head">
+        <span className="timeline-key">
+          <i className="swatch" style={{ background: tone }} />
+          {name}
+        </span>
+        <span className="timeline-key">
+          <i className="tick" />
+          <i className="tick problem" />
+          {t("history.events")}
+        </span>
+        <span className="timeline-grow" />
+        {zoomable && (
+          <Button
+            variant="chip"
+            className="timeline-zoom"
+            aria-pressed={zoom}
+            onClick={() => setZoom((on) => !on)}
+          >
+            {zoom ? t("history.showAll") : t("history.onlyRecorded", { value: shortDuration(recordedMs) })}
+          </Button>
+        )}
+      </div>
       <div
         ref={box}
         className="timeline-plot"
+        role="group"
+        tabIndex={0}
+        aria-label={`${name}, ${t("history.clickHint")}`}
         onPointerMove={(event) => setHover(atOf(event.clientX))}
         onPointerLeave={() => setHover(null)}
-        onClick={(event) => onSelect(Math.round(atOf(event.clientX)))}
+        onClick={(event) => pick(atOf(event.clientX))}
+        onKeyDown={(event) => {
+          switch (event.key) {
+            case "ArrowLeft":
+              step(-1);
+              break;
+            case "ArrowRight":
+              step(1);
+              break;
+            case "PageUp":
+              step(-10);
+              break;
+            case "PageDown":
+              step(10);
+              break;
+            case "Home":
+              onSelect(moment(view.fromMs));
+              break;
+            case "End":
+              onSelect(moment(view.toMs));
+              break;
+            case "Escape":
+              onSelect(null);
+              break;
+            default:
+              return;
+          }
+          event.preventDefault();
+        }}
       >
-        <svg width={width} height={height} role="img" aria-label={label(from) + " – " + label(to)}>
-          <line x1={0} x2={width} y1={top + plot} y2={top + plot} stroke="var(--hairline-strong)" />
-          {segments.map((segment, index) => {
-            const line = segment.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.atMs).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
-            const area =
-              segment.length > 1
-                ? `${line} L${x(segment[segment.length - 1].atMs).toFixed(1)},${top + plot} L${x(segment[0].atMs).toFixed(1)},${top + plot} Z`
-                : "";
-            return (
-              <g key={index}>
-                {area && <path d={area} fill={tone} opacity={0.14} />}
-                <path d={line} fill="none" stroke={tone} strokeWidth={1.5} strokeLinejoin="round" />
-              </g>
-            );
-          })}
-          {events.map((event, index) => {
+        <svg width={width} height={height} role="img" aria-label={`${name}: ${label(view.fromMs)} – ${label(view.toMs)}`}>
+          <defs>
+            <pattern id="timeline-blank" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="6" stroke="var(--text-3)" strokeWidth="1" opacity="0.28" />
+            </pattern>
+          </defs>
+          {blanksPx.map((blank, index) => (
+            <rect
+              key={`blank-${index}`}
+              x={blank.left}
+              y={top}
+              width={blank.width}
+              height={plot}
+              fill="url(#timeline-blank)"
+              opacity={0.55}
+            />
+          ))}
+          <line x1={0} x2={width} y1={top + plot / 2} y2={top + plot / 2} stroke="var(--line)" strokeDasharray="2 4" />
+          {/* A stronger axis separates the metric's plot from the system-event ticks below it. */}
+          <line x1={0} x2={width} y1={top + plot} y2={top + plot} stroke="var(--line-strong)" />
+          <g transform={`translate(0,${top})`}>
+            {paths.area && <path d={paths.area} fill={tone} opacity={0.16} />}
+            {paths.line && (
+              <path d={paths.line} fill="none" stroke={tone} strokeWidth={1.5} strokeLinejoin="round" />
+            )}
+          </g>
+          {/* The scale, so a curve can be read as a number rather than only against itself. */}
+          {visible.length > 0 && (
+            <g className="timeline-scale">
+              <text x={6} y={top + 11}>{format(max)}</text>
+              <text x={6} y={top + plot / 2 + 4}>{format(max / 2)}</text>
+            </g>
+          )}
+          {shownEvents.map((event, index) => {
             const at = x(event.atMs);
             if (at < 0 || at > width) return null;
             const problem = isProblem(event);
@@ -257,32 +412,78 @@ function TimelineChart({
               />
             );
           })}
-          {selected !== null && selected >= from && selected <= to && (
-            <line x1={x(selected)} x2={x(selected)} y1={top} y2={height} stroke="var(--accent)" strokeWidth={1.5} />
-          )}
           {hover !== null && (
             <line x1={x(hover)} x2={x(hover)} y1={top} y2={top + plot} stroke="var(--text-3)" strokeDasharray="3 3" />
           )}
+          {selectedShown && selected !== null && (
+            <g>
+              <line
+                x1={x(selected)}
+                x2={x(selected)}
+                y1={top}
+                y2={top + plot}
+                stroke="var(--accent)"
+                strokeWidth={5}
+                opacity={0.16}
+              />
+              <line x1={x(selected)} x2={x(selected)} y1={top} y2={top + plot} stroke="var(--accent)" strokeWidth={1.5} />
+              {picked && (
+                <circle cx={x(selected)} cy={y(picked.value)} r={3.5} fill="var(--accent)" stroke="var(--surface)" strokeWidth={1.5} />
+              )}
+            </g>
+          )}
         </svg>
+        {widest !== null && widest.width > 110 && (
+          <span className="timeline-blank" style={{ left: (widest.left + widest.right) / 2 }}>
+            {t("history.noRecord")}
+          </span>
+        )}
+        {loading && <span className="timeline-blank">…</span>}
         {hover !== null && (
-          <div className="timeline-tip" style={{ left: Math.min(Math.max(x(hover), 60), width - 60) }}>
+          <div className="timeline-tip" style={{ left: clamp(hover, 62) }}>
             <span className="num">{label(hover)}</span>
-            {hovered && Math.abs(hovered.atMs - hover) < bucketSeconds * 1000 * 1.5 && (
-              <strong className="num">{format(hovered.value)}</strong>
-            )}
+            {readout !== null && <strong className="num">{format(readout)}</strong>}
+          </div>
+        )}
+        {selectedShown && selected !== null && (
+          <div className="timeline-pin" style={{ left: clamp(selected, 76) }} onClick={(event) => event.stopPropagation()}>
+            <span className="num">{label(selected)}</span>
+            {picked && <strong className="num">{format(picked.value)}</strong>}
+            <button
+              className="timeline-pin-x"
+              aria-label={t("history.clearSelection")}
+              title={t("history.clearSelection")}
+              onClick={() => onSelect(null)}
+            >
+              ×
+            </button>
           </div>
         )}
       </div>
       <div className="timeline-axis">
-        <span className="num">{label(from)}</span>
-        <span className="num">{label(to)}</span>
+        <span className="num">{label(view.fromMs)}</span>
+        <span className="num">{label(view.toMs)}</span>
       </div>
     </div>
   );
 }
 
-/** What was running at the chosen moment, and what Windows logged around it. */
-function MomentPanel({ at, range, events }: { at: number; range: number; events: SystemEvent[] }) {
+/**
+ * What was running at the chosen moment, and what Windows logged around it. The heading carries
+ * the way out of the selection: a moment picked on the chart used to be permanent until the tab
+ * was left, and nothing in the panel said it could be dropped.
+ */
+function MomentPanel({
+  at,
+  range,
+  events,
+  onClear,
+}: {
+  at: number;
+  range: number;
+  events: SystemEvent[];
+  onClear: () => void;
+}) {
   const { t, units, openDetail } = useStore();
   const apps = useLoaded(() => ipc.appsAt(at), [] as AppUsage[], [at]);
   const reach = range <= 86_400 ? 15 * 60_000 : 60 * 60_000;
@@ -290,7 +491,12 @@ function MomentPanel({ at, range, events }: { at: number; range: number; events:
   const peak = Math.max(1e-9, ...apps.map((a) => a.cpuSeconds / Math.max(1, a.seconds)));
   return (
     <div className="moment">
-      <h4 className="section-title">{t("history.moment", { time: formatWhen(at, range, units.locale) })}</h4>
+      <div className="moment-head">
+        <h4 className="section-title">{t("history.moment", { time: formatWhen(at, range, units.locale) })}</h4>
+        <Button variant="chip" className="moment-clear" onClick={onClear}>
+          {t("history.clearSelection")}
+        </Button>
+      </div>
       {apps.length === 0 ? (
         <p className="empty faint">{t("history.momentEmpty")}</p>
       ) : (
