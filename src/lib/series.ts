@@ -21,7 +21,7 @@ export interface BuiltSeries {
 export const GAP_BUCKETS = 2.5;
 
 /** The backend names its own bucket; one that does not is read as the finest it keeps. */
-function bucketMilliseconds(bucketSeconds: number): number {
+export function bucketMilliseconds(bucketSeconds: number): number {
   return (Number.isFinite(bucketSeconds) && bucketSeconds > 0 ? bucketSeconds : 60) * 1000;
 }
 
